@@ -27,7 +27,7 @@ function loadConfig() {
   }
 }
 
-const cfg = loadConfig();
+let cfg = loadConfig();
 
 function getConfig() {
   return loadConfig();
@@ -160,7 +160,72 @@ async function authorizeRead(key, token) {
 
 const server = new McpServer({ name: 'snowluma-safe', version: '0.1.5' });
 
-server.tool(
+// ── 动态工具注册 ────────────────────────────────────────────────────────────
+// 目的：控制台改工具开关后，不重启 DSH 也能让模型侧的工具表同步。
+// 机制：注册统一走 defineTool() 以便拿到句柄；配置变化时把已注册工具全部
+//       remove，再按最新的 cfg 重跑一遍注册，最后发 tools/list_changed 通知，
+//       DSH 的 MCP 客户端收到后会重新拉取工具表。
+const toolHandles = [];
+const CONFIG_PATH = path.join(ROOT, 'config.json');
+
+function defineTool(...args) {
+  const handle = server.tool(...args);
+  toolHandles.push(handle);
+  return handle;
+}
+
+function removeAllTools() {
+  while (toolHandles.length) {
+    const handle = toolHandles.pop();
+    try { handle.remove(); } catch { /* 已移除或未注册，忽略 */ }
+  }
+}
+
+let lastAppliedConfig = JSON.stringify(cfg);
+
+function reregisterTools(reason) {
+  try {
+    const next = loadConfig();
+    const fingerprint = JSON.stringify(next);
+    // fs.watch 与兜底轮询会重复触发；内容没变就直接跳过，避免无谓的重注册。
+    if (fingerprint === lastAppliedConfig) return;
+    cfg = next;
+    lastAppliedConfig = fingerprint;
+    registerAllTools();
+    server.sendToolListChanged(); // 批量重注册后只通知一次
+    console.error(`[snowluma-safe] tools re-registered (${reason}), enabled=${toolHandles.length}`);
+  } catch (error) {
+    console.error(`[snowluma-safe] tools re-register failed (${reason}): ${error?.message ?? error}`);
+  }
+}
+
+function installConfigWatcher() {
+  let timer = null;
+  const schedule = (reason) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; reregisterTools(reason); }, 300);
+  };
+  try {
+    fs.watch(CONFIG_PATH, () => schedule('watch'));
+    console.error('[snowluma-safe] config watcher: fs.watch');
+  } catch (error) {
+    console.error(`[snowluma-safe] fs.watch unavailable (${error?.message ?? error}); polling fallback only`);
+  }
+  // 兜底轮询：部分容器/overlay 文件系统上 fs.watch 不可靠。
+  fs.watchFile(CONFIG_PATH, { interval: 2000 }, (cur, prev) => {
+    if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size) schedule('poll');
+  });
+}
+
+function registerAllTools() {
+  // 批量重注册期间屏蔽逐条通知：SDK 的 registerTool/remove 每次都会
+  // sendToolListChanged()，36 个工具会瞬间打出几十条通知。
+  const notify = server.sendToolListChanged.bind(server);
+  server.sendToolListChanged = () => {};
+  try {
+    removeAllTools();
+
+defineTool(
   'qq_status',
   '查询 QQ 机器人登录状态与账号信息（只读）。',
   {},
@@ -176,7 +241,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_list_groups',
   '列出机器人所在的全部 QQ 群（只读）：群号、群名。',
   {},
@@ -204,7 +269,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_group_members',
   '列出指定群的成员列表（只读）：QQ 号、昵称、群名片。',
   { groupId: z.union([z.number(), z.string()]).describe('群号') },
@@ -227,7 +292,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_group_history',
   '获取指定群的最近消息历史（只读）。messageSeq 可选：从该消息序号往前取。注意：是否可用取决于 SnowLuma 是否实现 get_group_msg_history。',
   { groupId: z.union([z.number(), z.string()]).describe('群号'), messageSeq: z.number().optional().describe('起始消息序号（可选）') },
@@ -251,7 +316,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_send_group_message',
   '向指定 QQ 群发送一条纯文本消息；如需引用某条消息，可传 replyToMessageId（非零整数，可为负数），可先用 qq_get_recent_messages / qq_get_message_detail 查询。二代模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；reserved2 下调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
   {
@@ -274,7 +339,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_reply',
   '在指定 QQ 群里引用/回复某条消息，并发送一条文本。适合群消息很多、需要明确“我回的是哪条”时使用；replyToMessageId 是被引用消息的 id（非零整数，QQ 消息 id 可能为负数），可先用 qq_get_recent_messages / qq_get_unread_messages / qq_get_message_detail 查到具体消息内容和 id。发送前桥接会校验该 id 存在且属于当前会话。二代模式下这是你正常可用的引用工具，但不要每条都引用。只有以下情况才需要引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。reserved2 下调用时必须携带会话令牌 token。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
   {
@@ -297,7 +362,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_send_private_message',
   '向指定 QQ 好友发送一条私聊消息。若提供 replyToMessageId，会以 QQ 引用/回复形式发出（引用条 + 文本）。replyToMessageId 必须是非零整数消息 id（QQ 消息 id 可能为负数），可先用 qq_get_message_detail 查询。二代模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标 QQ 必须命中系统白名单（config.json 的 allow.private），否则拒绝。',
   {
@@ -321,7 +386,7 @@ server.tool(
 );
 
 // ── 二代仿真模式（reserved2）工具 ─────────────────────────────────────────
-server.tool(
+defineTool(
   'qq_get_prompt',
   '查看当前二代仿真模式的提示词/角色/推荐值/可用工具/当前唤醒配置（只读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
@@ -335,7 +400,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_unread_messages',
   '查看指定会话的未读消息（只读，不自动标记已读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'), limit: z.number().optional().describe('最多返回条数，默认 30，最大 100') },
@@ -349,7 +414,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_recent_messages',
   '查看指定会话的最近消息（只读），支持 offset 扩大范围。',
   {
@@ -368,7 +433,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_social_state',
   '查看指定会话的二代仿真状态：WakeConfig、未读数、上次唤醒原因、上次发言时间等（只读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
@@ -382,7 +447,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_mark_read',
   '将指定会话的当前未读消息标记为已读（用于“看过但决定不回复”后避免重复未读）。注意：每次设置潜水/下一次唤醒前，桥接要求先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可 mark_read 收尾沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与也可直接 mark_read 收尾；若你参与了回复，则下次想睡需重新等待观察窗口。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
@@ -396,7 +461,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_set_wake_config',
   '设置指定会话的二代唤醒配置：mode/无限期或有限时间/提前唤醒条件（@、名字、关键词、提问、拍一拍、概率、anyMessage、指定成员）。triggers.speakerIds 是可选的“指定群友发言唤醒”：填一个或多个群友 QQ 号后，只要其中任意一位在群里发言就会唤醒你；不设置则不启用。适合在等某个人回复、或某人反应慢怕错过时使用。triggers.poke 开启后，群里有人拍一拍（包括拍你或拍别人）会唤醒你。注意：每次设置潜水/下一次唤醒前需先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可设置并沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与可直接设置并沉睡；若你参与了回复，则下次想睡需重新等待观察窗口。',
   {
@@ -430,7 +495,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_send_burst',
   '在指定 QQ 群分多条发送消息（二代仿真模式专用），桥接会按真人化随机间隔发送。暂不支持引用，需要引用请用 qq_reply。注意：数组里的每个字符串就是一条 QQ 消息，字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。',
   {
@@ -472,7 +537,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_send_message',
   '统一发送工具：可发一条或多条，可引用某条消息，可自定义/按字数计算条间时间差。二代仿真模式专用。注意：字符串=一条消息，数组=多条消息；每个字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。只有以下情况才需要传 replyToMessageId 引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。',
   {
@@ -519,7 +584,7 @@ server.tool(
 );
 
 if (cfg.socialV2?.tools?.sendPoke !== false) {
-  server.tool(
+  defineTool(
     'qq_send_poke',
     '发送 QQ 拍一拍（群聊/私聊）。适合用“戳一下”代替一句废话、提醒对方、自然回应别人的拍一拍，或偶尔主动戳一下正在聊的人/熟人——这样更拟真；但别频繁，真人不会一直戳人。群聊必须传 targetUserId（要拍的群友 QQ 号，可从 qq_get_active_members / qq_get_message_detail 的 userId 获取）；私聊可不传 targetUserId（默认拍当前私聊对象）。reserved2 下必须携带会话令牌 token，发送会受桥接白名单与发送频率限制。',
     {
@@ -543,7 +608,7 @@ if (cfg.socialV2?.tools?.sendPoke !== false) {
   );
 }
 
-server.tool(
+defineTool(
   'qq_wait_for_messages',
   '等待群友消息：可指定“静默窗口”来判断对方是否说完了。收到新消息后如果还想要更多上下文，设置 quietMs（例如 10000~20000）继续等一小段没有新消息的时间；桥接会强制至少等后台“收到新消息后最小静默”（默认 10000ms=10 秒）再返回，防止抢话。返回 timeout=true 表示这段时间内没有等到新消息/没人说话，这不是错误；可以再用 qq_get_unread_messages / qq_get_recent_messages 查看是否有新消息，再决定继续等、发言或潜水。沉睡前观察：准备设置潜水/下一次唤醒前，必须用 timeoutMs=300000 发起一次完整观察（短等待不会满足沉睡前观察）。如果全程没人说话，返回 preSleepWaitSatisfied=true；如果等待期间等到新消息，会返回 preSleepWaitObserved=true 和 newMessages，表示你已完成一次沉睡前观察，查看后认为不需要你参与即可直接设置潜水。响应里还会给出 preSleepWaitRemainingMs，帮助你判断还差多久。',
   {
@@ -568,7 +633,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_report_feedback',
   '向控制台/管理端反馈 AI 遇到的问题、困惑或需要管理员介入的情况。',
   {
@@ -591,7 +656,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_my_recent_messages',
   '查看自己最近发过的消息（只读），避免重复/保持人设。',
   {
@@ -609,7 +674,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_message_detail',
   '按 message_id 查看单条消息的完整内容、发送者、引用信息（只读）。',
   {
@@ -627,7 +692,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_get_active_members',
   '查看最近活跃成员列表（只读），帮助判断话题参与者。',
   {
@@ -645,7 +710,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_memory_append',
   '记录一条轻量记忆：activeTopic=进行中的话题；pendingThought=你想说但还没说的话；memberImpression=对某位群友的印象。记忆会持久化，并在后续唤醒/qq_get_prompt 中自动出现。',
   {
@@ -675,7 +740,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_memory_query',
   '查看当前会话的轻量记忆：进行中的话题、你想说但还没说的话、对群友的印象（只读）。',
   {
@@ -695,7 +760,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_memory_remove',
   '删除一条轻量记忆：activeTopic/pendingThought 用 content 匹配原文删除；memberImpression 用 target 参数指定群友名字删除。',
   {
@@ -719,7 +784,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_memory_clear',
   '清空轻量记忆：不传 category 清空全部；传 activeTopic/pendingThought/memberImpression 只清空对应类别。',
   {
@@ -741,9 +806,9 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_slang_query',
-  '查看当前已确认的群聊黑话/梗/网络表达（只读）。返回已确认词条列表和格式化黑话表；遇到不熟悉的词可先查这里，再决定是否搜索/使用。',
+  '查看当前已确认的群聊黑话/梗/网络表达（只读）。返回已确认词条列表和格式化黑话表（按出现次数排序）。遇到不熟悉的词先查这里：命中就直接按含义/用法自然使用；这里没有的词，再用 qq_lookup_meme（能联网现学 B 站视频与高赞评论里的真实用法）。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().min(1).describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -760,7 +825,7 @@ server.tool(
   }
 );
 
-server.tool(
+defineTool(
   'qq_slang_submit',
   '把你在群里经常看到但不确定含义/用法的陌生词、黑话、梗或网络表达提交给管理员筛选。提交后进入候选库，管理员确认后会被写入黑话提示词，成为你后续可查询和使用的记忆。',
   {
@@ -785,7 +850,7 @@ server.tool(
 
 // ── 图片/表情查看工具（一代/二代仿真共用） ─────────────────────────────────
 if (cfg.socialV2?.tools?.getImages !== false) {
-  server.tool(
+  defineTool(
     'qq_get_message_images',
     '获取指定 QQ 消息中的图片/表情，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[表情] 或 hasMedia=true 时调用。支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
     {
@@ -827,7 +892,7 @@ if (cfg.socialV2?.tools?.getImages !== false) {
 
 // ── 表情包体系工具（二代仿真模式） ─────────────────────────────────────────
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.listStickers !== false) {
-  server.tool(
+  defineTool(
     'qq_list_stickers',
     '查看 QQ 账号上已收藏的表情包（自定义表情）列表：包含 emoji_id、备注 desc、本地笔记 localNote、标签 tags、使用次数等。可通过 query 按备注/笔记/标签搜索；无备注的表情可以先调用 qq_get_sticker_image 看图理解，再用 qq_sticker_note 记下含义。刚新增/删除表情后如需立即同步，请传 refresh=true。',
     {
@@ -853,7 +918,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.listSticker
 }
 
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.getStickerImage !== false) {
-  server.tool(
+  defineTool(
     'qq_get_sticker_image',
     '获取指定收藏表情的图片内容并直接以图像返回给模型（视觉模型可“看懂”）。当 qq_list_stickers 返回的表情 desc/localNote 为空、或你想确认表情实际长什么样时调用。stickerId 可用 qq_list_stickers 返回的 id / md5 / url。',
     {
@@ -881,7 +946,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.getStickerI
 }
 
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.sendSticker !== false) {
-  server.tool(
+  defineTool(
     'qq_send_sticker',
     '在指定会话发送一个 QQ 收藏表情包（自定义表情）。stickerId 用 qq_list_stickers 返回的 id / md5 / url。注意：一条消息只能是一张表情，不能在同一气泡里附带文字；想说的话请先用 qq_send_message / qq_reply 作为单独气泡发送，再单独发这张表情。需要引用/点名时可用 replyToMessageId / atUserId（群聊）。真人偶尔用表情包很自然，但别刷屏。',
     {
@@ -908,7 +973,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.sendSticker
 }
 
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectSticker !== false) {
-  server.tool(
+  defineTool(
     'qq_collect_sticker',
     '收藏当前会话里别人发的一张表情/图片到你的 QQ 收藏表情，并可写一句简短备注（如“好图偷了，兄弟”）。messageId 用 qq_get_unread_messages / qq_get_recent_messages 返回的 messageId 或 seq。注意：不要频繁收藏，只在真的觉得有意思/好用/戳中你时才偷图；收藏后你可以在 qq_list_stickers 里看到并继续使用。',
     {
@@ -933,8 +998,204 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
 }
 
+if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.saveSticker !== false) {
+  defineTool(
+    'qq_save_sticker',
+    '把一张图片保存进你的 QQ 收藏表情库（保存后就能用 qq_send_sticker 发送）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链，B 站图床会自动带 Referer）。适合：看到一张好图/梗图想收进表情库以后用。remark 写一句最多 20 字的备注帮你以后认出来。不要频繁保存，先看图确认内容。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      image: z.string().describe('图片来源：本地图库文件名 / data:image/...;base64 / 裸 base64 / http(s) 图片直链（需管理端开启远程）'),
+      source: z.string().optional().describe('来源类型，可选 auto / library / base64 / url；一般不用传'),
+      remark: z.string().optional().describe('简短备注，最多 20 字，例如“B站梗图”')
+    },
+    async ({ key, token, image, source, remark }) => {
+      try {
+        const data = await agentApi('/api/socialV2/save-sticker', {
+          method: 'POST',
+          body: JSON.stringify({ key, image: String(image), source: source || 'auto', remark: remark || '' }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 180000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `保存表情失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !== false) {
+  defineTool(
+    'qq_send_image',
+    '直接发送一张图片到当前会话（不会存进收藏表情库；想长期留存请用 qq_save_sticker）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链）。注意：一条消息只能是一张图，不能在同一气泡里附带文字；想说话请先用 qq_send_message 单独发。需要引用/点名时可用 replyToMessageId（群聊可 atUserId）。不要刷图。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      image: z.string().describe('图片来源：本地图库文件名 / data:image/...;base64 / 裸 base64 / http(s) 图片直链（需管理端开启远程）'),
+      source: z.string().optional().describe('来源类型，可选 auto / library / base64 / url；一般不用传'),
+      replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
+      atUserId: z.union([z.number(), z.string()]).optional().describe('要 @ 的群成员 QQ 号（群聊中可选，私聊不可用）')
+    },
+    async ({ key, token, image, source, replyToMessageId, atUserId }) => {
+      try {
+        const data = await agentApi('/api/socialV2/send-image', {
+          method: 'POST',
+          body: JSON.stringify({ key, image: String(image), source: source || 'auto', replyToMessageId, atUserId: atUserId ?? null }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 180000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `发送图片失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.slang?.enabled !== false && cfg.socialV2?.tools?.lookupMeme !== false) {
+  defineTool(
+    'qq_lookup_meme',
+    '遇到不懂的网络梗/黑话时先查再回。顺序：① 本地黑话库（已确认的直接返回释义/用法/例句）；② 10 分钟内的查询缓存；③ 没命中就去 B 站搜相关视频与**高赞评论**（评论通常就是这个梗最真实的用法与出处）。第 ③ 步有硬预算（几秒），超时会先返回视频标题、并把深度考究转入后台，因此不会拖慢你的回复；查不到就按上下文自然接话，别硬套术语也别自己编。若这里仍不够，可用 mcp__web-search-safe__web_search 查萌娘百科等（本机直连贴吧会被反爬）。新学到的词会自动进后台考究并在出释义后转正，不必反复提交。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      word: z.string().describe('要查的梗/黑话/表达，例如「那你无敌了」「班味」')
+    },
+    async ({ key, token, word }) => {
+      try {
+        const data = await agentApi('/api/socialV2/lookup-meme', {
+          method: 'POST',
+          body: JSON.stringify({ key, word: String(word), token }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 15000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        // 明确告诉模型「不要再试」：查梗只是加分项，卡住回复才是损失。
+        return { content: [{ type: 'text', text: `学梗查询失败或超时（${error?.message ?? error}）。不要重试，直接按上下文自然回应即可。` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.tools?.getFriendDress !== false) {
+  defineTool(
+    'qq_get_friend_dress',
+    '查看某个 QQ 号正在使用的个性装扮（头像框/挂件、名片、双击动作、来电等）。返回每项的 kind/name 与预览图；withImage=true 时会把「挂件」预览图取回来放进你的视觉上下文。适合「你这头像框哪来的」「看看某人装扮」这类话题。目标没设置装扮时 items 为空数组，不要编造。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      userId: z.string().describe('目标 QQ 号'),
+      withImage: z.boolean().optional().describe('是否把挂件预览图取回来看（默认 false）')
+    },
+    async ({ key, token, userId, withImage }) => {
+      try {
+        const q = new URLSearchParams({ key, userId: String(userId) });
+        if (withImage) q.set('withImage', '1');
+        const data = await agentApi(`/api/socialV2/friend-dress?${q.toString()}`, {
+          headers: { 'x-agent-token': token },
+          timeoutMs: 90000
+        });
+        const content = [{ type: 'text', text: JSON.stringify({ ok: data?.ok, userId: data?.userId, isSvip: data?.isSvip, items: data?.items, imageError: data?.imageError, error: data?.error }, null, 2) }];
+        if (data?.image?.data) content.push({ type: 'image', mimeType: data.image.mimeType || 'image/png', data: data.image.data });
+        return { content };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `查询装扮失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.tools?.getMemberAvatar !== false) {
+  defineTool(
+    'qq_get_member_avatar',
+    '查看某个群成员（或本群）的头像图片。userId 传群友 QQ 号；想群头像就传 "group"。返回的图片会直接进入你的视觉上下文，可以描述、玩梗或吐槽。适合「这人头像好怪」「看看某人长什么样」「群里换头像了吗」这类场景；不要频繁刷（每次调用都要下载一张图）。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      userId: z.string().describe('群成员 QQ 号；传 "group" 表示本群群头像'),
+      size: z.union([z.number(), z.string()]).optional().describe('头像尺寸，可选 40/100/140/640，默认 640')
+    },
+    async ({ key, token, userId, size }) => {
+      try {
+        const q = new URLSearchParams({ key, userId: String(userId) });
+        if (size) q.set('size', String(size));
+        const data = await agentApi(`/api/socialV2/member-avatar?${q.toString()}`, {
+          headers: { 'x-agent-token': token },
+          timeoutMs: 60000
+        });
+        if (!data?.data) return { content: [{ type: 'text', text: `取头像失败：${data?.error || '没有图片数据'}` }], isError: true };
+        return {
+          content: [
+            { type: 'text', text: `用户 ${userId} 的头像（${data.mimeType || 'image'}，来源 ${data.avatar}）` },
+            { type: 'image', mimeType: data.mimeType || 'image/jpeg', data: data.data }
+          ]
+        };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `取头像失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.searchImages !== false) {
+  defineTool(
+    'qq_search_images',
+    '按聊天主题/关键词去 B 站找图，返回候选图片 URL。默认从**相关视频的评论区**取图（comment，最接近梗图/表情包），不够时再补专栏配图（article）。**不含视频封面**。注意 B 站很多 .gif 其实是**单帧静态图**（不会动），需要真动图时传 `animatedOnly: true`。想发图时：把返回项里的 url 直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库长期复用。适合「群友聊到某个话题，你去找一张应景的图/梗图」这种场景；不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      query: z.string().describe('搜索关键词，用聊天主题/话题词，例如「猫咪 搞笑」「程序员 梗图」'),
+      count: z.number().optional().describe('最多返回几张，默认 6，最大 12'),
+      sources: z.array(z.enum(['article', 'comment'])).optional().describe('图片来源，默认 [comment, article]（评论优先）；可只传 comment 或只传 article'),
+      animatedOnly: z.boolean().optional().describe('只返回真动图（会逐张下载探测帧数；B 站很多 .gif 其实是单帧静态图，要动图/表情包时建议开启）')
+    },
+    async ({ key, token, query, count, sources, animatedOnly }) => {
+      try {
+        const data = await agentApi('/api/socialV2/search-images', {
+          method: 'POST',
+          body: JSON.stringify({ key, query: String(query), count: count ?? 6, sources: sources && sources.length ? sources : ['comment', 'article'], animatedOnly: animatedOnly === true }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 120000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `搜图失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.listImageLibrary !== false) {
+  defineTool(
+    'qq_list_image_library',
+    '列出本地图库里可用的图片（assets/stickers/ 与 index.json）。想发这些图时，用 qq_send_image（直接发）或 qq_save_sticker（先存进收藏表情库）并把 source 设为 library、image 传返回的 file 文件名。file 是纯文件名，不能带路径。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      query: z.string().optional().describe('按文件名/标题/来源过滤，可省'),
+      limit: z.number().optional().describe('最多返回多少条，默认 50，最大 200')
+    },
+    async ({ key, token, query, limit }) => {
+      try {
+        const q = new URLSearchParams({ key });
+        if (query) q.set('query', String(query));
+        if (limit) q.set('limit', String(limit));
+        const data = await agentApi(`/api/socialV2/image-library?${q.toString()}`, {
+          headers: { 'x-agent-token': token },
+          timeoutMs: 60000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `读取本地图库失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
 if (cfg.socialV2?.tools?.getSelfImage !== false) {
-  server.tool(
+  defineTool(
     'qq_get_self_image',
     '查看你自己的默认 Q 版形象图片（DeepSeek 小鲸鱼形象）。当你被问“你长什么样/发张自拍/你是什么形象”时，可以调用这个工具看自己的样子；返回的图片会直接进入你的视觉上下文。',
     {
@@ -962,7 +1223,7 @@ if (cfg.socialV2?.tools?.getSelfImage !== false) {
 }
 
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.stickerNote !== false) {
-  server.tool(
+  defineTool(
     'qq_sticker_note',
     '给一个收藏表情记录你自己的理解/备注/标签/用法，供以后选择表情时参考。这是本地记忆，不会修改 QQ 账号的官方备注；适合对没有备注的表情看图后记住含义。',
     {
@@ -993,7 +1254,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.stickerNote
 }
 
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.setStickerRemark !== false) {
-  server.tool(
+  defineTool(
     'qq_set_sticker_remark',
     '修改 QQ 账号里收藏表情的官方备注（desc）。这是写操作，会直接影响 QQ 账号的表情备注；仅在管理员明确允许（socialV2.tools.setStickerRemark=true）时可用。一般优先用 qq_sticker_note 记录自己的理解，不要随意改官方备注。',
     {
@@ -1019,7 +1280,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.setStickerR
 
 // ── 合并转发消息查看工具（二代仿真模式） ────────────────────────────────────
 if (cfg.socialV2?.tools?.getForwardMsg !== false) {
-  server.tool(
+  defineTool(
     'qq_get_forward_msg',
     '查看当前会话中出现的合并转发消息/聊天记录内容（只读）。当消息文本里出现 `[转发消息 id=...]`，或 `qq_get_unread_messages` / `qq_get_recent_messages` / `qq_get_message_detail` 返回的某条消息带 `forwardIds` / `hasForward: true` 时调用。只能查看当前会话确实收到过的转发消息 id，不能任意读取。返回内容会包含每条消息的 text、media（图片/表情元数据）与 nestedForwardIds；如果合并转发里有图片，工具会直接把最多 5 张图片以图像内容返回给视觉模型；如果里面有嵌套合并转发，会附带嵌套转发 id 和前几条预览，必要时可继续用本工具查看嵌套 id。',
     {
@@ -1087,6 +1348,13 @@ if (cfg.socialV2?.tools?.getForwardMsg !== false) {
       }
     }
   );
+  }
+  } finally {
+    server.sendToolListChanged = notify;
+  }
 }
+
+registerAllTools();
+installConfigWatcher();
 
 await server.connect(new StdioServerTransport());

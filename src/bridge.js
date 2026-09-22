@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SnowLumaWebSocketClient, text } from '@snowluma/sdk';
 import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } from './dsh-client.js';
@@ -16,6 +17,7 @@ import { mdToPlain, splitForQQ } from './md-to-plain.js';
 import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
+import { createBiliClient, readBiliCookie } from './bili.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import {
   loadSlang,
@@ -343,8 +345,27 @@ function loadConfig() {
         setStickerRemark: false,
         stickerNote: true,
         collectSticker: true,
+        saveSticker: true,
+        sendImage: true,
+        listImageLibrary: true,
+        searchImages: true,
         getSelfImage: true
       },
+      // 从外部来源保存表情（qq_save_sticker）。默认只允许本地图库/base64，
+      // 远程 URL 需显式把 allowRemoteUrl 设为 true（会带来出网下载，谨慎开启）。
+      image: {
+        enabled: true,
+        allowRemoteUrl: false,
+        libraryDir: 'assets/stickers',
+        maxBytes: 5 * 1024 * 1024,
+        maxPerMinute: 5,
+        maxPerHour: 30,
+        // 允许抓取的目标站点 origin；imageReferer 是命中白名单时发送的 Referer
+        refererAllow: ['https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com'],
+        imageReferer: 'https://www.bilibili.com'
+      },
+      // 排队超过该时长就强制清空忙标记并补投（0 = 禁用看门狗）
+      busyRecoveryMs: 480000,
       wake: {
         defaultMode: 'diving',
         preSleepWaitEnabled: true,      // 沉睡前强制观察窗口开关：防止 AI 聊两句就潜水
@@ -716,6 +737,47 @@ async function main() {
   let stickerSyncedAt = 0; // 上次从 SnowLuma 拉取收藏表情的时间戳（毫秒）
   let lastForcedAgentStickerSync = 0; // AI 强制刷新表情库的最小间隔保护
 
+  // ── B 站抓图（本地图库）的路径与状态 ──────────────────────────────────
+  const BILI_COOKIE_FILE = path.join(ROOT, 'state', 'bili-cookie.txt');
+  const BILI_TARGETS_FILE = path.join(ROOT, 'state', 'bili-targets.json');
+  const BILI_LOG_FILE = path.join(ROOT, 'state', 'bili-fetch.log');
+  const BILI_RUNNER = path.join(ROOT, 'scripts', 'bili-fetch-run.sh');
+  // 「按需学梗」的内存缓存（10 分钟）与异步研究排队：
+  // 同步路径只做有硬超时的轻量检索，保证不拖慢回复；深度考究交给原有的异步研究管线。
+  const memeDigestCache = new Map();
+  function enqueueMemeResearch(word) {
+    try {
+      const lower = String(word || '').toLowerCase();
+      if (cfg.slang?.autoResearch === false) return;
+      const entry = slangEntries.find((e) => String(e.content || '').toLowerCase() === lower);
+      if (!entry || entry.status !== SLANG_STATUS.CANDIDATE || (entry.meaning || '').trim()) return;
+      queueSlangTask(() => runSlangResearch([entry]));
+      log(`[meme] 「${word}」已排队异步深度研究`);
+    } catch (error) {
+      log(`[meme] 排队异步研究失败：${error?.message ?? error}`);
+    }
+  }
+
+  function biliStatus() {
+    let cookieSet = false, cookieLen = 0;
+    try {
+      const t = fs.readFileSync(BILI_COOKIE_FILE, 'utf8').trim();
+      cookieSet = Boolean(t);
+      cookieLen = t.length;
+    } catch { /* 未配置 */ }
+    let library = { count: 0, bytes: 0 };
+    try {
+      const idxPath = path.join(resolveImageConfig().libraryDir, 'index.json');
+      const items = JSON.parse(fs.readFileSync(idxPath, 'utf8')).items;
+      if (Array.isArray(items)) library = { count: items.length, bytes: items.reduce((a, x) => a + (Number(x.bytes) || 0), 0) };
+    } catch { /* 图库还没建立 */ }
+    let targets = null;
+    try { targets = JSON.parse(fs.readFileSync(BILI_TARGETS_FILE, 'utf8')); } catch { /* 未配置 */ }
+    let logTail = '';
+    try { logTail = fs.readFileSync(BILI_LOG_FILE, 'utf8').split('\n').slice(-40).join('\n'); } catch { /* 无日志 */ }
+    return { ok: true, cookieSet, cookieLen, targets, library, log: logTail, runnerExists: fs.existsSync(BILI_RUNNER) };
+  }
+
   function stickerEnabled() {
     return cfg.socialV2?.sticker?.enabled !== false;
   }
@@ -777,6 +839,68 @@ async function main() {
     return entry;
   }
 
+  // OneBot HTTP 调用（带网络层重试 + 保留底层 cause）。
+  // 实测偶发 "fetch failed"（同一时刻端口本身健康，属连接抖动），重试即可恢复；
+  // 并把 cause.code（ECONNRESET/ETIMEDOUT…）带进错误信息，便于定位。
+  async function postOneBot(action, params, { timeoutMs = 15000, retries = 2 } = {}) {
+    // 优先走 OneBot WebSocket。原因：SnowLuma 的 HTTP 端点在请求体 ≥2MB 时会直接断连
+    // （宿主经 docker-proxy 与直连容器 IP 都是 UND_ERR_SOCKET / ECONNRESET），
+    // 而 base64 图片动辄 3~7MB。WS 通道没有这个限制（收藏表情的 base64 一直走 WS，稳定）。
+    if (bot && typeof bot.request === 'function') {
+      try {
+        const resp = await Promise.race([
+          bot.request(action, params),
+          new Promise((_, reject) => {
+            const t = setTimeout(() => reject(new Error(`WS ${action} 超时（${timeoutMs}ms）`)), timeoutMs);
+            t.unref?.();
+          })
+        ]);
+        if (resp && typeof resp === 'object' && resp.status && resp.status !== 'ok') {
+          throw new Error(`OneBot ${action} 失败: ${resp.wording || resp.retcode || resp.status}`);
+        }
+        // WS 返回 { status, retcode, data }；HTTP 分支返回 body.data —— 统一成 data
+        return resp && typeof resp === 'object' && 'data' in resp ? resp.data : resp;
+      } catch (error) {
+        log(`[onebot] WS ${action} 失败（${error?.message ?? error}），回退 HTTP`);
+      }
+    }
+    const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(`${httpUrl}/${action}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
+          },
+          body: JSON.stringify(params),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
+          const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口，请检查 config.json 的 snowluma.httpUrl 是否为 OneBot HTTP API 地址）' : '';
+          throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
+        }
+        return body.data;
+      } catch (error) {
+        lastError = error;
+        const cause = error?.cause?.code || error?.cause?.errno || '';
+        const isOneBotError = /OneBot .* 失败/.test(String(error?.message ?? ''));
+        const transient = !isOneBotError &&
+          /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket hang up|UND_ERR/i.test(`${error?.message ?? ''} ${cause}`);
+        if (attempt < retries && transient) {
+          const wait = 300 * Math.pow(3, attempt);
+          log(`[onebot] ${action} 第 ${attempt + 1} 次失败（${error?.message ?? error}${cause ? ' / ' + cause : ''}），${wait}ms 后重试`);
+          await sleep(wait);
+          continue;
+        }
+        throw cause ? new Error(`${error?.message ?? error}（${cause}）`) : error;
+      }
+    }
+    throw lastError;
+  }
+
   // 发送一个收藏表情（按 emoji_id/url/md5 解析，发图片段）。
   async function sendStickerV2(key, stickerRef, options = {}) {
     const assertSendAllowed = captureSendGuard(key);
@@ -825,26 +949,16 @@ async function main() {
         // 真人发表情前通常会有短暂停顿，避免“文字刚发完表情立刻跟上”的机械感。
         await sleep(randInt(800, 2000));
         assertSendAllowed();
-        const res = await fetch(`${httpUrl}/${action}`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
-          },
-          body: JSON.stringify(params),
-          signal: AbortSignal.timeout(15000)
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
-          const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口，请检查 config.json 的 snowluma.httpUrl 是否为 OneBot HTTP API 地址）' : '';
-          throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
-        }
-        sendResolve(body.data);
+        sendResolve(await postOneBot(action, params));
       } catch (error) {
         sendReject(error);
       }
     });
     const data = await sendResult;
+    recordSelfMediaV2(key, {
+      text: '[表情]', kind: 'sticker', messageId: data?.message_id ?? null,
+      media: [{ kind: 'image', file: entry.url || '' }]
+    });
     // 更新本地使用统计
     const updated = markStickerUsed(stickerEntries, entry.id, 'sticker');
     stickerEntries = updated.entries;
@@ -931,6 +1045,180 @@ async function main() {
     const synced = await syncStickerLibrary(true);
     const entry = findSticker(synced?.entries ?? stickerEntries, emojiId);
     return { emojiId, entry: entry || null, remark: cleanRemark };
+  }
+
+  // ── 从外部来源保存表情（qq_save_sticker）────────────────────────────────
+  // 来源：本地图库文件名 / data:base64 / 裸 base64 / 远程 URL（需显式开启）。
+  // 铁律：远程图片一律由桥接自己下载（safeFetchBuffer：SSRF 防护 + 体积/格式校验），
+  //       绝不把 URL 交给 OneBot 网关去抓。
+  function resolveImageConfig() {
+    const img = cfg.socialV2?.image ?? {};
+    return {
+      maxBytes: Math.max(1, Number(img.maxBytes) || 5 * 1024 * 1024),
+      allowRemoteUrl: img.allowRemoteUrl === true,
+      libraryDir: path.resolve(ROOT, String(img.libraryDir || 'assets/stickers')),
+      // refererAllow：允许抓取的**目标站点 origin** 白名单；为空表示不限制目标站点（仍受 SSRF 防护）。
+      refererAllow: Array.isArray(img.refererAllow) ? img.refererAllow.map(String).filter(Boolean) : [],
+      // imageReferer：命中白名单时实际发送的 Referer。B 站图片在 i0.hdslb.com，但防盗链要的 Referer 是 www.bilibili.com。
+      imageReferer: String(img.imageReferer || 'https://www.bilibili.com')
+    };
+  }
+
+  async function resolveImageBuffer(source, options = {}) {
+    const raw = String(source ?? '').trim();
+    if (!raw) throw new Error('image 不能为空');
+    const kind = String(options.source ?? 'auto').trim();
+    const limits = resolveImageConfig();
+
+    // 1) data:image/...;base64,xxx 或裸 base64
+    if (kind === 'base64' || /^data:image\//i.test(raw)) {
+      const matched = /^data:([^;,]+);base64,([\s\S]*)$/i.exec(raw);
+      const b64 = (matched ? matched[2] : raw).replace(/\s+/g, '');
+      const buffer = Buffer.from(b64, 'base64');
+      if (!buffer.length) throw new Error('base64 解出来是空的');
+      if (buffer.length > limits.maxBytes) throw new Error(`图片超过上限（${buffer.length} > ${limits.maxBytes} 字节）`);
+      if (!looksLikeImageBuffer(buffer)) throw new Error('base64 内容不是有效图片（PNG/JPEG/GIF/WebP）');
+      return { buffer, via: 'base64' };
+    }
+
+    // 2) 远程 URL（默认关闭）
+    if (/^https?:\/\//i.test(raw)) {
+      if (kind === 'library') throw new Error('source=library 时不能传 URL');
+      if (!limits.allowRemoteUrl) throw new Error('远程图片已禁用：需要把 config.json 的 socialV2.image.allowRemoteUrl 设为 true');
+      const target = new URL(raw);
+      const allowList = limits.refererAllow;
+      const hostAllowed = allowList.length === 0 || allowList.some((entry) => {
+        // 按 hostname 比较（B 站的封面/表情链接 http、https 混用，按 origin 比会漏）
+        try { return new URL(entry).hostname.toLowerCase() === target.hostname.toLowerCase(); } catch { return false; }
+      });
+      if (!hostAllowed) throw new Error(`图片站点不在 refererAllow 白名单内：${target.origin}`);
+      const headers = allowList.length ? { referer: limits.imageReferer } : {};
+      const res = await safeFetchBuffer(raw, limits.maxBytes, Object.keys(headers).length ? { headers } : {});
+      if (!looksLikeImageBuffer(res.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
+      return { buffer: res.buffer, via: 'url', url: res.url, referer: headers.referer || '' };
+    }
+
+    // 3) 本地图库文件名（禁止任何路径成分）
+    const name = path.basename(raw);
+    if (name !== raw || name.startsWith('.')) throw new Error('本地图库只接受纯文件名（不能带路径或 ..）');
+    const file = path.join(limits.libraryDir, name);
+    if (!file.startsWith(limits.libraryDir + path.sep)) throw new Error('非法路径');
+    let buffer;
+    try { buffer = await fs.promises.readFile(file); } catch { throw new Error(`本地图库中找不到图片 ${name}`); }
+    if (buffer.length > limits.maxBytes) throw new Error(`图片超过上限（${buffer.length} > ${limits.maxBytes} 字节）`);
+    if (!looksLikeImageBuffer(buffer)) throw new Error('本地图库文件不是有效图片（PNG/JPEG/GIF/WebP）');
+    return { buffer, via: 'library', name };
+  }
+
+  // 把一张外部图片存进 QQ 收藏表情库，返回 emoji_id（之后用 qq_send_sticker 发送）。
+  async function saveStickerV2(key, source, options = {}) {
+    const assertSendAllowed = captureSendGuard(key);
+    const resolved = await resolveImageBuffer(source, options);
+    assertSendAllowed();
+    const addRes = await bot.request('add_custom_face', { file: 'base64://' + resolved.buffer.toString('base64') });
+    if (!addRes || addRes.status !== 'ok' || addRes.retcode !== 0) {
+      throw new Error(`add_custom_face 失败: ${addRes?.wording || addRes?.retcode || 'unknown'}`);
+    }
+    const emojiId = String(addRes.data?.emoji_id || '');
+    if (!emojiId) throw new Error('add_custom_face 未返回 emoji_id');
+    const maxRemarkChars = Math.max(1, Number(cfg.socialV2?.sticker?.collect?.maxRemarkChars) || 20);
+    const cleanRemark = String(options.remark ?? '').trim().slice(0, maxRemarkChars);
+    if (cleanRemark) {
+      assertSendAllowed();
+      const modRes = await bot.request('modify_custom_face', { emoji_id: emojiId, desc: cleanRemark });
+      if (!modRes || modRes.status !== 'ok' || modRes.retcode !== 0) {
+        log(`[sticker] 保存成功但备注失败 ${emojiId}: ${modRes?.wording || modRes?.retcode || 'unknown'}`);
+      }
+    }
+    const synced = await syncStickerLibrary(true);
+    const entry = findSticker(synced?.entries ?? stickerEntries, emojiId);
+    const anim = resolved.anim || { kind: null, frames: null, animated: false };
+    return { emojiId, entry: entry || null, remark: cleanRemark, via: resolved.via, sourceUrl: resolved.url || '', name: resolved.name || '', animated: anim.animated, frames: anim.frames };
+  }
+
+  // 直接发送一张图片消息（不进收藏表情库）。复用与保存表情相同的来源解析与安全校验。
+  async function sendImageV2(key, source, options = {}) {
+    const assertSendAllowed = captureSendGuard(key);
+    const resolved = await resolveImageBuffer(source, options);
+    assertSendAllowed();
+    const [kind, id] = key.split(':');
+    const segments = [];
+    const replyToMessageId = options.replyToMessageId;
+    if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
+      const rid = String(replyToMessageId).trim();
+      if (!/^-?[1-9]\d*$/.test(rid)) throw new Error('replyToMessageId 必须是非零整数（消息 id 可能为负数）');
+      segments.push({ type: 'reply', data: { id: rid } });
+    }
+    const atUserId = options.atUserId;
+    if (atUserId !== undefined && atUserId !== null && String(atUserId).trim() !== '') {
+      const at = String(atUserId).trim();
+      if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
+      if (kind === 'group') segments.push({ type: 'at', data: { qq: at } });
+    }
+    segments.push({ type: 'image', data: { file: 'base64://' + resolved.buffer.toString('base64') } });
+    const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
+    const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
+    // 与文字/表情共用 sendChain，保证顺序不被并发工具调用打乱。
+    let sendResolve;
+    let sendReject;
+    const sendResult = new Promise((resolve, reject) => { sendResolve = resolve; sendReject = reject; });
+    sendChain = sendChain.then(async () => {
+      try {
+        await sleep(randInt(500, 1500));
+        assertSendAllowed();
+        sendResolve(await postOneBot(action, params));
+      } catch (error) {
+        sendReject(error);
+      }
+    });
+    const data = await sendResult;
+    const anim = resolved.anim || { kind: null, frames: null, animated: false };
+    if (anim.kind === 'gif' && !anim.animated) log(`[image] 注意：${resolved.url || resolved.name} 是单帧静态 .gif（不会动）`);
+    recordSelfMediaV2(key, {
+      text: '[图片]', kind: 'image', messageId: data?.message_id ?? null,
+      media: [{ kind: 'image', file: resolved.name || '', url: resolved.url || '' }]
+    });
+    return { data, via: resolved.via, sourceUrl: resolved.url || '', name: resolved.name || '', animated: anim.animated, frames: anim.frames };
+  }
+
+  // ── 忙标记看门狗 ────────────────────────────────────────────────────────
+  // 背景：桥接的“会话是否忙”由内存标记（v2TurnStartAt / collectors / promptQueues /
+  // pendingWakeKeys）推断。若桥接在回合中途重启、或 DSH 侧回合异常结束而终帧丢失，
+  // 这些标记会永久残留 —— 表现为「会话繁忙，暂存唤醒原因」无限排队、AI 再也不回话。
+  // 这里做个兜底：排队超过 busyRecoveryMs（默认 8 分钟）就强制清标记并补投一次唤醒。
+  let busyWatchdogTimer = null;
+
+  function forceClearBusyV2(key, reason) {
+    const st = getSocialV2State(key);
+    const sid = state.sessions[key];
+    if (sid) {
+      v2TurnStartAt.delete(sid);
+      collectors.delete(sid);
+      toolCallNames.delete(sid);
+      pendingSendToolCalls.delete(sid);
+    }
+    pendingWakeKeys.delete(key);
+    const q = promptQueues.get(key);
+    if (q) { q.running = false; q.queue.length = 0; }
+    if (st.pendingWakeTimer) { clearTimeout(st.pendingWakeTimer); st.pendingWakeTimer = null; }
+    st.pendingSince = 0;
+    log(`[reserved2] ⚠ 会话繁忙超时，强制清空忙标记 ${key}（${reason}）`);
+  }
+
+  function startBusyWatchdogV2() {
+    const timeoutMs = Math.max(0, Number(cfg.socialV2?.busyRecoveryMs ?? 480000));
+    if (!timeoutMs) { log('[reserved2] 忙标记看门狗已禁用（busyRecoveryMs=0）'); return; }
+    busyWatchdogTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, st] of socialV2.conversations.entries()) {
+        const since = Number(st.pendingSince) || 0;
+        if (!since || now - since < timeoutMs) continue;
+        forceClearBusyV2(key, `busy ${Math.round((now - since) / 1000)}s`);
+        void sendWakePromptV2(key, 'busyRecovery').catch((e) => log(`[reserved2] 补投唤醒失败 ${key}: ${e?.message ?? e}`));
+      }
+    }, 60000);
+    busyWatchdogTimer.unref?.();
+    log(`[reserved2] 忙标记看门狗已启动（${Math.round(timeoutMs / 60000)} 分钟）`);
   }
 
   function saveSlangStore() {
@@ -1094,6 +1382,7 @@ async function main() {
       }
       const output = await waitLearnerTurn(sessionId);
       const results = parseResearchJson(output);
+      let confirmedThisRound = 0;
       for (const r of results) {
         const entry = slangEntries.find((e) => e.content === r.content);
         if (!entry) continue;
@@ -1103,16 +1392,25 @@ async function main() {
           log(`黑话研究：${r.content} 未确认，保留候选待后续研究`);
           continue;
         }
-        if (r.meaning) entry.meaning = r.meaning;
+        let gotMeaning = false;
+        if (r.meaning) { entry.meaning = r.meaning; gotMeaning = true; }
         if (r.usage) entry.usage = r.usage;
         if (r.example) entry.example = r.example;
         if (r.risk) entry.risk = r.risk;
         if (Array.isArray(r.sources) && r.sources.length) entry.sources = r.sources.map((s) => String(s ?? '').trim()).filter(Boolean).slice(0, 10);
         entry.lastInferenceCount = entry.count;
-        entry.updatedAt = new Date().toISOString();
+        entry.researchedAt = new Date().toISOString();
+        entry.updatedAt = entry.researchedAt;
+        // 研究出真实释义即自动转正（可用开关关闭，回到“人工确认”模式）：
+        // 否则候选项会永远停在 candidate，AI 的 qq_slang_query 查不到，等于白研究。
+        if (gotMeaning && cfg.slang?.autoConfirmResearched !== false && entry.status === SLANG_STATUS.CANDIDATE) {
+          entry.status = SLANG_STATUS.CONFIRMED;
+          entry.autoConfirmed = true;
+          confirmedThisRound++;
+        }
       }
       saveSlangStore();
-      log(`黑话研究：已更新 ${results.length} 条候选解释`);
+      log(`黑话研究：已更新 ${results.length} 条候选解释（其中 ${confirmedThisRound} 条自动转正为已确认）`);
     } catch (error) {
       if (/会话|session|not found|404/i.test(String(error?.message ?? error))) {
         invalidateSlangLearnerSession();
@@ -1181,9 +1479,11 @@ async function main() {
     };
   }
 
-  // 已确认黑话的公开列表（按出现次数排序，最多 injectMax 条）。
-  function confirmedSlangListV2() {
-    const max = Math.max(1, Math.min(30, Number(cfg.slang?.injectMax) || 8));
+  // 已确认黑话的公开列表（按出现次数排序）。默认最多 injectMax 条（用于注入提示词的短表）；
+  // AI 主动查询时传更大的 limit，否则库一大就“只能看见前 8 条”。
+  function confirmedSlangListV2(limit) {
+    const fallback = Math.max(1, Math.min(30, Number(cfg.slang?.injectMax) || 8));
+    const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : fallback;
     return slangEntries
       .filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning)
       .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0))
@@ -1198,6 +1498,15 @@ async function main() {
     if (cfg.slang?.enabled !== false) {
       const block = buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8);
       if (block) parts.push(block);
+      // 遇到完全不懂的梗：主动查。这条提示每次都注入（不依赖预设文件），
+      // 因此调整策略不需要重启 DSH。同步查询有硬预算，不会拖慢回复。
+      if (cfg.socialV2?.tools?.lookupMeme !== false) {
+        parts.push([
+          '【碰到不认识的梗/黑话】先查再回：用 mcp__snowluma__qq_lookup_meme（key/token/word）。',
+          '本地已有释义会立刻返回；没有的话会去 B 站相关视频与高赞评论现学，几秒内出结果，不会拖慢你的回复。',
+          '查不到就按上下文自然接话，别硬套术语、也别自己编含义；用过一次后同一条梗有缓存，可直接复用结论。'
+        ].join(''));
+      }
     }
     return parts.join('\n\n') + '\n\n' + promptText;
   }
@@ -2424,7 +2733,7 @@ async function main() {
           const current = file.socialV2 ?? {};
           const merged = { ...current, ...body };
           // 子对象必须是非 null 对象；null/数组/基本类型会覆盖默认值导致工具开关被绕过，这里直接保留当前值。
-          for (const sub of ['tools', 'wake', 'send', 'wait', 'proactive', 'sticker', 'feedback', 'context']) {
+          for (const sub of ['tools', 'wake', 'send', 'wait', 'proactive', 'sticker', 'feedback', 'context', 'image']) {
             if (body[sub] !== undefined && (body[sub] === null || typeof body[sub] !== 'object' || Array.isArray(body[sub]))) {
               merged[sub] = current[sub] ?? {};
             }
@@ -2434,11 +2743,31 @@ async function main() {
             merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
           }
           // tools：只接受布尔开关
-          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'getSelfImage'];
+          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage'];
           if (body.tools && typeof body.tools === 'object') {
             merged.tools = { ...(current.tools ?? {}), ...body.tools };
             for (const k of toolFlags) {
               if (typeof merged.tools[k] !== 'boolean') merged.tools[k] = current.tools?.[k] !== false;
+            }
+          }
+          // image：从外部保存表情的能力参数（体积/频率/是否允许远程 URL）
+          if (body.image && typeof body.image === 'object') {
+            const cur = current.image ?? {};
+            merged.image = { ...cur, ...body.image };
+            for (const k of ['maxBytes', 'maxPerMinute', 'maxPerHour']) {
+              if (merged.image[k] !== undefined) {
+                const n = Number(merged.image[k]);
+                merged.image[k] = Number.isFinite(n) && n >= 0 ? Math.round(n) : (cur[k] ?? 0);
+              }
+            }
+            if (merged.image.enabled !== undefined) merged.image.enabled = merged.image.enabled !== false;
+            if (merged.image.allowRemoteUrl !== undefined) merged.image.allowRemoteUrl = merged.image.allowRemoteUrl === true;
+            if (merged.image.imageReferer !== undefined) merged.image.imageReferer = String(merged.image.imageReferer || 'https://www.bilibili.com').slice(0, 300);
+            if (merged.image.libraryDir !== undefined) merged.image.libraryDir = String(merged.image.libraryDir || 'assets/stickers').slice(0, 200);
+            if (merged.image.refererAllow !== undefined) {
+              merged.image.refererAllow = Array.isArray(merged.image.refererAllow)
+                ? merged.image.refererAllow.map((v) => String(v ?? '').trim()).filter((v) => /^https?:\/\//i.test(v)).slice(0, 20)
+                : (cur.refererAllow ?? []);
             }
           }
           // wake：数值与字符串数组归一化
@@ -2680,10 +3009,14 @@ async function main() {
             setStickerRemark: 'qq_set_sticker_remark',
             stickerNote: 'qq_sticker_note',
             collectSticker: 'qq_collect_sticker',
+            saveSticker: 'qq_save_sticker',
+            sendImage: 'qq_send_image',
+            listImageLibrary: 'qq_list_image_library',
+            searchImages: 'qq_search_images',
             getSelfImage: 'qq_get_self_image'
           };
           const tools = cfg.socialV2?.tools ?? {};
-          const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker']);
+          const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker']);
           const enabledTools = [];
           for (const [flag, name] of Object.entries(toolMap)) {
             if (tools[flag] !== false && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
@@ -3565,6 +3898,387 @@ async function main() {
           }
           return;
         }
+        // 从外部来源保存表情（qq_save_sticker）：本地图库 / base64 / 远程 URL（需开启）
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/save-sticker') {
+          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
+          if (cfg.socialV2?.image?.enabled === false) { sendJson({ ok: false, error: '图片保存功能已关闭' }, 403); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const image = String(body.image ?? '').trim();
+          if (!key || !image) { sendJson({ ok: false, error: 'key 和 image 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('saveSticker')) { sendJson({ ok: false, error: '工具未启用：qq_save_sticker' }, 403); return; }
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const st = getSocialV2State(key);
+          const imgCfg = cfg.socialV2?.image ?? {};
+          const now = Date.now();
+          const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
+          const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
+          const recentMinute = (st.stickerSaveTimes || []).filter((t) => now - t < 60000).length;
+          const recentHour = (st.stickerSaveTimes || []).filter((t) => now - t < 3600000).length;
+          if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
+            sendJson({ ok: false, error: '保存图片太频繁了，请过一会儿再试' }, 429);
+            return;
+          }
+          // 预占额度，避免并发绕过限频；失败回滚。
+          st.stickerSaveTimes = st.stickerSaveTimes || [];
+          st.stickerSaveTimes.push(now);
+          if (st.stickerSaveTimes.length > 500) st.stickerSaveTimes = st.stickerSaveTimes.slice(-500);
+          try {
+            const result = await saveStickerV2(key, image, {
+              source: String(body.source ?? 'auto'),
+              remark: body.remark
+            });
+            saveSocialV2State();
+            log(`[sticker] 保存表情 ${key}: ${result.emojiId}${result.remark ? '（备注：' + result.remark + '）' : ''} via=${result.via}${result.sourceUrl ? ' ' + result.sourceUrl : ''}`);
+            appendActivity(`${key} [sticker] 保存表情：${result.remark || result.emojiId}（${result.via}）`);
+            sendJson({ ok: true, key, emojiId: result.emojiId, sticker: result.entry, via: result.via });
+          } catch (error) {
+            st.stickerSaveTimes = st.stickerSaveTimes.filter((t) => t !== now);
+            sendJson({ ok: false, error: `保存表情失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // 直接发送一张图片（qq_send_image）：本地图库 / base64 / 远程 URL（需开启）
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-image') {
+          if (cfg.socialV2?.image?.enabled === false) { sendJson({ ok: false, error: '图片功能已关闭' }, 403); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const image = String(body.image ?? '').trim();
+          if (!key || !image) { sendJson({ ok: false, error: 'key 和 image 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendImage')) { sendJson({ ok: false, error: '工具未启用：qq_send_image' }, 403); return; }
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const st = getSocialV2State(key);
+          const imgCfg = cfg.socialV2?.image ?? {};
+          const now = Date.now();
+          const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
+          const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
+          const recentMinute = (st.imageSendTimes || []).filter((t) => now - t < 60000).length;
+          const recentHour = (st.imageSendTimes || []).filter((t) => now - t < 3600000).length;
+          if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
+            sendJson({ ok: false, error: '发图片太频繁了，请过一会儿再试' }, 429);
+            return;
+          }
+          st.imageSendTimes = st.imageSendTimes || [];
+          st.imageSendTimes.push(now);
+          if (st.imageSendTimes.length > 500) st.imageSendTimes = st.imageSendTimes.slice(-500);
+          try {
+            const result = await sendImageV2(key, image, {
+              source: String(body.source ?? 'auto'),
+              replyToMessageId: body.replyToMessageId,
+              atUserId: body.atUserId
+            });
+            saveSocialV2State();
+            log(`[image] 发送图片 ${key} via=${result.via}${result.sourceUrl ? ' ' + result.sourceUrl : ''}`);
+            appendActivity(`${key} [image] 发送图片（${result.via}）`);
+            sendJson({ ok: true, key, via: result.via, messageId: result.data?.message_id ?? null });
+          } catch (error) {
+            st.imageSendTimes = st.imageSendTimes.filter((t) => t !== now);
+            sendJson({ ok: false, error: `发送图片失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // ── AI 按聊天主题搜图（qq_search_images）─────────────────────────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/search-images') {
+          if (cfg.socialV2?.image?.enabled === false) { sendJson({ ok: false, error: '图片功能已关闭' }, 403); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const query = String(body.query ?? '').trim();
+          if (!key || !query) { sendJson({ ok: false, error: 'key 和 query 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('searchImages')) { sendJson({ ok: false, error: '工具未启用：qq_search_images' }, 403); return; }
+          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const st = getSocialV2State(key);
+          const imgCfg = cfg.socialV2?.image ?? {};
+          const now = Date.now();
+          const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
+          const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
+          const recentMinute = (st.imageSearchTimes || []).filter((t) => now - t < 60000).length;
+          const recentHour = (st.imageSearchTimes || []).filter((t) => now - t < 3600000).length;
+          if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
+            sendJson({ ok: false, error: '搜图太频繁了，请过一会儿再试' }, 429);
+            return;
+          }
+          st.imageSearchTimes = st.imageSearchTimes || [];
+          st.imageSearchTimes.push(now);
+          if (st.imageSearchTimes.length > 500) st.imageSearchTimes = st.imageSearchTimes.slice(-500);
+          try {
+            const client = createBiliClient({ cookie: readBiliCookie(ROOT) });
+            const rawSources = Array.isArray(body.sources) ? body.sources : (body.sources ? [body.sources] : ['comment', 'article']);
+            const sources = rawSources.map(String).filter((x) => x === 'article' || x === 'comment');
+            const items = await client.searchImages(query, {
+              count: Math.min(12, Math.max(1, Number(body.count) || 6)),
+              sources: sources.length ? sources : ['comment', 'article'],
+              videoTop: Math.min(8, Math.max(1, Number(body.videoTop) || 5)),
+              commentPages: Math.min(3, Math.max(1, Number(body.commentPages) || 2)),
+              animatedOnly: body.animatedOnly === true
+            });
+            saveSocialV2State();
+            appendActivity(`${key} [bili] 按主题搜图：${query}（${items.length} 张）`);
+            log(`[bili] 搜图 ${query} → ${items.length} 张`);
+            sendJson({
+              ok: true, query, count: items.length, items,
+              animatedOnly: body.animatedOnly === true,
+              hint: '默认从相关视频的评论区取图（不够再补专栏配图），不含视频封面。每项 url 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker 存进收藏表情库。注意：B 站很多 .gif 是单帧静态图，要真动图请传 animatedOnly=true'
+            });
+          } catch (error) {
+            st.imageSearchTimes = st.imageSearchTimes.filter((t) => t !== now);
+            sendJson({ ok: false, error: `搜图失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // ── B 站抓图（本地图库）：状态 / 配置 / 手动触发 ─────────────────
+        if (req.method === 'GET' && url.pathname === '/api/bili/status') {
+          sendJson(biliStatus());
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/bili/config') {
+          const body = await readBody();
+          let wroteCookie = false;
+          if (typeof body.sessdata === 'string') {
+            const v = body.sessdata.trim();
+            fs.mkdirSync(path.dirname(BILI_COOKIE_FILE), { recursive: true });
+            if (v) {
+              // 只写值就自动补 SESSDATA=；也接受完整 cookie 串
+              fs.writeFileSync(BILI_COOKIE_FILE, v.includes('=') ? v : `SESSDATA=${v}`, { mode: 0o600 });
+              wroteCookie = true;
+            } else {
+              try { fs.unlinkSync(BILI_COOKIE_FILE); } catch { /* 本来就没有 */ }
+            }
+          }
+          if (body.targets && typeof body.targets === 'object') {
+            const t = body.targets;
+            const toList = (v, stripCv) => (Array.isArray(v) ? v : []).map((x) => String(x ?? '').trim())
+              .map((x) => (stripCv ? x.replace(/^cv/i, '') : x)).filter(Boolean).slice(0, 100);
+            const clean = {
+              keywords: toList(t.keywords, false),
+              bvids: toList(t.bvids, false),
+              mids: toList(t.mids, false),
+              cvs: toList(t.cvs, true),
+              sources: {
+                cover: t.sources?.cover !== false,
+                comments: t.sources?.comments !== false,
+                dynamic: t.sources?.dynamic !== false,
+                detail: t.sources?.detail === true
+              },
+              limit: Math.max(1, Math.min(500, Number(t.limit) || 40)),
+              dynamicPages: Math.max(1, Math.min(20, Number(t.dynamicPages) || 1)),
+              commentPages: Math.max(1, Math.min(20, Number(t.commentPages) || 1)),
+              minSide: Math.max(0, Math.min(4000, Number(t.minSide) || 150)),
+              maxBytes: Math.max(1024, Math.min(20 * 1024 * 1024, Number(t.maxBytes) || 5242880)),
+              delayMs: Math.max(0, Math.min(10000, Number(t.delayMs) || 900))
+            };
+            fs.mkdirSync(path.dirname(BILI_TARGETS_FILE), { recursive: true });
+            fs.writeFileSync(BILI_TARGETS_FILE, JSON.stringify(clean, null, 2));
+            log(`[bili] 抓图目标已更新：BV ${clean.bvids.length} / UID ${clean.mids.length} / 专栏 ${clean.cvs.length}`);
+          }
+          sendJson({ ok: true, wroteCookie, ...biliStatus() });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/bili/fetch') {
+          if (!fs.existsSync(BILI_RUNNER)) { sendJson({ ok: false, error: '抓图脚本不存在：scripts/bili-fetch-run.sh' }, 500); return; }
+          try {
+            const child = spawn('bash', [BILI_RUNNER], { cwd: ROOT, detached: true, stdio: 'ignore' });
+            child.unref();
+            appendActivity('[bili] 手动触发一次抓图');
+            log('[bili] 已手动触发抓图（后台运行，日志见 state/bili-fetch.log）');
+            sendJson({ ok: true, started: true });
+          } catch (error) {
+            sendJson({ ok: false, error: `启动抓图失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // 按需「学梗」：本地黑话库 → B 站（视频标题/简介 + 高赞评论）→ 存为候选词条
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/lookup-meme') {
+          if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const word = String(body.word ?? '').trim().slice(0, 50);
+          if (!key || !word) { sendJson({ ok: false, error: 'key 和 word 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('lookupMeme')) { sendJson({ ok: false, error: '工具未启用：qq_lookup_meme' }, 403); return; }
+          const lower = word.toLowerCase();
+          // ① 内存缓存（10 分钟）：同一个梗连着查不再打网络
+          const cached = memeDigestCache.get(lower);
+          if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
+            // 与联网路径保持同样的 JSON 形状（都包在 digest 里），避免调用方两套解析
+            sendJson({ ok: true, word, from: 'cache', digest: cached.digest, note: '来自 10 分钟内的查询缓存（同样的视频/评论结果）。' });
+            return;
+          }
+          // ② 本地库：必须真的有释义才算命中（候选项只有 suggested*，不能当答案返回）
+          const hasMeaning = (e) => !!(e && (e.meaning || '').trim());
+          const local = slangEntries.find((e) => hasMeaning(e) && String(e.content || '').toLowerCase() === lower)
+            // 退一步做包含匹配（「theshy」能命中「ig theshy」），但只在词够长时，避免误配
+            || (lower.length >= 3 ? slangEntries.find((e) => hasMeaning(e) && String(e.content || '').toLowerCase().includes(lower)) : null);
+          if (local) {
+            sendJson({ ok: true, word, from: 'library', status: local.status, entry: {
+              content: local.content, meaning: local.meaning || '', usage: local.usage || '',
+              example: local.example || '', risk: local.risk || '', sources: local.sources || []
+            } });
+            return;
+          }
+          // ③ 联网检索：给硬超时，保证不拖慢回复；超时就只给视频标题并转异步深度研究
+          const withBudget = (promise, ms) => Promise.race([
+            promise,
+            new Promise((_, reject) => { const t = setTimeout(() => reject(new Error('budget')), ms); t.unref?.(); })
+          ]);
+          try {
+            const client = createBiliClient({ cookie: readBiliCookie(ROOT) });
+            let k;
+            try {
+              k = await withBudget(client.lookupKnowledge(word, { videoCount: 5, commentCount: 10, commentVideos: 1 }), 4000);
+            } catch {
+              // 超预算：退化成只搜视频标题（快），评论放弃
+              const vids = await withBudget(client.searchVideos(word, { page: 1 }), 2500).catch(() => []);
+              k = { videos: vids.slice(0, 5).map((v) => ({ bvid: v.bvid, aid: v.aid, title: v.title, desc: '', play: null, author: '' })), comments: [] };
+              log(`[meme] 「${word}」联网超预算，已退化为仅视频标题；深度研究在词条落库后统一排队`);
+            }
+            const digest = {
+              videos: k.videos.slice(0, 6).map((v) => ({ bvid: v.bvid, title: v.title, desc: v.desc, play: v.play, author: v.author })),
+              comments: k.comments.slice(0, 12).map((c) => ({ text: c.text, like: c.like, from: c.from })),
+              sources: k.videos.slice(0, 3).map((v) => `https://www.bilibili.com/video/${v.bvid}`)
+            };
+            memeDigestCache.set(lower, { at: Date.now(), digest });
+            // 存成候选词条：轻量结果先进库，异步管线随后做深度考究并自动转正
+            try {
+              const now = Date.now();
+              let entry = slangEntries.find((e) => String(e.content || '').toLowerCase() === lower);
+              if (!entry) {
+                entry = {
+                  id: `${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
+                  content: word, meaning: '', usage: '', example: '', risk: '',
+                  status: SLANG_STATUS.CANDIDATE, count: 1, sources: digest.sources,
+                  createdAt: now, updatedAt: now
+                };
+                slangEntries.push(entry);
+              }
+              entry.sources = digest.sources;
+              entry.suggestedMeaning = digest.videos[0] ? digest.videos[0].title : '';
+              entry.suggestedUsage = digest.comments[0] ? `高赞评论：${digest.comments[0].text}` : '';
+              entry.updatedAt = now;
+              saveSlangStore();
+            } catch (error) {
+              log(`[meme] 写入候选词条失败：${error?.message ?? error}`);
+            }
+            log(`[meme] 学梗「${word}」→ 视频 ${digest.videos.length} / 评论 ${digest.comments.length}`);
+            // 这次只是「够用」的轻量结果；候选词条交给异步管线做深度考究，
+            // 出释义后自动转正，下次同一条梗直接命中本地库（零网络）。
+            enqueueMemeResearch(word);
+            sendJson({
+              ok: true, word, from: 'bilibili', digest,
+              note: '这些是 B 站的相关视频与高赞评论（最真实的用法语境）。贴吧/萌娘百科本机直连被反爬/需授权，需要时用 web_search 兜底。已同时排入后台深度考究，出释义后自动转正；同一条梗 10 分钟内再查直接命中缓存，之后命中本地库（零网络）。'
+            });
+          } catch (error) {
+            sendJson({ ok: false, error: `学梗失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+
+        // 个性装扮（头像框/挂件/名片…）：qq_get_friend_dress
+        if (req.method === 'GET' && url.pathname === '/api/socialV2/friend-dress') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const userId = String(url.searchParams.get('userId') ?? '').trim();
+          const withImage = url.searchParams.get('withImage') === '1';
+          if (!key || !userId) { sendJson({ ok: false, error: 'key 和 userId 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('getFriendDress')) { sendJson({ ok: false, error: '工具未启用：qq_get_friend_dress' }, 403); return; }
+          try {
+            const resp = await bot.request('_get_friend_dress', { user_id: Number(userId) });
+            if (resp?.status && resp.status !== 'ok') throw new Error(resp.wording || resp.retcode || 'onebot 调用失败');
+            const data = resp?.data ?? resp ?? {};
+            const items = (Array.isArray(data.items) ? data.items : []).map((it) => ({
+              kind: it?.kind ?? '',
+              name: it?.name ?? '',
+              itemId: it?.item_id ?? it?.itemId ?? 0,
+              previewUrl: it?.preview_url ?? it?.previewUrl ?? '',
+              videoUrl: it?.video_url ?? it?.videoUrl ?? '',
+              price: it?.price ?? 0
+            }));
+            const out = { ok: true, key, userId, isSvip: data.is_svip === true, avatarUrl: data.avatar_url || memberAvatarUrl(userId), items };
+            if (withImage) {
+              // 优先取「挂件」，取不到就取第一个有预览图的
+              const target = items.find((it) => it.kind.includes('挂件') && it.previewUrl) || items.find((it) => it.previewUrl);
+              if (target) {
+                try {
+                  const fetched = await safeFetchBuffer(target.previewUrl, 4 * 1024 * 1024);
+                  if (looksLikeImageBuffer(fetched.buffer)) {
+                    out.image = { kind: target.kind, name: target.name, mimeType: mimeFromBuffer(fetched.buffer), data: fetched.buffer.toString('base64') };
+                  }
+                } catch (error) {
+                  out.imageError = `预览图取回失败：${error?.message ?? error}`;
+                }
+              }
+            }
+            log(`[dress] ${key} 查询 ${userId} 装扮：${items.length} 项${out.image ? '（含预览图）' : ''}`);
+            sendJson(out);
+          } catch (error) {
+            sendJson({ ok: false, error: `查询装扮失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+
+        // 群成员/群头像（qq_get_member_avatar）：把头像取回来交给视觉模型
+        if (req.method === 'GET' && url.pathname === '/api/socialV2/member-avatar') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const userId = String(url.searchParams.get('userId') ?? '').trim();
+          const size = Number(url.searchParams.get('size')) || 640;
+          if (!key || !userId) { sendJson({ ok: false, error: 'key 和 userId 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('getMemberAvatar')) { sendJson({ ok: false, error: '工具未启用：qq_get_member_avatar' }, 403); return; }
+          const isGroup = userId === 'group';
+          const avatarUrl = isGroup ? groupAvatarUrl(key.split(':')[1], size) : memberAvatarUrl(userId, size);
+          if (!avatarUrl) { sendJson({ ok: false, error: 'userId 无效' }, 400); return; }
+          try {
+            const fetched = await safeFetchBuffer(avatarUrl, 4 * 1024 * 1024);
+            if (!looksLikeImageBuffer(fetched.buffer)) { sendJson({ ok: false, error: '取回的内容不是图片' }, 500); return; }
+            sendJson({
+              ok: true, key, userId, avatar: avatarUrl,
+              mimeType: mimeFromBuffer(fetched.buffer),
+              data: fetched.buffer.toString('base64')
+            });
+          } catch (error) {
+            sendJson({ ok: false, error: `取头像失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+
+        // 本地图库列表（qq_list_image_library）：让 AI 知道 assets/stickers/ 里有哪些图可用
+        if (req.method === 'GET' && url.pathname === '/api/socialV2/image-library') {
+          if (cfg.socialV2?.image?.enabled === false) { sendJson({ ok: false, error: '图片功能已关闭' }, 403); return; }
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          if (req.headers['x-agent-token']) {
+            if (!key || !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+            if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+            if (!v2ToolEnabled('listImageLibrary')) { sendJson({ ok: false, error: '工具未启用：qq_list_image_library' }, 403); return; }
+          }
+          const limits = resolveImageConfig();
+          const indexPath = path.join(limits.libraryDir, 'index.json');
+          let lib = { items: [] };
+          try { lib = JSON.parse(fs.readFileSync(indexPath, 'utf8')); } catch { /* 图库还没建立 */ }
+          const query = String(url.searchParams.get('query') ?? '').trim().toLowerCase();
+          const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+          let items = Array.isArray(lib.items) ? lib.items : [];
+          if (query) {
+            items = items.filter((x) => [x.file, x.title, x.source, x.origin].some((v) => String(v || '').toLowerCase().includes(query)));
+          }
+          const total = items.length;
+          const out = items.slice(0, limit).map((x) => ({
+            file: x.file, width: x.width, height: x.height,
+            kb: Math.round((Number(x.bytes) || 0) / 1024),
+            source: x.source || '', origin: x.origin || '', title: x.title || ''
+          }));
+          sendJson({ ok: true, dir: String(cfg.socialV2?.image?.libraryDir || 'assets/stickers'), total, count: out.length, items: out });
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/sticker-list') {
           if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
           const key = String(url.searchParams.get('key') ?? '').trim();
@@ -4041,8 +4755,10 @@ async function main() {
             if (m.isOwner) cur.isOwner = true;
             map.set(key2, cur);
           }
-          const members = [...map.values()].sort((a, b) => b.count - a.count || b.lastTime - a.lastTime).slice(0, limit);
-          sendJson({ ok: true, key, members });
+          const members = [...map.values()].sort((a, b) => b.count - a.count || b.lastTime - a.lastTime)
+            .slice(0, limit)
+            .map((m) => ({ ...m, avatar: memberAvatarUrl(m.userId || m.user_id) }));
+          sendJson({ ok: true, key, members, groupAvatar: key.startsWith('group:') ? groupAvatarUrl(key.split(':')[1]) : '' });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-append') {
@@ -4192,18 +4908,23 @@ async function main() {
           if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('slangQuery')) { sendJson({ ok: false, error: '工具未启用：qq_slang_query' }, 403); return; }
-          const list = confirmedSlangListV2().filter((e) => {
+          const list = confirmedSlangListV2(q ? 2000 : 60).filter((e) => {
             if (!q) return true;
             return e.content.toLowerCase().includes(q)
               || e.meaning.toLowerCase().includes(q)
               || e.usage.toLowerCase().includes(q)
               || e.example.toLowerCase().includes(q);
           });
+          const confirmedTotal = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning).length;
           sendJson({
             ok: true,
             key,
             total: list.length,
+            confirmedTotal,
             entries: list,
+            note: q
+              ? (list.length ? '' : `没有匹配「${q}」的已确认黑话；可以试试 qq_lookup_meme 联网现学。`)
+              : `共 ${confirmedTotal} 条已确认黑话，这里按出现次数给出前 ${list.length} 条；找具体的词请传 q 过滤。`,
             block: buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8)
           });
           return;
@@ -4319,18 +5040,34 @@ async function main() {
             sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
             return;
           }
-          const media = findMessageMedia(key, messageId);
+          // 两级读取：① 先用桥接缓存里的 media（含机器人自己发的图，已主动记录）；
+          // ② 缓存没有、或缓存里的地址抓不到（过期/超限）时，改用网关 get_msg 兜底。
+          let media = findMessageMedia(key, messageId);
+          let images = [];
+          if (media.length) {
+            try { images = await fetchMediaData(media); } catch (error) { log(`图片查询（缓存）失败 ${key} ${messageId}: ${error?.message ?? error}`); }
+          }
+          if (!images.length) {
+            const fallback = await fetchMediaFromOneBot(messageId);
+            if (fallback.length) {
+              if (!media.length) media = fallback;
+              try {
+                images = await fetchMediaData(fallback);
+                if (images.length) log(`[image] 已用 get_msg 兜底读到图片（${key} ${messageId}）`);
+              } catch (error) {
+                log(`图片查询（get_msg 兜底）失败 ${key} ${messageId}: ${error?.message ?? error}`);
+              }
+            }
+          }
           if (!media.length) {
             sendJson({ ok: true, messageId, media: [], images: [], note: '该消息没有可读取的图片/表情元数据' });
             return;
           }
-          try {
-            const images = await fetchMediaData(media);
-            sendJson({ ok: true, messageId, media, images });
-          } catch (error) {
-            log(`图片查询失败 ${key} ${messageId}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `图片查询失败：${error?.message ?? error}` }, 500);
+          if (!images.length) {
+            sendJson({ ok: true, messageId, media, images: [], note: '图片元数据存在，但取字节失败（链接可能已过期或超出读图体积上限）' });
+            return;
           }
+          sendJson({ ok: true, messageId, media, images });
           return;
         }
 
@@ -4799,22 +5536,7 @@ async function main() {
     segments.push({ type: 'text', data: { text: escapeCqText(rawMessage) } });
     const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
     const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
-    const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    const res = await fetch(`${httpUrl}/${action}`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
-      },
-      body: JSON.stringify(params),
-      signal: AbortSignal.timeout(15000)
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
-      const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口，请检查 config.json 的 snowluma.httpUrl 是否为 OneBot HTTP API 地址）' : '';
-      throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
-    }
-    return body.data;
+    return postOneBot(action, params);
   }
 
   // ── 图片/表情字节解析（供一代自动内联与二代按需工具） ────────────────────
@@ -4933,6 +5655,26 @@ async function main() {
   }
 
   async function fetchOneBotImage(media) {
+    // 网关有时把 url/file 直接填成 base64://（例如回读机器人自己发出去的图片），
+    // 这种既不是安全缓存文件名、也不是可抓 URL，必须单独处理。
+    if (media.kind === 'image') {
+      const inline = [media.url, media.file].find((v) => typeof v === 'string' && /^base64:\/\//i.test(v));
+      if (inline) {
+        const raw = inline.replace(/^base64:\/\//i, '').replace(/\s+/g, '');
+        if (raw.length * 3 / 4 > MAX_MEDIA_BYTES) {
+          log(`内联 base64 图片超限，已跳过（约 ${Math.round(raw.length * 3 / 4 / 1024)}KB）`);
+          return null;
+        }
+        const buf = Buffer.from(raw, 'base64');
+        if (!buf.length || !looksLikeImageBuffer(buf)) return null;
+        const dims = getImageDimensions(buf);
+        if (dims && dims.width * dims.height > MAX_MEDIA_PIXELS) {
+          log(`内联 base64 图片像素超限，已跳过（${dims.width}x${dims.height}）`);
+          return null;
+        }
+        return { buffer: buf, mimeType: mimeFromBuffer(buf) };
+      }
+    }
     // 优先使用 OneBot get_image 获取网关侧信息；只有 file 是安全缓存文件名时才允许交给网关。
     if (media.kind === 'image' && media.file && isProbablySafeImageFileRef(media.file)) {
       try {
@@ -5947,6 +6689,7 @@ async function main() {
       text: String(textContent).slice(0, 200),
       plain: String(plainText ?? textContent).slice(0, 200),
       quoteTargetIsSelf: !!quoteTargetIsSelf,
+      quoteMessageId: quoteMessageId != null && String(quoteMessageId) !== '' ? String(quoteMessageId) : null,
       isOwner: !!isOwner,
       media: Array.isArray(media) ? media : [],
       messageId: messageRef ? String(messageRef) : '',
@@ -6682,7 +7425,7 @@ async function main() {
   }
 
   // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
-  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = []) {
+  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
@@ -6812,6 +7555,76 @@ async function main() {
     st.preSleepWaitObservedAt = 0;
     st.preSleepWaitAccumMs = 0;
     saveSocialV2State();
+  }
+
+  // QQ 头像：经典 CDN 无需登录即可取。
+  //   用户：https://q1.qlogo.cn/g?b=qq&nk=<QQ>&s=<size>
+  //   群：  https://p.qlogo.cn/gh/<群号>/<群号>/<size>
+  function memberAvatarUrl(userId, size = 640) {
+    const id = String(userId ?? '').replace(/\D/g, '');
+    if (!id) return '';
+    const s = [40, 100, 140, 640].includes(Number(size)) ? Number(size) : 640;
+    return `https://q1.qlogo.cn/g?b=qq&nk=${id}&s=${s}`;
+  }
+  function groupAvatarUrl(groupId, size = 640) {
+    const id = String(groupId ?? '').replace(/\D/g, '');
+    if (!id) return '';
+    const s = [100, 140, 640].includes(Number(size)) ? Number(size) : 640;
+    return `https://p.qlogo.cn/gh/${id}/${id}/${s}`;
+  }
+
+  // 记录机器人自己发出的图片/表情到上下文。
+  // 必要性：自消息默认不会被网关回传，不主动记录的话，用户引用这张图时 AI 只能「看不到」。
+  function recordSelfMediaV2(key, { text, kind, messageId, media }) {
+    try {
+      const st = getSocialV2State(key);
+      const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
+      st.recentMessages.push({
+        messageId: messageId ?? null,
+        sender: '我',
+        text, plain: text, tail: text, kind,
+        quoteTargetIsSelf: false,
+        isOwner: true,
+        ownerLabel: '我',
+        isSelf: true,
+        media: Array.isArray(media) ? media : [],
+        hasMedia: Array.isArray(media) && media.length > 0,
+        forwardIds: [],
+        time: Date.now()
+      });
+      if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+      saveSocialV2State();
+    } catch (error) {
+      log(`[image] 记录自己发出的媒体失败：${error?.message ?? error}`);
+    }
+  }
+
+  // 兜底：直接向网关查这条消息的图片/表情段。
+  // 覆盖缓存里没有的两类：① 机器人自己发出去的图（自消息默认不回传到桥接）；② 已被挤掉的旧消息。
+  async function fetchMediaFromOneBot(messageId) {
+    let resp;
+    try {
+      resp = await bot.request('get_msg', { message_id: Number(messageId) });
+    } catch (error) {
+      log(`[image] get_msg 兜底失败 ${messageId}: ${error?.message ?? error}`);
+      return [];
+    }
+    const raw = resp?.data?.message ?? resp?.message ?? [];
+    const segs = Array.isArray(raw) ? raw : [];
+    const out = [];
+    for (const seg of segs) {
+      if (!seg || seg.type !== 'image') continue;
+      const d = seg.data || {};
+      out.push({
+        kind: d.emoji_id ? 'face' : 'image',
+        file: String(d.file ?? ''),
+        url: String(d.url ?? ''),
+        faceId: d.emoji_id ? String(d.emoji_id) : undefined
+      });
+      if (out.length >= MAX_MEDIA_COUNT) break;
+    }
+    if (out.length) log(`[image] 通过 get_msg 兜底取到 ${out.length} 个图片段（messageId=${messageId}）`);
+    return out;
   }
 
   function readFeedbackEntries() {
@@ -7047,7 +7860,9 @@ async function main() {
         // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
+      st.pendingSince = Number(st.pendingSince) || Date.now();
       log(`[reserved2] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
+      saveSocialV2State();
       return;
     }
     // 唤醒频率硬限制：超限则跳过本次唤醒，避免成本失控
@@ -7060,6 +7875,7 @@ async function main() {
       log(`[reserved2] 唤醒频率超限，跳过 ${key}（${reason}）`);
       return;
     }
+    st.pendingSince = 0;
     cancelReplyCheckV2(key); // 本次唤醒已接管，清理仍在排队的回复检查
     const wakeTime = now;
     st.wakeTimes.push(wakeTime);
@@ -7505,7 +8321,26 @@ async function main() {
     // 二代仿真模式（reserved2）：唤醒调度
     if (currentMode === 'reserved2') {
       const sender = kind === 'group' ? (event.sender?.card || event.sender?.nickname || String(event.user_id)) : '私聊';
-      appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []));
+      // 引用解析：用户「引用某条消息」时，必须把被引用消息的 id 交给 AI，
+      // 否则它引用机器人自己发的图问「这是什么」时，AI 不知道该去取哪一条。
+      const inboundSegments = Array.isArray(event.message) ? event.message : [];
+      const replySeg = inboundSegments.find((seg) => seg && seg.type === 'reply');
+      const quotedId = replySeg?.data?.id != null ? String(replySeg.data.id) : null;
+      let quoteHint = '';
+      if (quotedId) {
+        let quotedMedia = [];
+        let quotedIsSelf = false;
+        try {
+          quotedMedia = findMessageMedia(key, quotedId);
+          const stq = getSocialV2State(key);
+          quotedIsSelf = (stq.recentMessages || []).some((m) => m && String(m.messageId || '') === quotedId && m.isSelf);
+        } catch { /* 忽略 */ }
+        const what = quotedMedia.length ? (quotedMedia[0].kind === 'face' ? '表情' : '图片') : '消息';
+        quoteHint = `[引用${quotedIsSelf ? '你' : '对方'}发的${what} messageId=${quotedId}]`
+          + (quotedMedia.length ? `（要看内容请调用 qq_get_message_images，messageId 传 ${quotedId}）` : '')
+          + '\n';
+      }
+      appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId);
       // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {
@@ -8313,6 +9148,7 @@ async function main() {
     syncStickerLibrary(true).catch((error) => log('启动预热表情库失败:', error?.message ?? error));
   }
   startDshWatch();
+  startBusyWatchdogV2();
   startConsoleServer();
 
   await pumpMux();

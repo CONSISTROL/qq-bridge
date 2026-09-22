@@ -1,0 +1,28 @@
+{
+  "_说明": "定时抓图目标。复制到 state/bili-targets.json 后按需修改（state/ 已被 .gitignore 忽略）。",
+  "bvids": [
+    "BV1GJ411x7h7"
+  ],
+  "mids": [
+    "946974"
+  ],
+  "cvs": [
+    "2"
+  ],
+  "sources": {
+    "cover": true,
+    "comments": true,
+    "dynamic": true,
+    "detail": false
+  },
+  "limit": 40,
+  "dynamicPages": 1,
+  "commentPages": 1,
+  "minSide": 150,
+  "maxBytes": 5242880,
+  "delayMs": 900,
+  "keywords": [
+    "搞笑",
+    "梗图"
+  ]
+}

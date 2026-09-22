@@ -1,21 +1,82 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QQ 桥接控制台</title>
+<script>
+  // 主题必须在样式生效前定下来，否则（深色用户）会先闪一下浅色。
+  // 默认浅色；只有明确存过 dark 才切深色。
+  (function () {
+    try {
+      if (localStorage.getItem('qq-console-theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略 */ }
+  })();
+</script>
 <style>
+  /* 主题变量：默认浅色；点右上角按钮切深色，选择记在 localStorage。
+     两套配色只在这里定义，下面的规则一律引用变量，不再写死色值。 */
   :root {
+    color-scheme: light;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --card-border: #dde1e7;
+    --text: #1f2328;
+    --heading: #3a4048;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-border: #1d4ed8;
+    --on-accent: #ffffff;
+    --danger: #dc2626;
+    --danger-border: #b91c1c;
+    --ok: #047857;
+    --err: #dc2626;
+    --ctrl-bg: #eef0f3;
+    --ctrl-border: #d2d7de;
+    --ctrl-hover: #e2e6eb;
+    --dashed: #b4bac4;
+    --surface-2: #f0f2f5;
+    --surface-3: #ffffff;
+    --placeholder-bg: #fafbfc;
+    --hover-subtle: rgba(15, 23, 42, 0.06);
+    --shadow: rgba(15, 23, 42, 0.14);
+    --shadow-strong: rgba(15, 23, 42, 0.20);
+    --overlay: rgba(15, 23, 42, 0.45);
+    --pill-blue-bg: #dbeafe;
+    --pill-blue-fg: #1d4ed8;
+    --pill-green-bg: #d1fae5;
+    --pill-green-fg: #047857;
+    --pill-red-bg: #fee2e2;
+    --pill-red-fg: #b91c1c;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #0f1115;
     --card: #1a1d24;
     --card-border: #2a2f3a;
     --text: #e5e7eb;
+    --heading: #d1d5db;
     --muted: #9ca3af;
     --accent: #2563eb;
     --accent-border: #3b82f6;
+    --on-accent: #ffffff;
     --danger: #7f1d1d;
     --danger-border: #991b1b;
     --ok: #34d399;
     --err: #f87171;
+    --ctrl-bg: #232833;
+    --ctrl-border: #343b49;
+    --ctrl-hover: #2b313d;
+    --dashed: #4b5563;
+    --surface-2: #1b1f27;
+    --surface-3: #161a22;
+    --placeholder-bg: rgba(255, 255, 255, 0.02);
+    --hover-subtle: rgba(127, 127, 127, 0.12);
+    --shadow: rgba(0, 0, 0, 0.45);
+    --shadow-strong: rgba(0, 0, 0, 0.5);
+    --overlay: rgba(0, 0, 0, 0.55);
     --pill-blue-bg: #1e3a5f;
     --pill-blue-fg: #7dd3fc;
     --pill-green-bg: #1a3a2a;
@@ -30,7 +91,10 @@
     color: var(--text);
     margin: 0;
     padding: 24px;
+    transition: background 0.18s ease, color 0.18s ease;
   }
+  .topbar-right { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+  .theme-toggle { white-space: nowrap; flex: 0 0 auto; }
   .topbar {
     display: flex;
     flex-wrap: wrap;
@@ -70,11 +134,11 @@
   .card h2 {
     font-size: 14px;
     margin: 0 0 12px;
-    color: #d1d5db;
+    color: var(--heading);
     display: flex;
     align-items: center;
     gap: 8px;
-    border-bottom: 1px solid #232833;
+    border-bottom: 1px solid var(--card-border);
     padding-bottom: 10px;
   }
   .sec-no {
@@ -84,8 +148,8 @@
     min-width: 24px;
     height: 20px;
     padding: 0 6px;
-    background: #232833;
-    border: 1px solid #343b49;
+    background: var(--ctrl-bg);
+    border: 1px solid var(--ctrl-border);
     border-radius: 6px;
     font-size: 11px;
     color: var(--muted);
@@ -93,30 +157,30 @@
   .span-all { grid-column: 1 / -1; }
   .mode-row { display: flex; gap: 8px; flex-wrap: wrap; }
   button {
-    background: #232833;
+    background: var(--ctrl-bg);
     color: var(--text);
-    border: 1px solid #343b49;
+    border: 1px solid var(--ctrl-border);
     border-radius: 8px;
     padding: 8px 14px;
     cursor: pointer;
     font-size: 13px;
     transition: background 0.15s ease, border-color 0.15s ease;
   }
-  button:hover { background: #2b313d; }
-  button.active { background: var(--accent); border-color: var(--accent-border); color: #fff; }
-  button.danger { background: var(--danger); border-color: var(--danger-border); }
+  button:hover { background: var(--ctrl-hover); }
+  button.active { background: var(--accent); border-color: var(--accent-border); color: var(--on-accent); }
+  button.danger { background: var(--danger); border-color: var(--danger-border); color: var(--on-accent); }
   button.small { padding: 4px 10px; font-size: 12px; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   button.planned {
     background: transparent;
     border-style: dashed;
-    border-color: #4b5563;
+    border-color: var(--dashed);
     color: var(--muted);
     cursor: not-allowed;
   }
   input[type=text], textarea, select {
     background: var(--bg);
-    border: 1px solid #343b49;
+    border: 1px solid var(--ctrl-border);
     border-radius: 8px;
     color: var(--text);
     padding: 8px 10px;
@@ -125,7 +189,7 @@
     box-sizing: border-box;
   }
   textarea { resize: vertical; min-height: 80px; font-family: monospace; }
-  input[type=number] { background: var(--bg); border: 1px solid #343b49; border-radius: 8px; color: var(--text); padding: 6px 8px; font-size: 13px; }
+  input[type=number] { background: var(--bg); border: 1px solid var(--ctrl-border); border-radius: 8px; color: var(--text); padding: 6px 8px; font-size: 13px; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   pre {
@@ -144,15 +208,15 @@
   .err { color: var(--err); }
   .tag {
     display: inline-block;
-    background: #232833;
-    border: 1px solid #343b49;
+    background: var(--ctrl-bg);
+    border: 1px solid var(--ctrl-border);
     border-radius: 20px;
     padding: 4px 12px;
     margin: 3px;
     cursor: pointer;
     font-size: 12px;
   }
-  .tag.active { background: var(--accent); border-color: var(--accent-border); }
+  .tag.active { background: var(--accent); border-color: var(--accent-border); color: var(--on-accent); }
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--card-border); vertical-align: top; }
   .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
@@ -160,23 +224,37 @@
   .pill.g { background: var(--pill-green-bg); color: var(--pill-green-fg); }
   .pill.r { background: var(--pill-red-bg); color: var(--pill-red-fg); }
   .placeholder {
-    border: 1px dashed #4b5563;
+    border: 1px dashed var(--dashed);
     border-radius: 10px;
     padding: 16px;
     color: var(--muted);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--placeholder-bg);
   }
-  .placeholder h3 { margin: 0 0 8px; font-size: 14px; color: #d1d5db; }
+  .placeholder h3 { margin: 0 0 8px; font-size: 14px; color: var(--heading); }
   .placeholder p { margin: 4px 0; font-size: 13px; line-height: 1.6; }
-  .divider { margin: 14px 0; border-top: 1px solid #232833; }
+  .divider { margin: 14px 0; border-top: 1px solid var(--card-border); }
   .inline-tip { font-size: 12px; color: var(--muted); }
   .v2-tool-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; margin-top: 6px; }
   .v2-tool-item { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--card-border); border-radius: 8px; font-size: 13px; }
   .v2-tool-item .meta { display: block; margin: 2px 0 0; }
+  .v2-tool-item { position: relative; }
+  .v2-cfg-btn { margin-left: auto; flex: 0 0 auto; background: transparent; border: 1px solid var(--card-border); color: inherit; border-radius: 6px; padding: 1px 7px; cursor: pointer; font-size: 12px; line-height: 1.5; opacity: .8; }
+  .v2-cfg-btn:hover { opacity: 1; background: var(--hover-subtle); }
+  .v2-modal-backdrop { position: fixed; inset: 0; background: var(--overlay); display: none; align-items: center; justify-content: center; z-index: 9999; }
+  .v2-modal-backdrop.open { display: flex; }
+  .v2-modal { background: var(--surface-3); border: 1px solid var(--card-border); border-radius: 12px; width: min(700px, 93vw); max-height: 86vh; overflow: auto; padding: 16px 18px; box-shadow: 0 18px 48px var(--shadow); }
+  .v2-modal h3 { margin: 0 0 4px; font-size: 15px; }
+  .v2-modal .v2-cfg-row { display: grid; grid-template-columns: 1fr 1.15fr; gap: 6px 12px; align-items: center; padding: 7px 0; border-bottom: 1px dashed var(--card-border); }
+  .v2-modal .v2-cfg-row:last-child { border-bottom: 0; }
+  .v2-modal .v2-cfg-row label { margin: 0; font-size: 13px; }
+  .v2-modal .v2-cfg-row .hint { display: block; font-size: 11px; opacity: .62; margin-top: 2px; }
+  .v2-modal input[type=text], .v2-modal input[type=number], .v2-modal textarea, .v2-modal select { width: 100%; box-sizing: border-box; }
+  .v2-modal textarea { min-height: 68px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .v2-modal-actions { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
   .tool-log-table { margin-top: 8px; max-height: 420px; overflow: auto; border: 1px solid var(--card-border); border-radius: 8px; }
   .tool-log-table table { min-width: 1100px; table-layout: fixed; border-collapse: collapse; }
-  .tool-log-table thead th { position: sticky; top: 0; background: #1b1f27; z-index: 1; }
-  .tool-log-table th, .tool-log-table td { overflow-wrap: anywhere; padding: 6px 8px; border-bottom: 1px solid #232833; }
+  .tool-log-table thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; }
+  .tool-log-table th, .tool-log-table td { overflow-wrap: anywhere; padding: 6px 8px; border-bottom: 1px solid var(--card-border); }
   .tool-log-cell {
     display: inline-block;
     max-width: 320px;
@@ -189,15 +267,15 @@
   .tool-log-cell.expanded { white-space: pre-wrap; overflow-wrap: anywhere; }
   .slang-tabs { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; }
   .slang-tab {
-    background: #232833;
-    border: 1px solid #343b49;
+    background: var(--ctrl-bg);
+    border: 1px solid var(--ctrl-border);
     border-radius: 8px;
     padding: 6px 14px;
     cursor: pointer;
     font-size: 13px;
     color: var(--muted);
   }
-  .slang-tab.active { background: var(--accent); border-color: var(--accent-border); color: #fff; }
+  .slang-tab.active { background: var(--accent); border-color: var(--accent-border); color: var(--on-accent); }
   .slang-panel { display: none; }
   .slang-panel.active { display: block; }
   .slang-scroll {
@@ -208,17 +286,17 @@
     margin-top: 8px;
   }
   .slang-scroll table { min-width: 900px; border-collapse: collapse; }
-  .slang-scroll thead th { position: sticky; top: 0; background: #1b1f27; z-index: 1; }
+  .slang-scroll thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; }
   .slang-scroll th, .slang-scroll td { overflow-wrap: anywhere; }
   .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    position: fixed; inset: 0; background: var(--overlay);
     display: none; align-items: center; justify-content: center; z-index: 1000;
   }
   .modal-overlay.open { display: flex; }
   .modal {
-    background: #161a22; border: 1px solid #343b49; border-radius: 12px;
+    background: var(--surface-3); border: 1px solid var(--ctrl-border); border-radius: 12px;
     width: min(680px, 92vw); max-height: 86vh; overflow: auto; padding: 18px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 40px var(--shadow-strong);
   }
   .modal h3 { margin: 0 0 12px; }
   .modal label { margin-top: 10px; }
@@ -231,7 +309,11 @@
       <h1>QQ 桥接控制台</h1>
       <div class="sub">DeepSeek Harness ↔ QQ 模式后台 · 修改即时生效（桥接 5 秒内感知）</div>
     </div>
-    <div class="status-badge" id="statusText">加载中…</div>
+    <div class="topbar-right">
+      <div class="status-badge" id="statusText">加载中…</div>
+      <button class="theme-toggle" id="themeToggle" type="button"
+              title="切换浅色 / 深色模式">🌙 深色</button>
+    </div>
   </header>
 
   <main class="grid">
@@ -423,31 +505,38 @@
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getUnread"> <span><b>qq_get_unread_messages</b><span class="meta">查看未读消息，不自动标记已读</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getRecent"> <span><b>qq_get_recent_messages</b><span class="meta">查看最近消息，支持 offset 扩大范围</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="socialState"> <span><b>qq_social_state</b><span class="meta">查看当前 WakeConfig、未读数、上次唤醒原因等</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendGroup"> <span><b>qq_send_group_message</b><span class="meta">向指定群发送一条纯文本消息</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendPrivate"> <span><b>qq_send_private_message</b><span class="meta">向指定好友发送一条纯文本消息</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="reply"> <span><b>qq_reply</b><span class="meta">引用/回复某条群消息并发送文本</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendBurst"> <span><b>qq_send_burst</b><span class="meta">按数组分多条发送，桥接自动加真人化间隔</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendMessage"> <span><b>qq_send_message</b><span class="meta">统一发送：一条/多条/引用/自定义或按字数计算间隔</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendGroup"> <span><b>qq_send_group_message</b><span class="meta">向指定群发送一条纯文本消息</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="send" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendPrivate"> <span><b>qq_send_private_message</b><span class="meta">向指定好友发送一条纯文本消息</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="send" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="reply"> <span><b>qq_reply</b><span class="meta">引用/回复某条群消息并发送文本</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="send" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendBurst"> <span><b>qq_send_burst</b><span class="meta">按数组分多条发送，桥接自动加真人化间隔</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="send" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendMessage"> <span><b>qq_send_message</b><span class="meta">统一发送：一条/多条/引用/自定义或按字数计算间隔</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="send" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendPoke"> <span><b>qq_send_poke</b><span class="meta">发送 QQ 拍一拍（群聊传 targetUserId，私聊可省）</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="waitMessages"> <span><b>qq_wait_for_messages</b><span class="meta">短暂等待新消息，有新消息立即返回或超时返回</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="feedback"> <span><b>qq_report_feedback</b><span class="meta">向控制台反馈 AI 遇到的问题/困惑</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="waitMessages"> <span><b>qq_wait_for_messages</b><span class="meta">短暂等待新消息，有新消息立即返回或超时返回</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="wait" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="feedback"> <span><b>qq_report_feedback</b><span class="meta">向控制台反馈 AI 遇到的问题/困惑</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="feedback" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getMyRecent"> <span><b>qq_get_my_recent_messages</b><span class="meta">查看自己最近发过的消息，避免重复</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getMessageDetail"> <span><b>qq_get_message_detail</b><span class="meta">按 message_id 查看单条消息完整内容</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getImages"> <span><b>qq_get_message_images</b><span class="meta">查看消息中的图片/表情内容</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getForwardMsg"> <span><b>qq_get_forward_msg</b><span class="meta">查看当前会话收到的合并转发消息内容</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getActiveMembers"> <span><b>qq_get_active_members</b><span class="meta">查看最近活跃成员列表</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="setWakeConfig"> <span><b>qq_set_wake_config</b><span class="meta">设置唤醒/潜水条件：无限期、有限时间、@/名字/关键词/概率等</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="setWakeConfig"> <span><b>qq_set_wake_config</b><span class="meta">设置唤醒/潜水条件：无限期、有限时间、@/名字/关键词/概率等</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="wake" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="markRead"> <span><b>qq_mark_read</b><span class="meta">标记当前未读为已读（看过但决定不回复）</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="memory"> <span><b>qq_memory_append / qq_memory_query</b><span class="meta">轻量记忆：话题/想说的话/群友印象</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="slangQuery"> <span><b>qq_slang_query</b><span class="meta">查询已确认黑话/梗/网络表达</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="slangSubmit"> <span><b>qq_slang_submit</b><span class="meta">AI 提交陌生词/黑话给管理员筛选</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="listStickers"> <span><b>qq_list_stickers</b><span class="meta">查看/搜索 QQ 收藏表情（含备注和本地笔记）</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getStickerImage"> <span><b>qq_get_sticker_image</b><span class="meta">看图理解没有备注的收藏表情</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendSticker"> <span><b>qq_send_sticker</b><span class="meta">发送收藏表情（一条消息只能一张，不能带文字）</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="collectSticker"> <span><b>qq_collect_sticker</b><span class="meta">AI 偶尔收藏别人发的表情并写简短备注</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="listStickers"> <span><b>qq_list_stickers</b><span class="meta">查看/搜索 QQ 收藏表情（含备注和本地笔记）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getStickerImage"> <span><b>qq_get_sticker_image</b><span class="meta">看图理解没有备注的收藏表情</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendSticker"> <span><b>qq_send_sticker</b><span class="meta">发送收藏表情（一条消息只能一张，不能带文字）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="collectSticker"> <span><b>qq_collect_sticker</b><span class="meta">AI 偶尔收藏别人发的表情并写简短备注</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="saveSticker"> <span><b>qq_save_sticker</b><span class="meta">AI 把外部图片（本地图库/base64，可选远程 URL）存进收藏表情库</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="image" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="listImageLibrary"> <span><b>qq_list_image_library</b><span class="meta">列出本地图库（assets/stickers）里可用的图片</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="image" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendImage"> <span><b>qq_send_image</b><span class="meta">AI 直接发一张图片（不进收藏库，来源同 qq_save_sticker）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="image" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="lookupMeme"> <span><b>qq_lookup_meme</b><span class="meta">遇到不懂的梗先查：本地黑话库 → B站高赞评论</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getFriendDress"> <span><b>qq_get_friend_dress</b><span class="meta">查看某人个性装扮（头像框/挂件/名片），可把预览图取回来看</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getMemberAvatar"> <span><b>qq_get_member_avatar</b><span class="meta">查看群成员/群头像（图片进视觉上下文）</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="searchImages"> <span><b>qq_search_images</b><span class="meta">AI 按聊天主题去 B 站搜图（默认从相关视频的评论区取图，不够补专栏配图；不含视频封面），再用 qq_send_image 发出</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="bili" title="配置 SESSDATA / 定时抓取关键词">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="getSelfImage"> <span><b>qq_get_self_image</b><span class="meta">查看自己的默认 Q 版形象图片</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="stickerNote"> <span><b>qq_sticker_note</b><span class="meta">给表情记录本地含义/标签/用法</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="setStickerRemark"> <span><b>qq_set_sticker_remark</b><span class="meta">修改 QQ 官方表情备注（默认禁用，慎用）</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="stickerNote"> <span><b>qq_sticker_note</b><span class="meta">给表情记录本地含义/标签/用法</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="setStickerRemark"> <span><b>qq_set_sticker_remark</b><span class="meta">修改 QQ 官方表情备注（默认禁用，慎用）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
       </div>
       <div class="meta" style="margin-top:6px">二代黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在下方「08 群聊黑话 / 网络用语库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 
@@ -925,7 +1014,43 @@
 
   </main>
 
+<!-- 工具级配置弹窗（由 .v2-cfg-btn 触发） -->
+<div class="v2-modal-backdrop" id="v2CfgBackdrop">
+  <div class="v2-modal" role="dialog" aria-modal="true" aria-labelledby="v2CfgTitle">
+    <h3 id="v2CfgTitle">工具配置</h3>
+    <div class="meta" id="v2CfgSubtitle"></div>
+    <div id="v2CfgBody" style="margin-top:10px"></div>
+    <div class="v2-modal-actions">
+      <button id="v2CfgSave" style="font-weight:bold">保存</button>
+      <button type="button" data-v2-cfg-close>取消</button>
+      <span class="meta" id="v2CfgMsg"></span>
+    </div>
+  </div>
+</div>
+
 <script>
+// ── 主题切换（浅色为默认值） ────────────────────────────────────────
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(theme, persist) {
+  const t = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', t);
+  const btn = document.getElementById('themeToggle');
+  if (btn) {
+    // 按钮显示的是「点一下会切到哪」，不是当前状态
+    btn.textContent = t === 'dark' ? '☀️ 浅色' : '🌙 深色';
+    btn.title = t === 'dark' ? '当前深色，点击切到浅色' : '当前浅色，点击切到深色';
+  }
+  if (persist) { try { localStorage.setItem('qq-console-theme', t); } catch (e) {} }
+}
+applyTheme(currentTheme(), false);
+document.addEventListener('DOMContentLoaded', () => {
+  applyTheme(currentTheme(), false);
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark', true));
+});
+
 (function () {
   // 如果通过 ?token= 进入（控制台启用鉴权时根路径会重定向带 token），存到 localStorage
   const qs = new URLSearchParams(location.search);
@@ -1143,10 +1268,13 @@ document.getElementById('aiNotifySend').addEventListener('click', async () => {
 });
 
 // ── 二代仿真模式（reserved2）配置 ─────────────────────────────────────────
+let v2ConfigCache = null;
+
 async function loadV2Config() {
   try {
     const r = await api('/api/socialV2/config');
     const c = r.config || {};
+    v2ConfigCache = c;
     document.getElementById('v2Enabled').checked = c.enabled !== false;
     document.getElementById('v2AgentPreset').value = c.agentPreset || '';
     document.getElementById('v2ProvideRecommendations').checked = c.provideRecommendations !== false;
@@ -2190,6 +2318,343 @@ document.getElementById('consoleTokenRandom').addEventListener('click', () => ch
 
 refresh(); refreshRoles(); refreshWhitelist(); refreshSessions(); refreshPending(); refreshPresets(); loadSocialForm(); loadV2Config(); refreshV2Activity(); loadV2ToolLog(); loadV2SessionOptions(); refreshSocialStatus(); refreshSlang(); loadSlangConfig(); loadSecurity();
 setInterval(() => { refresh(); refreshSessions(); refreshPending(); refreshSocialStatus(); refreshSlang(); }, 3000);
+
+// ── 工具级配置弹窗 ───────────────────────────────────────────────────────
+// 工具行里的 ⚙ 通过 data-v2-cfg 指向一个配置分区；弹窗读取当前值、按分区局部写回
+// （POST /api/socialV2/config 在服务端是按分区合并的，不会动其他分区）。
+let v2CfgCurrent = null;
+
+const V2_CFG_SCHEMA = {
+  image: {
+    title: '图片 / 表情来源',
+    desc: '作用于 qq_save_sticker · qq_send_image · qq_list_image_library',
+    fields: [
+      { path: 'enabled', label: '启用图片功能', type: 'bool' },
+      { path: 'allowRemoteUrl', label: '允许远程 URL', type: 'bool', hint: '关闭后只能用本地图库/base64，AI 不能抓网络图' },
+      { path: 'libraryDir', label: '本地图库目录', type: 'text', hint: '相对仓库根目录，默认 assets/stickers' },
+      { path: 'maxBytes', label: '单图体积上限', type: 'number', factor: 1048576, unit: 'MB', step: 0.5, hint: '建议与发图功能保持一致' },
+      { path: 'maxPerMinute', label: '每分钟上限', type: 'number' },
+      { path: 'maxPerHour', label: '每小时上限', type: 'number' },
+      { path: 'imageReferer', label: '远程抓图 Referer', type: 'text', hint: 'B 站图床防盗链用' },
+      { path: 'refererAllow', label: '允许抓取的站点', type: 'list', hint: '每行一个 host/origin；留空=不限制（仍受 SSRF 防护）' }
+    ]
+  },
+  sticker: {
+    title: '表情包',
+    desc: '作用于 qq_list_stickers · qq_get_sticker_image · qq_send_sticker · qq_sticker_note · qq_collect_sticker',
+    fields: [
+      { path: 'enabled', label: '启用表情包体系', type: 'bool' },
+      { path: 'includeInPrompt', label: '把表情清单放进提示词', type: 'bool' },
+      { path: 'promptMaxStickers', label: '提示词最多列几张', type: 'number' },
+      { path: 'syncTtlMs', label: '同步缓存时长', type: 'number', factor: 1000, unit: '秒' },
+      { path: 'maxListCount', label: '列表最多返回', type: 'number' },
+      { path: 'collect.enabled', label: '允许 AI 收藏别人的表情', type: 'bool' },
+      { path: 'collect.maxPerMinute', label: '收藏每分钟上限', type: 'number' },
+      { path: 'collect.maxPerHour', label: '收藏每小时上限', type: 'number' },
+      { path: 'collect.maxRemarkChars', label: '备注最大字数', type: 'number' }
+    ]
+  },
+  send: {
+    title: '发送行为',
+    desc: '作用于 qq_send_message · qq_send_burst · qq_reply · qq_send_group_message · qq_send_private_message',
+    fields: [
+      { path: 'burstEnabled', label: '启用分条发送', type: 'bool' },
+      { path: 'burstMaxMessages', label: '一次最多几条', type: 'number' },
+      { path: 'burstIntervalMinMs', label: '条间最小间隔', type: 'number', unit: 'ms' },
+      { path: 'burstIntervalMaxMs', label: '条间最大间隔', type: 'number', unit: 'ms' },
+      { path: 'longGapProbability', label: '长停顿概率', type: 'number', step: 0.05 },
+      { path: 'longGapMinMs', label: '长停顿最小', type: 'number', unit: 'ms' },
+      { path: 'longGapMaxMs', label: '长停顿最大', type: 'number', unit: 'ms' },
+      { path: 'maxSendPerMinute', label: '每分钟上限', type: 'number' },
+      { path: 'maxSendPerHour', label: '每小时上限', type: 'number' },
+      { path: 'maxMessageChars', label: '单条最大字数', type: 'number' },
+      { path: 'maxGapMs', label: '单条最长等待', type: 'number', unit: 'ms' },
+      { path: 'gapBaseMs', label: '打字基础延迟', type: 'number', unit: 'ms' },
+      { path: 'gapPerCharMs', label: '每字追加延迟', type: 'number', unit: 'ms' }
+    ]
+  },
+  wait: {
+    title: '等待与静默',
+    desc: '作用于 qq_wait_for_messages',
+    fields: [
+      { path: 'defaultMs', label: '默认等待', type: 'number', unit: 'ms' },
+      { path: 'minMs', label: '最短等待', type: 'number', unit: 'ms' },
+      { path: 'maxMs', label: '最长等待', type: 'number', unit: 'ms' },
+      { path: 'defaultQuietMs', label: '默认静默窗口', type: 'number', unit: 'ms' },
+      { path: 'minQuietAfterNewMs', label: '新消息后强制静默', type: 'number', unit: 'ms' }
+    ]
+  },
+  wake: {
+    title: '唤醒 / 潜水',
+    desc: '作用于 qq_set_wake_config',
+    fields: [
+      { path: 'defaultMode', label: '默认模式', type: 'select', options: [{ value: 'diving', label: '潜水（等条件唤醒）' }, { value: 'active', label: '活跃（每条都醒）' }] },
+      { path: 'recommendedDefaultInfinite', label: '推荐无限期潜水', type: 'bool' },
+      { path: 'preSleepWaitEnabled', label: '沉睡前强制观察', type: 'bool' },
+      { path: 'preSleepWaitMs', label: '观察窗口时长', type: 'number', factor: 1000, unit: '秒' },
+      { path: 'sleepMinMs', label: '潜水最短', type: 'number', factor: 1000, unit: '秒' },
+      { path: 'sleepMaxMs', label: '潜水最长（0=不限）', type: 'number', factor: 1000, unit: '秒' },
+      { path: 'recommendedProbability', label: '推荐普通消息唤醒概率', type: 'number', step: 0.05 },
+      { path: 'batchWindowMs', label: '消息聚合窗口', type: 'number', unit: 'ms' },
+      { path: 'maxWakePerMinute', label: '每分钟唤醒上限', type: 'number' },
+      { path: 'maxWakePerHour', label: '每小时唤醒上限', type: 'number' }
+    ]
+  },
+  feedback: {
+    title: '反馈',
+    desc: '作用于 qq_report_feedback',
+    fields: [
+      { path: 'maxLength', label: '反馈最大长度', type: 'number' },
+      { path: 'notifyOwnerOnError', label: '出错时私聊通知 owner', type: 'bool' }
+    ]
+  },
+  bili: {
+    title: 'B 站抓图（本地图库）',
+    desc: '把评论/动态/专栏/封面的图片抓进 assets/stickers；由 systemd 定时器 bili-fetch.timer 每天自动跑，也可手动触发',
+    custom: 'bili',
+    statusLine: 'bili',
+    logLine: 'bili',
+    extraButtons: [
+      { action: 'bili-fetch', label: '立即抓取' },
+      { action: 'bili-clear-cookie', label: '清除 SESSDATA' }
+    ],
+    fields: [
+      { path: 'sessdata', label: 'SESSDATA（可选）', type: 'password', placeholder: '留空=不改动；仅用于「动态详情多图」和官方表情包' },
+      { path: 'keywords', label: '定时抓取关键词', type: 'list', hint: '每行一个，定时任务按这些主题去搜视频/专栏并抓图（AI 平时也能用 qq_search_images 自己搜）' },
+      { path: 'bvids', label: '定点：视频 BV（可选）', type: 'list', hint: '不想用关键词时可指定具体视频；留空即可' },
+      { path: 'mids', label: '定点：UP 主 UID（可选）', type: 'list', hint: '抓该 UP 的动态封面；留空即可' },
+      { path: 'cvs', label: '定点：专栏 cv（可选）', type: 'list', hint: '每行一个，cv 前缀可省' },
+      { path: 'sources.cover', label: '抓视频封面', type: 'bool' },
+      { path: 'sources.comments', label: '抓评论区图片', type: 'bool' },
+      { path: 'sources.dynamic', label: '抓动态图片', type: 'bool' },
+      { path: 'sources.detail', label: '抓动态详情多图（需 SESSDATA）', type: 'bool' },
+      { path: 'limit', label: '单次最多抓几张', type: 'number' },
+      { path: 'dynamicPages', label: '动态翻页数', type: 'number' },
+      { path: 'commentPages', label: '评论翻页数', type: 'number' },
+      { path: 'minSide', label: '最小边长(px)', type: 'number' },
+      { path: 'maxBytes', label: '单图上限', type: 'number', factor: 1048576, unit: 'MB', step: 0.5 },
+      { path: 'delayMs', label: '请求间隔', type: 'number', unit: 'ms' }
+    ]
+  }
+};
+
+function v2GetPath(obj, path) {
+  return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+function v2SetPath(obj, path, val) {
+  const ks = String(path).split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) {
+    if (typeof o[ks[i]] !== 'object' || o[ks[i]] === null) o[ks[i]] = {};
+    o = o[ks[i]];
+  }
+  o[ks[ks.length - 1]] = val;
+}
+
+function renderV2ToolCfg(section) {
+  const schema = V2_CFG_SCHEMA[section];
+  const data = section === 'bili'
+    ? ((biliStatusCache && biliStatusCache.targets) || {})
+    : ((v2ConfigCache && v2ConfigCache[section]) || {});
+  document.getElementById('v2CfgTitle').textContent = schema.title;
+  document.getElementById('v2CfgSubtitle').textContent = schema.desc || '';
+  const body = document.getElementById('v2CfgBody');
+  body.innerHTML = '';
+  if (schema.statusLine === 'bili' && biliStatusCache) {
+    const lib = biliStatusCache.library || { count: 0, bytes: 0 };
+    const info = document.createElement('div');
+    info.className = 'meta';
+    info.style.marginBottom = '6px';
+    info.textContent = 'SESSDATA：' + (biliStatusCache.cookieSet ? '已配置（长度 ' + biliStatusCache.cookieLen + '）' : '未配置（动态详情多图/官方表情包不可用）')
+      + ' ｜ 图库：' + lib.count + ' 张 / ' + (lib.bytes / 1048576).toFixed(1) + ' MB'
+      + ' ｜ 脚本：' + (biliStatusCache.runnerExists ? '就绪' : '缺失');
+    body.appendChild(info);
+  }
+  for (const f of schema.fields) {
+    const raw = v2GetPath(data, f.path);
+    const row = document.createElement('div');
+    row.className = 'v2-cfg-row';
+    const lab = document.createElement('label');
+    lab.textContent = f.label;
+    if (f.hint) { const h = document.createElement('span'); h.className = 'hint'; h.textContent = f.hint; lab.appendChild(h); }
+    const cell = document.createElement('div');
+    let el;
+    if (f.type === 'bool') {
+      el = document.createElement('input'); el.type = 'checkbox'; el.style.width = 'auto'; el.checked = raw !== false;
+    } else if (f.type === 'number') {
+      el = document.createElement('input'); el.type = 'number';
+      const n = Number(raw);
+      el.value = Number.isFinite(n) ? (f.factor ? Number((n / f.factor).toFixed(3)) : n) : '';
+      if (f.step) el.step = f.step;
+    } else if (f.type === 'select') {
+      el = document.createElement('select');
+      for (const o of f.options) { const op = document.createElement('option'); op.value = o.value; op.textContent = o.label; el.appendChild(op); }
+      el.value = raw ?? f.options[0].value;
+    } else if (f.type === 'list') {
+      el = document.createElement('textarea');
+      el.value = Array.isArray(raw) ? raw.join('\n') : '';
+    } else {
+      el = document.createElement('input');
+      el.type = f.type === 'password' ? 'password' : 'text';
+      el.value = raw ?? '';
+      if (f.placeholder) el.placeholder = f.placeholder;
+    }
+    el.dataset.v2CfgField = f.path;
+    cell.appendChild(el);
+    if (f.unit) { const u = document.createElement('span'); u.className = 'hint'; u.textContent = '单位：' + f.unit; cell.appendChild(u); }
+    row.appendChild(lab); row.appendChild(cell);
+    body.appendChild(row);
+  }
+  if (schema.logLine === 'bili') {
+    const cap = document.createElement('div');
+    cap.className = 'meta';
+    cap.style.marginTop = '10px';
+    cap.textContent = '最近抓取日志（state/bili-fetch.log 末尾）';
+    const ta = document.createElement('textarea');
+    ta.readOnly = true;
+    ta.rows = 7;
+    ta.style.width = '100%';
+    ta.style.fontFamily = 'ui-monospace, monospace';
+    ta.style.fontSize = '12px';
+    ta.value = (biliStatusCache && biliStatusCache.log) || '（暂无日志）';
+    body.appendChild(cap);
+    body.appendChild(ta);
+  }
+  if (Array.isArray(schema.extraButtons) && schema.extraButtons.length) {
+    const bar = document.createElement('div');
+    bar.className = 'row';
+    bar.style.marginTop = '10px';
+    for (const b of schema.extraButtons) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.v2CfgAction = b.action;
+      btn.textContent = b.label;
+      bar.appendChild(btn);
+    }
+    body.appendChild(bar);
+  }
+}
+
+async function openV2ToolCfg(section) {
+  if (!V2_CFG_SCHEMA[section]) return;
+  if (section === 'bili') { try { biliStatusCache = await api('/api/bili/status'); } catch (e) { /* 忽略 */ } }
+  if (!v2ConfigCache) { try { await loadV2Config(); } catch (e) { /* 忽略 */ } }
+  v2CfgCurrent = section;
+  document.getElementById('v2CfgMsg').textContent = '';
+  renderV2ToolCfg(section);
+  document.getElementById('v2CfgBackdrop').classList.add('open');
+}
+function closeV2ToolCfg() {
+  document.getElementById('v2CfgBackdrop').classList.remove('open');
+  v2CfgCurrent = null;
+}
+async function saveBiliCfg() {
+  const msg = document.getElementById('v2CfgMsg');
+  const val = (path, d) => { const el = document.querySelector('[data-v2-cfg-field="' + path + '"]'); return el ? el.value : d; };
+  const chk = (path, d) => { const el = document.querySelector('[data-v2-cfg-field="' + path + '"]'); return el ? el.checked : d; };
+  const num = (path, d) => { const n = Number(val(path, d)); return Number.isFinite(n) ? n : d; };
+  const lines = (path) => String(val(path, '')).split('\n').map((x) => x.trim()).filter(Boolean);
+  const sessdata = String(val('sessdata', '')).trim();
+  const targets = {
+    keywords: lines('keywords'),
+    bvids: lines('bvids'),
+    mids: lines('mids'),
+    cvs: lines('cvs'),
+    sources: {
+      cover: chk('sources.cover', true),
+      comments: chk('sources.comments', true),
+      dynamic: chk('sources.dynamic', true),
+      detail: chk('sources.detail', false)
+    },
+    limit: num('limit', 40),
+    dynamicPages: num('dynamicPages', 1),
+    commentPages: num('commentPages', 1),
+    minSide: num('minSide', 150),
+    maxBytes: Math.round(num('maxBytes', 5) * 1048576),
+    delayMs: num('delayMs', 900)
+  };
+  msg.textContent = '保存中…';
+  try {
+    const payload = { targets };
+    if (sessdata) payload.sessdata = sessdata;   // 留空表示不动已有 cookie
+    const r = await api('/api/bili/config', 'POST', payload);
+    biliStatusCache = r;
+    msg.textContent = sessdata ? 'SESSDATA 与抓取目标已保存 ✓' : '抓取目标已保存 ✓';
+    renderV2ToolCfg('bili');
+  } catch (e) { msg.textContent = '保存失败：' + (e && e.message ? e.message : e); }
+}
+
+async function handleV2CfgAction(action) {
+  const msg = document.getElementById('v2CfgMsg');
+  if (action === 'bili-fetch') {
+    msg.textContent = '已触发抓取，后台运行中…';
+    try {
+      await api('/api/bili/fetch', 'POST', {});
+      const refresh = async () => { try { biliStatusCache = await api('/api/bili/status'); if (v2CfgCurrent === 'bili') renderV2ToolCfg('bili'); } catch (e) { /* 忽略 */ } };
+      setTimeout(refresh, 8000);
+      setTimeout(refresh, 25000);
+    } catch (e) { msg.textContent = '触发失败：' + (e && e.message ? e.message : e); }
+    return;
+  }
+  if (action === 'bili-clear-cookie') {
+    try {
+      biliStatusCache = await api('/api/bili/config', 'POST', { sessdata: '' });
+      msg.textContent = 'SESSDATA 已清除';
+      renderV2ToolCfg('bili');
+    } catch (e) { msg.textContent = '清除失败：' + (e && e.message ? e.message : e); }
+  }
+}
+
+async function saveV2ToolCfg() {
+  if (!v2CfgCurrent) return;
+  const schema = V2_CFG_SCHEMA[v2CfgCurrent];
+  if (schema.custom === 'bili') { await saveBiliCfg(); return; }
+  const patch = {};
+  for (const f of schema.fields) {
+    const el = document.querySelector('[data-v2-cfg-field="' + f.path + '"]');
+    if (!el) continue;
+    let v;
+    if (f.type === 'bool') v = el.checked;
+    else if (f.type === 'number') {
+      const n = Number(el.value);
+      if (!Number.isFinite(n)) continue;
+      v = f.factor ? Math.round(n * f.factor) : n;
+    } else if (f.type === 'list') v = el.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    else v = el.value.trim();
+    v2SetPath(patch, f.path, v);
+  }
+  const msg = document.getElementById('v2CfgMsg');
+  msg.textContent = '保存中…';
+  try {
+    await api('/api/socialV2/config', 'POST', { [v2CfgCurrent]: patch });
+    msg.textContent = '已保存 ✓';
+    try { await loadV2Config(); } catch (e) { /* 忽略 */ }
+    if (v2CfgCurrent) renderV2ToolCfg(v2CfgCurrent);
+  } catch (e) {
+    msg.textContent = '保存失败：' + (e && e.message ? e.message : e);
+  }
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (e.target && e.target.closest && e.target.closest('[data-v2-cfg]')) e.preventDefault();
+}, true);
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t && t.closest && t.closest('[data-v2-cfg]')) {
+    e.preventDefault(); e.stopPropagation();
+    openV2ToolCfg(t.closest('[data-v2-cfg]').dataset.v2Cfg);
+    return;
+  }
+  if (t && t.closest && t.closest('[data-v2-cfg-close]')) { e.preventDefault(); closeV2ToolCfg(); return; }
+  if (t && t.id === 'v2CfgBackdrop') { closeV2ToolCfg(); return; }
+  if (t && t.id === 'v2CfgSave') { e.preventDefault(); saveV2ToolCfg(); return; }
+  const act = t && t.closest ? t.closest('[data-v2-cfg-action]') : null;
+  if (act) { e.preventDefault(); handleV2CfgAction(act.dataset.v2CfgAction); }
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeV2ToolCfg(); });
+
+// B 站抓图：状态缓存（由弹窗按需拉取）
+let biliStatusCache = null;
 </script>
 </body>
 </html>

@@ -39,7 +39,7 @@
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
 | 内核 | `src/slang-learner.js` | 群聊黑话/网络用语学习：存储、候选提取、研究调度、注入 |
 | 内核 | `src/mcp-web-search-safe.js` | 给 DSH agent 用的只读 Web Search MCP（查网络用语/梗） |
-| 外核 | `public/console.html` | 本地控制台：状态、参数、手动切换、重置 |
+| 外核 | `public/console.html` | 本地控制台：状态、参数、手动切换、重置；**默认浅色，右上角可切深色**（`scripts/test-console-theme.mjs` 守护） |
 | 外核 | `config.json` | 运行配置（白名单、QQ/DSH 地址、社交参数）；**不入库** |
 | 外核 | `roles/*.md` | 人格卡（如 `小鲸鱼.md`） |
 | 外核 | `state/*` | 运行时状态（会话映射、模式、日志）；**不入库** |

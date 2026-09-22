@@ -43,3 +43,6 @@ config.json
 /scripts/patch-qq-chat-v2-presleep.mjs
 /scripts/patch-qq-chat-v2-stickers.mjs
 /scripts/patch-web-mcp-timeout.mjs
+
+# 本地图库（B 站抓图，勿发布）
+assets/stickers/

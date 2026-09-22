@@ -156,7 +156,28 @@ function validateLimit(value, name) {
 
 // 使用已校验的 IP 发起请求，保留原始 Host/SNI，禁止重新解析 DNS。
 // 总时限包含 TCP/TLS、响应头和响应体；仅 socket idle timeout 无法阻止慢速滴流。
-function requestOnce(url, ip, limit, binary = false) {
+/**
+ * 图片抓取允许携带的自定义请求头白名单。
+ * 只放行 Referer / User-Agent（B 站等图床有防盗链），且拒绝 CRLF 注入。
+ * 绝不接受任意 header —— 避免这个安全下载器被当成可定制的 HTTP 代理。
+ */
+const ALLOWED_IMAGE_HEADERS = new Set(['referer', 'user-agent']);
+
+export function sanitizeImageHeaders(headers) {
+  const out = {};
+  if (!headers || typeof headers !== 'object') return out;
+  for (const [rawName, rawValue] of Object.entries(headers)) {
+    const name = String(rawName).toLowerCase();
+    if (!ALLOWED_IMAGE_HEADERS.has(name)) continue;
+    const value = String(rawValue ?? '').trim();
+    if (!value || value.length > 512 || /[\r\n]/.test(value)) continue;
+    if (name === 'referer' && !/^https?:\/\//i.test(value)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+function requestOnce(url, ip, limit, binary = false, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let req;
@@ -187,6 +208,7 @@ function requestOnce(url, ip, limit, binary = false) {
           'user-agent': 'Mozilla/5.0',
           accept: binary ? 'image/*,*/*;q=0.8' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'accept-language': 'zh-CN,zh;q=0.9',
+          ...extraHeaders,
         },
         servername: url.protocol === 'https:' && !net.isIP(hostname) ? hostname : undefined,
         rejectUnauthorized: url.protocol === 'https:',
@@ -287,13 +309,16 @@ export function looksLikeImageBuffer(buf) {
   return false;
 }
 
-/** 抓取图片字节并返回 Buffer（带 SSRF 防护，且校验确实为图片）。 */
-export async function safeFetchBuffer(urlString, maxBytes = 4 * 1024 * 1024) {
+/** 抓取图片字节并返回 Buffer（带 SSRF 防护，且校验确实为图片）。
+ *  options.headers 只接受 Referer / User-Agent（见 sanitizeImageHeaders），
+ *  且仅在**第一跳**发送，重定向后不再携带，避免把 Referer 泄漏给未知站点。 */
+export async function safeFetchBuffer(urlString, maxBytes = 4 * 1024 * 1024, options = {}) {
   validateLimit(maxBytes, 'maxBytes');
+  const extraHeaders = sanitizeImageHeaders(options.headers);
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxBytes, true);
+    const result = await requestOnce(url, ip, maxBytes, true, i === 0 ? extraHeaders : {});
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
