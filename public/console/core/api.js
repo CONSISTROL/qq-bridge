@@ -20,6 +20,14 @@ export function setToken(token) {
 
 export function clearToken() { setToken(''); }
 
+// 「忘记本机令牌」：清掉 localStorage 里的那份，并抑制自动弹窗——
+// 否则点完按钮，下一个 5 秒轮询就会立刻弹一个输入框出来。
+// 想重新进入时刷新页面即可：/ 会重新走 401 → 输入令牌的流程。
+export function forgetToken() {
+  clearToken();
+  autoPromptAllowed = false;
+}
+
 // 通过 ?token=xxx 打开控制台时（根路径鉴权失败会重定向成这样）把令牌收进 localStorage，
 // 然后从地址栏抹掉，避免令牌留在历史记录/截图里。
 export function captureTokenFromUrl() {

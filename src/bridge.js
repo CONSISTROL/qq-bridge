@@ -2081,6 +2081,32 @@ async function main() {
         res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
         res.end(JSON.stringify(obj, null, 2));
       };
+      // ── 控制台「记住这个浏览器」Cookie ────────────────────────────────
+      // 浏览器直接导航（输入地址、刷新、从收藏夹打开）是带不了自定义请求头的，
+      // 只靠 ?token= 的后果就是每次刷新都要重新输一遍令牌。所以首次用令牌进站后
+      // 下发一个 HttpOnly Cookie，之后的导航/接口都认它。
+      // SameSite=Strict：跨站请求根本不带这个 Cookie，CSRF 面不再扩大；
+      // 写操作那边原有的「必须 application/json + Origin 校验」两层防护也仍在。
+      // 注意 Cookie 不区分端口：同机上别的前端（如 DSH Web）也会收到这个 Cookie，
+      // 所以它是 HttpOnly、只能靠「忘记本机令牌」/换令牌失效，不要往里面塞别的东西。
+      const CONSOLE_COOKIE = 'qq_console_token';
+      const CONSOLE_COOKIE_MAX_AGE_SEC = 30 * 24 * 60 * 60; // 30 天；换令牌/登出会立刻失效
+      const readCookie = (name) => {
+        const raw = req.headers.cookie;
+        if (!raw) return '';
+        for (const part of String(raw).split(';')) {
+          const eq = part.indexOf('=');
+          if (eq < 0) continue;
+          if (part.slice(0, eq).trim() !== name) continue;
+          const value = part.slice(eq + 1).trim();
+          try { return decodeURIComponent(value); } catch { return value; }
+        }
+        return '';
+      };
+      const consoleCookieHeader = (value, maxAgeSec) => {
+        const base = `${CONSOLE_COOKIE}=${value ? encodeURIComponent(value) : ''}; Path=/; HttpOnly; SameSite=Strict`;
+        return maxAgeSec > 0 ? `${base}; Max-Age=${Math.floor(maxAgeSec)}` : `${base}; Max-Age=0`;
+      };
       const readBody = () => new Promise((resolve, reject) => {
         const MAX_BODY_BYTES = 1_000_000;
         const chunks = [];
@@ -2174,9 +2200,15 @@ async function main() {
         res.end(data);
         return;
       }
-      // 控制台鉴权：所有请求需带 x-console-token 或 ?token=
-      const suppliedToken = url.searchParams.get('token') ?? req.headers['x-console-token'];
-      if (consoleToken && suppliedToken !== consoleToken) {
+      // 控制台鉴权：x-console-token 请求头 / ?token= / 登录后下发的 HttpOnly Cookie，三者任一命中即可。
+      // 令牌本身仍是唯一凭据；Cookie 只是把「已经输过一次」这件事记在这个浏览器上。
+      const cookieToken = readCookie(CONSOLE_COOKIE);
+      const suppliedTokens = [url.searchParams.get('token'), req.headers['x-console-token'], cookieToken]
+        .map((v) => (typeof v === 'string' ? v.trim() : ''))
+        .filter(Boolean);
+      if (consoleToken && !suppliedTokens.includes(consoleToken)) {
+        // 带着失效/过期的 Cookie 反复重试没有意义，顺手清掉，让浏览器回到「输入令牌」的干净状态
+        if (cookieToken) res.setHeader('Set-Cookie', consoleCookieHeader('', 0));
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           res.end('<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>const t=prompt(\'请输入控制台访问令牌\');if(t)location.href=\'/?token=\'+encodeURIComponent(t);</script>');
@@ -2184,6 +2216,10 @@ async function main() {
           sendJson({ ok: false, error: '未授权：请提供控制台访问令牌' }, 401);
         }
         return;
+      }
+      // 已授权但 Cookie 还没记住这次登录（首次用 ?token= 或请求头进来）→ 下发 Cookie
+      if (consoleToken && cookieToken !== consoleToken) {
+        res.setHeader('Set-Cookie', consoleCookieHeader(consoleToken, CONSOLE_COOKIE_MAX_AGE_SEC));
       }
       // CSRF 防护：所有写操作必须是 application/json，且（若带 Origin）必须来自本机页面。
       // 默认未配 consoleToken 时，这可阻止任意网页用表单/跨站请求触发
@@ -2813,8 +2849,17 @@ async function main() {
           cfg.consoleToken = generated ? '' : newToken;
           atomicWriteText(path.join(STATE_DIR, 'console-token'), newToken);
           consoleToken = newToken;
+          // 让当前浏览器立刻改用新令牌，否则下一次刷新就回到「输入令牌」
+          res.setHeader('Set-Cookie', consoleCookieHeader(newToken, CONSOLE_COOKIE_MAX_AGE_SEC));
           log(`控制台：访问令牌已${generated ? '重新生成' : '手动修改'}（不记录完整值）`);
           sendJson({ ok: true, token: newToken, generated });
+          return;
+        }
+        // ── 忘记本机令牌（只清这个浏览器的 Cookie；令牌本身不变） ────────────────
+        if (req.method === 'POST' && url.pathname === '/api/console/logout') {
+          res.setHeader('Set-Cookie', consoleCookieHeader('', 0));
+          log('控制台：已清除本机记住的访问令牌');
+          sendJson({ ok: true });
           return;
         }
         // ── 测试发送消息（强制走白名单校验） ───────────────────────────────────

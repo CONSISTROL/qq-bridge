@@ -96,6 +96,35 @@ ok('静态路由拒绝非白名单扩展名', badExt.status === 403, `HTTP ${bad
 const jsonExt = await fetch(`${BASE}/console/views/overview.json`);
 ok('静态路由拒绝 .json', jsonExt.status === 403, `HTTP ${jsonExt.status}`);
 
+// 1b. 「记住这个浏览器」的 Cookie
+//     浏览器导航/刷新带不了 x-console-token 头，没有这个 Cookie 的话每次刷新都会
+//     弹一次令牌输入框。这里守住整条链路：下发 → 只用 Cookie 能进站/调接口 →
+//     错 Cookie 仍然拒绝 → 登出能清掉。
+if (!TOKEN) {
+  console.log('⚠️  未读到 consoleToken，跳过 Cookie 鉴权用例');
+} else {
+  const viaQuery = await fetch(`${BASE}/?token=${encodeURIComponent(TOKEN)}`);
+  const setCookie = viaQuery.headers.get('set-cookie') || '';
+  ok('用 ?token= 进入会下发记住登录的 Cookie',
+    viaQuery.status === 200 && /qq_console_token=/.test(setCookie) && /HttpOnly/i.test(setCookie) && /SameSite=Strict/i.test(setCookie),
+    setCookie.slice(0, 90) || '(无 Set-Cookie)');
+  const cookie = setCookie.split(';')[0];
+  const viaCookie = await fetch(BASE + '/', { headers: { cookie } });
+  ok('只带 Cookie 就能打开外壳（=刷新不再要令牌）', viaCookie.status === 200, `HTTP ${viaCookie.status}`);
+  const apiViaCookie = await fetch(BASE + '/api/status', { headers: { cookie } });
+  ok('只带 Cookie 也能调管理 API', apiViaCookie.status === 200, `HTTP ${apiViaCookie.status}`);
+  const badCookie = await fetch(BASE + '/', { headers: { cookie: 'qq_console_token=not-the-real-token' } });
+  ok('伪造的 Cookie 仍然被拒', badCookie.status === 401, `HTTP ${badCookie.status}`);
+  ok('失效 Cookie 会被顺手清掉', /Max-Age=0/i.test(badCookie.headers.get('set-cookie') || ''),
+    badCookie.headers.get('set-cookie') || '(无 Set-Cookie)');
+  const logout = await fetch(BASE + '/api/console/logout', {
+    method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: '{}'
+  });
+  ok('「忘记本机令牌」能清掉 Cookie',
+    logout.status === 200 && /Max-Age=0/i.test(logout.headers.get('set-cookie') || ''),
+    logout.headers.get('set-cookie') || '(无 Set-Cookie)');
+}
+
 // 2. 角色列表
 let r = await api('/api/roles');
 const origRole = r.body.current ?? null;

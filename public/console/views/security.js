@@ -1,6 +1,6 @@
 // 白名单 / 管理员（10）、安全拦截通知（12）、控制台访问令牌（12b）
-import { api, setToken } from '../core/api.js';
-import { $, toast, setMsg, parseList } from '../core/dom.js';
+import { api, setToken, forgetToken } from '../core/api.js';
+import { $, toast, setMsg, parseList, confirmDanger } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 import { refreshStatus } from '../core/status.js';
 
@@ -76,4 +76,11 @@ export async function mount(root) {
 
   $('#consoleTokenSave', view).addEventListener('click', () => changeConsoleToken(view, false));
   $('#consoleTokenRandom', view).addEventListener('click', () => changeConsoleToken(view, true));
+  $('#consoleTokenForget', view).addEventListener('click', async () => {
+    if (!confirmDanger('清除这个浏览器记住的令牌？\n下次打开控制台需要重新输入（令牌本身不变）。')) return;
+    const r = await api('/api/console/logout', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    // 服务端清 Cookie，本地清 localStorage；两边都清掉才算真的「忘记」
+    forgetToken();
+    setMsg($('#consoleTokenMsg', view), r.ok ? '✅ 已忘记本机令牌；刷新页面会重新要求输入' : ('❌ ' + (r.error || '失败')), r.ok);
+  });
 }

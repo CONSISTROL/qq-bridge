@@ -288,7 +288,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 5. **审批**：非 owner 不能通过审批；超时/覆盖会给 DSH 回执。
 6. **进程控制**：`start/stop_snowluma` 默认禁用；即使开启，也仅允许在 `closed-agent` 模式下调用。
 7. **配置 fail-closed**：config.json 损坏直接退出；白名单默认不放行。
-8. **控制台鉴权**：可配 `consoleToken`；未配置时自动生成强 token。
+8. **控制台鉴权**：可配 `consoleToken`；未配置时自动生成强 token。凭据可用三种形式之一提交：`x-console-token` 请求头、`?token=` 查询参数、或首次验证通过后下发的 `qq_console_token` Cookie（HttpOnly + SameSite=Strict，30 天）——浏览器直接导航/刷新带不了自定义请求头，没有这个 Cookie 每次刷新都要重输令牌；点控制台里的「忘记本机令牌」可立即清除。
 9. **只读联网搜索**：`mcp-web-search-safe.js` 只暴露 `web_search` / `web_fetch`，带 SSRF 防护。
 10. **黑话人工确认**：自动提取/联网研究的黑话默认 candidate，只有控制台确认后才注入聊天上下文。
 11. **日志脱敏**：日志统一经过 `redactSensitiveText`，不记录路径/凭据等敏感原文。
@@ -314,6 +314,9 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
   扩展名白名单、**不需要令牌**（`<script type="module">` 带不了自定义请求头）；
   数据接口 `/api/*` 与外壳 `/` 仍然全部要令牌。
 - 新增分区 = 写 `views/xxx.js` + `views/xxx.html`，在 `app.js` 里 import 并加进 `VIEWS`。
+- 鉴权：外壳 `/` 与 `/api/*` 要令牌；首次用 `?token=`（或请求头）通过后，桥接下发的
+  `qq_console_token` Cookie 就是后续导航/刷新的凭据，前端因此不需要把令牌塞进 URL。
+  前端 `core/api.js` 仍会带 `x-console-token`（localStorage 那份），两边任一有效即可。
 
 ### 常用调试/测试脚本
 
