@@ -84,30 +84,16 @@
       </div>
       <details style="margin-top:10px">
         <summary class="meta">黑话系统参数（可调）</summary>
-        <div class="row">
-          <label style="flex:1">启用黑话学习</label><input type="checkbox" class="switch" id="slangEnabled">
-        </div>
-        <div class="row">
-          <label style="flex:1">触发提取最少消息数</label><input type="number" id="slangExtractMin" min="1" style="width:90px">
-        </div>
-        <div class="row">
-          <label style="flex:1">提取冷却（毫秒）</label><input type="number" id="slangCooldown" min="0" step="1000" style="width:110px">
-        </div>
-        <div class="row">
-          <label style="flex:1">研究触发阈值（逗号分隔）</label><input type="text" id="slangThresholds" placeholder="2,4,8" style="width:120px">
-        </div>
-        <div class="row">
-          <label style="flex:1">注入最大条数</label><input type="number" id="slangInjectMax" min="1" max="30" style="width:90px">
-        </div>
-        <div class="row">
-          <label style="flex:1">学习会话 preset</label><input type="text" id="slangLearnerPreset" placeholder="qq-chat" style="width:120px">
-        </div>
-        <div class="row">
-          <label style="flex:1">学习工作区名</label><input type="text" id="slangWorkspaceTitle" placeholder="QQ 黑话学习" style="width:120px">
-        </div>
-        <div class="row">
-          <label style="flex:1">自动联网研究</label><input type="checkbox" class="switch" id="slangAutoResearch">
-        </div>
+<div class="form-grid">
+  <div class="form-row"><label>启用黑话学习</label><div class="ctl"><input type="checkbox" class="switch" id="slangEnabled"></div></div>
+  <div class="form-row"><label>触发提取最少消息数</label><div class="ctl"><input type="number" id="slangExtractMin" min="1"></div></div>
+  <div class="form-row"><label>提取冷却（毫秒）</label><div class="ctl"><input type="number" id="slangCooldown" min="0" step="1000"></div></div>
+  <div class="form-row"><label>研究触发阈值（逗号分隔）</label><div class="ctl"><input type="text" id="slangThresholds" placeholder="2,4,8"></div></div>
+  <div class="form-row"><label>注入最大条数</label><div class="ctl"><input type="number" id="slangInjectMax" min="1" max="30"></div></div>
+  <div class="form-row"><label>学习会话 preset</label><div class="ctl"><input type="text" id="slangLearnerPreset" placeholder="qq-chat"></div></div>
+  <div class="form-row"><label>学习工作区名</label><div class="ctl"><input type="text" id="slangWorkspaceTitle" placeholder="QQ 黑话学习"></div></div>
+  <div class="form-row"><label>自动联网研究</label><div class="ctl"><input type="checkbox" class="switch" id="slangAutoResearch"></div></div>
+</div>
         <div class="meta">开关（启用黑话学习、自动联网研究）拨动即生效；数值/文本改完后点「保存黑话参数」。</div>
         <div class="row" style="margin-top:8px">
           <button id="slangConfigSave" class="small">保存黑话参数</button>

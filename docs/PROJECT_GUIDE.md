@@ -329,6 +329,16 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 服务端的配置接口（`/api/socialV2/config`、`/api/social`、`/api/slang/config`、`/api/security`）
 都是**字段级/子分区深合并**，所以「只提交一个开关」不会碰其它字段——这是开关能即改即存的前提。
 
+**参数区的排版约定（改 markup 时别破坏）**：
+
+- 一行字段 = `<div class="form-row"><label>标签</label><div class="ctl">控件</div></div>`；
+  一行两组（如「启用 X ｜ 预设 Y」）= `.form-row.pairs`，四列 `标签 控件 标签 控件`。
+- 连续的 `.form-row` 外面套一层 `.form-grid`（宽屏自动 2~3 栏）；`.pairs` 独占整行。
+- 标签列在 CSS 里固定 188px、数字框统一 96px，所以**不要再给控件写死 `style="width:NNpx"`**，
+  也不要把标签写在 `.ctl` 外面——否则输入框左边缘又会参差不齐。
+- 行内的补充说明放在 `.ctl` 里（`.meta`），直接放外面会掉到标签列下面。`tools/scripts` 里
+  `test-console-views.mjs` 只校验 id 一致性，排版这类问题靠肉眼或 jsdom 结构检查。
+
 ### 常用调试/测试脚本
 
 | 脚本 | 用途 |

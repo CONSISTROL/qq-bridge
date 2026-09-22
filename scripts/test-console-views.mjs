@@ -211,6 +211,31 @@ check('数据表里声明的 id 都真的存在于片段', () => {
   return `${total} 个字段`;
 });
 
+// ── 6c. 参数行排版：一行 = 标签 + 控件列，必须自闭合在同一行 ──────────
+// 这条是被真事儿逼出来的：把 </div> 换到下一行写，或者塞进 textarea 的内容里
+// （RCDATA），页面不会报错，只是提示文字掉到标签列下面 / 直接显示成 "</div></div>"。
+check('参数行的排版结构没被破坏', () => {
+  const problems = [];
+  let rows = 0;
+  for (const [id, meta] of viewMeta) {
+    read(meta.html).split('\n').forEach((line, index) => {
+      if (!line.includes('<div class="form-row')) return;
+      rows += 1;
+      const where = `${id}.html:${index + 1}`;
+      const opens = (line.match(/<div\b/g) || []).length;
+      const closes = (line.match(/<\/div>/g) || []).length;
+      if (opens !== closes) problems.push(`${where} form-row 没有在同一行闭合（开 ${opens} / 闭 ${closes}）`);
+      if (!/<\/div><\/div>\s*$/.test(line)) problems.push(`${where} form-row 结尾不是 </div></div>`);
+      if (/<\/div><\/div>\s*<\/textarea>/.test(line)) problems.push(`${where} 闭合标签被写进了 textarea 内容`); 
+      const labels = (line.match(/<label>/g) || []).length;
+      const ctls = (line.match(/<div class="ctl">/g) || []).length;
+      if (!labels || labels !== ctls) problems.push(`${where} 标签数与控件列数不匹配（${labels}/${ctls}）`);
+    });
+  }
+  assert(problems.length === 0, problems.slice(0, 6).join('\n    '));
+  return `${rows} 行参数`;
+});
+
 // ── 7. 每个分区片段都被 shell 的样式/路由体系覆盖 ────────────────────
 check('每个片段都至少有内容（不是空文件）', () => {
   const empty = [...viewMeta.values()].filter((m) => read(m.html).trim().length < 100).map((m) => rel(m.html));
