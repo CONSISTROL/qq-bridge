@@ -456,7 +456,8 @@ const CFG_SCHEMA = {
 const state = {
   config: null,
   cfgSection: null,
-  bili: null
+  bili: null,
+  modalDirty: null
 };
 
 function cfgFieldEl(view, path) {
@@ -565,6 +566,9 @@ function renderToolCfg(view, section) {
     }
     body.appendChild(bar);
   }
+  // 字段每次都是新建的，所以每次重渲染后都要重建「未保存」基线
+  // （打开弹窗、保存成功、立即抓取、清除 SESSDATA 都会走到这里）
+  state.modalDirty?.markClean();
 }
 
 export async function mount(root) {
@@ -815,6 +819,19 @@ export async function mount(root) {
   });
 
   // ── 工具级配置弹窗 ────────────────────────────────────────────────
+  // 弹窗是「设置对话框」语义：里面全是表单字段，点保存才写盘。
+  // 所以这里的布尔项保持普通勾选框（不做成开关），但同样要有「未保存」提示与关闭确认，
+  // 否则改完点取消/按 Esc 会静默丢掉改动 —— 和主表单之前的问题一模一样。
+  const modalDirty = trackDirty(view, {
+    selector: '#v2CfgBody [data-v2-cfg-field]',
+    label: '工具配置弹窗',
+    onChange: (n) => {
+      $('#v2CfgDirtyHint', view).textContent = n ? `● 有 ${n} 项未保存` : '';
+      $('#v2CfgSave', view).classList.toggle('dirty', n > 0);
+    }
+  });
+  state.modalDirty = modalDirty;
+
   const openToolCfg = async (section) => {
     if (!CFG_SCHEMA[section]) return;
     if (section === 'bili') state.bili = await api('/api/bili/status').catch(() => null);
@@ -824,7 +841,9 @@ export async function mount(root) {
     renderToolCfg(view, section);
     $('#v2CfgBackdrop', view).classList.add('open');
   };
-  const closeToolCfg = () => {
+  const closeToolCfg = (force = false) => {
+    if (!force && modalDirty.count() > 0
+      && !confirmDanger(`工具配置里还有 ${modalDirty.count()} 项没保存，确定关闭？`)) return;
     $('#v2CfgBackdrop', view)?.classList.remove('open');
     state.cfgSection = null;
   };
@@ -948,6 +967,8 @@ export async function mount(root) {
 
   return () => {
     dirty.dispose();
+    modalDirty.dispose();
+    state.modalDirty = null;
     stopActivity();
     document.removeEventListener('keydown', onKey);
   };

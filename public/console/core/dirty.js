@@ -7,18 +7,32 @@
 // 在切换分区或关页面时拦一下，避免「改了半天结果没保存」。
 import { $$ } from './dom.js';
 
-// 同一时刻只会挂载一个 view，所以一个全局守卫就够；router 在切换前问它。
-let leaveGuard = null;
+// 同一时刻只会挂载一个 view，但一个 view 里可能同时有多个「未保存」区域
+// （比如二代主表单 + 工具级配置弹窗），所以守卫是个集合：任何一个说「不能走」就拦下。
+const guards = new Set();
 
-export function setLeaveGuard(fn) { leaveGuard = fn; }
-export function clearLeaveGuard() { if (leaveGuard) leaveGuard = null; }
-
-export async function confirmLeave() {
-  if (typeof leaveGuard !== 'function') return true;
-  try { return (await leaveGuard()) !== false; } catch (e) { return true; }
+/** 注册一个离开守卫，返回注销函数。 */
+export function setLeaveGuard(fn) {
+  guards.add(fn);
+  return () => guards.delete(fn);
 }
 
-function controlKey(el) { return el.id || el.name || ''; }
+export function clearLeaveGuard() { guards.clear(); }
+
+export async function confirmLeave() {
+  for (const guard of [...guards]) {
+    try {
+      if ((await guard()) === false) return false;
+    } catch (e) { /* 守卫自身出错不该把人锁在页面里 */ }
+  }
+  return true;
+}
+
+// 控件 key：优先 id，其次 name，再退到 data 属性。
+// 工具配置弹窗里的字段是动态生成、没有 id 的，只能靠 data-v2-cfg-field 认。
+function controlKey(el) {
+  return el.id || el.name || el.dataset?.v2CfgField || el.getAttribute?.('data-key') || '';
+}
 function controlValue(el) {
   if (el.type === 'checkbox' || el.type === 'radio') return String(el.checked);
   return el.value;
@@ -75,7 +89,8 @@ export function trackDirty(root, { selector, onChange, label = '当前页面' })
   root.addEventListener('input', onInput);
   root.addEventListener('change', onInput);
 
-  setLeaveGuard(() => {
+  // 每个 tracker 只登记/注销自己的守卫，别去动别人的（主表单与弹窗要共存）
+  const removeGuard = setLeaveGuard(() => {
     if (!dirty) return true;
     return window.confirm(`「${label}」还有 ${count()} 项改动没有保存，确定离开？`);
   });
@@ -90,7 +105,7 @@ export function trackDirty(root, { selector, onChange, label = '当前页面' })
       root.removeEventListener('input', onInput);
       root.removeEventListener('change', onInput);
       if (unloadArmed) { window.removeEventListener('beforeunload', onBeforeUnload); unloadArmed = false; }
-      clearLeaveGuard();
+      removeGuard();
     }
   };
 }
