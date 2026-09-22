@@ -1,0 +1,29 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">01</span>运行模式</h2>
+      <div class="mode-row" id="modeRow">
+        <button data-mode="chat">聊天模式</button>
+        <button data-mode="closed-agent">封闭 Agent</button>
+        <button data-mode="reserved">一代仿真模式</button>
+        <button data-mode="reserved2">二代仿真模式</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label style="flex:1;margin:0">封闭 Agent 使用的 DSH 预设</label>
+        <select id="closedPreset" style="max-width:260px"><option value="">（DSH 默认 preset）</option></select>
+      </div>
+      <div class="meta">二代仿真模式（reserved2）骨架已接入；完整“一切皆工具”链路开发中。</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="sec-no">02</span>会话映射</h2>
+      <div id="sessionList">加载中…</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="sec-no">03</span>挂起审批 / 提问</h2>
+      <div id="pendingList">加载中…</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="sec-no">04</span>活动日志（最近 100 条）</h2>
+      <pre id="activity">（空）</pre>
+    </section>

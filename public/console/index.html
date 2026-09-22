@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ 桥接控制台</title>
+<script>
+  // 主题必须在样式生效前定下来，否则（深色用户）会先闪一下浅色。
+  // 默认浅色；只有明确存过 dark 才切深色。
+  // 这段必须内联：下面的 app.js 是 ES module（延迟执行），等不到它。
+  (function () {
+    try {
+      if (localStorage.getItem('qq-console-theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略 */ }
+  })();
+</script>
+<link rel="stylesheet" href="/console/style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>QQ 桥接控制台</h1>
+        <div class="sub">DeepSeek Harness ↔ QQ 模式后台<br>修改即时生效（桥接 5 秒内感知）</div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="sidebar-foot">
+        <button class="theme-toggle" id="themeToggle" type="button" title="切换浅色 / 深色模式">🌙 深色</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 class="view-title" id="viewTitle">加载中…</h2>
+          <div class="sub" id="viewDesc"></div>
+        </div>
+        <div class="topbar-right">
+          <div class="status-badge" id="statusText">加载中…</div>
+        </div>
+      </header>
+      <div id="view-root"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/console/app.js"></script>
+</body>
+</html>

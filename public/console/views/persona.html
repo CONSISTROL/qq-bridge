@@ -1,0 +1,30 @@
+    <section class="card">
+      <h2><span class="sec-no">05</span>人格（角色扮演）</h2>
+      <div class="meta">当前角色：<span id="roleText">-</span> ｜ 状态：<span id="roleModeText">-</span></div>
+      <div id="roleList" style="margin-top:10px">加载中…</div>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="roleInput" placeholder="选择已有角色或输入新角色名">
+        <button id="roleSet">设置</button>
+        <button id="roleClear">清除</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary class="meta">新建人格</summary>
+        <label>角色名</label>
+        <input type="text" id="newRoleName" placeholder="如：猫娘">
+        <label>角色设定（Markdown）</label>
+        <textarea id="newRoleContent" placeholder="- 性格：…&#10;- 说话风格：…&#10;- 背景设定：…"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="roleCreate">创建人格</button>
+          <span class="meta" id="roleCreateMsg"></span>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2><span class="sec-no">11</span>静默开关</h2>
+      <div class="row">
+        <button id="silentOn">开启静默</button>
+        <button id="silentOff">恢复正常</button>
+      </div>
+      <div class="meta">静默时群友消息不投递 agent，仅管理员可对话。</div>
+    </section>

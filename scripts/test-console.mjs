@@ -31,10 +31,70 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' — ' + extra : ''}`);
 };
 
-// 1. 页面
+// 1. 页面外壳 + 分区静态资源
+//    控制台已从单文件拆成「外壳 + core/ + views/*.html」，这里守住三件事：
+//    外壳能加载、每个分区片段都在、/console/* 的静态路由不带令牌也能取到
+//    （浏览器给 <script type="module"> 加不了自定义头，所以这条是硬要求）。
 const page = await fetch(BASE + '/', { headers: authHeaders });
 const html = await page.text();
-ok('页面加载', page.status === 200 && html.includes('白名单 / 管理员') && html.includes('人格（角色扮演）') && html.includes('测试发送'), `长度 ${html.length}`);
+ok('控制台外壳加载', page.status === 200 && html.includes('QQ 桥接控制台') && html.includes('/console/app.js'), `长度 ${html.length}`);
+
+const anon = await fetch(BASE + '/');
+ok('外壳匿名访问被拒（401）', anon.status === 401, `HTTP ${anon.status}`);
+
+const VIEWS = [
+  ['overview', ['运行模式', '会话映射', '挂起审批', '活动日志']],
+  ['persona', ['人格（角色扮演）', '静默开关']],
+  ['social1', ['一代仿真模式（reserved）']],
+  ['social2', ['二代仿真模式（reserved2）控制台', '工具调用日志', '轻量记忆']],
+  ['slang', ['群聊黑话 / 网络用语库', '本地向量检索（黑话选词 / 语义匹配）']],
+  ['tools', ['DSH 侧 MCP 工具', '后台控制端引导']],
+  ['security', ['白名单 / 管理员', '安全拦截通知', '控制台访问令牌']],
+  ['ops', ['测试发送', '桥接控制']]
+];
+for (const [name, markers] of VIEWS) {
+  const res = await fetch(`${BASE}/console/views/${name}.html`); // 故意不带令牌
+  const body = res.status === 200 ? await res.text() : '';
+  const missing = markers.filter((m) => !body.includes(m));
+  ok(`分区片段 ${name}.html`, res.status === 200 && missing.length === 0,
+    res.status === 200 ? (missing.length ? `缺少 ${missing.join(' / ')}` : `${body.length} 字节`) : `HTTP ${res.status}`);
+}
+
+const assets = [
+  ['/console/style.css', 'text/css', '--accent'],
+  ['/console/app.js', 'text/javascript', 'startRouter'],
+  ['/console/core/api.js', 'text/javascript', 'export async function api'],
+  ['/console/core/theme.js', 'text/javascript', 'initTheme'],
+  ['/console/core/router.js', 'text/javascript', 'defineView'],
+  ['/console/core/poll.js', 'text/javascript', 'export function every'],
+  ['/console/core/dom.js', 'text/javascript', 'export function esc'],
+  ['/console/core/status.js', 'text/javascript', 'refreshStatus'],
+  ['/console/core/fragments.js', 'text/javascript', 'mountFragment']
+];
+for (const [path, type, marker] of assets) {
+  const res = await fetch(BASE + path); // 同样匿名
+  const ctype = res.headers.get('content-type') || '';
+  const body = res.status === 200 ? await res.text() : '';
+  ok(`静态资源 ${path}`, res.status === 200 && ctype.includes(type) && body.includes(marker),
+    res.status === 200 ? ctype : `HTTP ${res.status}`);
+}
+
+// 静态路由的边界：目录穿越 / 空相对路径 / 不允许的扩展名
+const traversal = await fetch(`${BASE}/console/%2e%2e%2fsrc%2fbridge.js`);
+ok('静态路由挡住 %2e%2e 穿越', traversal.status === 404 || traversal.status === 400, `HTTP ${traversal.status}`);
+const escape = await fetch(`${BASE}/console/../../config.json`);
+// URL 解析会先把 .. 归一化成 /config.json，落到普通 API 路由上（没有令牌 → 401）。
+// 关键是它绝不能返回 config.json 的内容：这里只要求不是 200 且不含配置字段。
+const escapeBody = escape.status === 200 ? await escape.text() : '';
+ok('静态路由挡住 .. 穿越', escape.status !== 200 && !escapeBody.includes('consoleToken'),
+  `HTTP ${escape.status}`);
+const emptyRel = await fetch(`${BASE}/console/`);
+ok('静态路由拒绝空路径（无目录列表）', emptyRel.status === 400, `HTTP ${emptyRel.status}`);
+const badExt = await fetch(`${BASE}/console/index.html.bak`);
+ok('静态路由拒绝非白名单扩展名', badExt.status === 403, `HTTP ${badExt.status}`);
+// 扩展名白名单只留 html/js/css：以后有人往 public/console 里丢数据文件也不会被匿名读到
+const jsonExt = await fetch(`${BASE}/console/views/overview.json`);
+ok('静态路由拒绝 .json', jsonExt.status === 403, `HTTP ${jsonExt.status}`);
 
 // 2. 角色列表
 let r = await api('/api/roles');

@@ -14,6 +14,7 @@ import * as safeFetch from '../src/safe-fetch.js';
 import * as forward from '../src/forward.js';
 import * as slang from '../src/slang-learner.js';
 import * as sticker from '../src/sticker-lib.js';
+import * as slangIndex from '../src/slang-index.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -27,7 +28,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     consoleToken: 'fixture-console-token', slang: { enabled: false }, ...config,
   }));
   if (savedState) fs.writeFileSync(path.join(temp, 'state/sessions.json'), JSON.stringify(savedState));
-  const calls = { created: [], archived: [], sent: [], prompts: [], follows: [], cancelled: [] };
+  const calls = { created: [], archived: [], sent: [], prompts: [], follows: [], cancelled: [], ws: [] };
   const success = (value) => ({ result: { ok: true, value } });
   const api = {
     events: { follow: (id) => calls.follows.push(id) },
@@ -47,7 +48,16 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
   class FakeBot {
     async sendPrivateMessage(id, text) { calls.sent.push({ kind: 'private', id, text }); }
     async sendGroupMessage(id, text) { calls.sent.push({ kind: 'group', id, text }); }
-    async request() { return { status: 'ok', retcode: 0, data: [{ emoji_id: 'fixture-sticker', url: 'https://public.invalid/sticker' }] }; }
+    // 现在所有 OneBot 调用都优先走 WS（base64 图片太大时 SnowLuma 的 HTTP 端会断连），
+    // 所以假机器人要按 action 分流：被收藏表情要返回列表，发送类调用返回 message_id，
+    // 否则表情发送测试会拿不到回执（calls.ws 里能看到实际发出的 params）。
+    async request(action, params) {
+      calls.ws.push({ action, params });
+      if (action === 'fetch_custom_face_detail') {
+        return { status: 'ok', retcode: 0, data: [{ emoji_id: 'fixture-sticker', url: 'https://public.invalid/sticker' }] };
+      }
+      return { status: 'ok', retcode: 0, data: { message_id: 1 } };
+    }
   }
   let source = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
   source = source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
@@ -70,9 +80,23 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); return timer; },
     clearTimeout, setInterval: () => ({ unref() {} }), clearInterval: () => {},
     NodeApiClient: class { constructor() { return api; } },
+    // RAG 的 embedder 客户端在审计里必须是「永远不可用」的桩：真实实现会在 start() 里
+    // spawn 一个子进程和加载本地模型，审计套件要求完全离线、不碰真实进程与模型文件。
+    // 桩让 ragReady() 恒为 false，向量检索自动降级为按频次选词，其余逻辑照常跑。
+    EmbeddingClient: class {
+      constructor() {
+        this.ready = false;
+        this.info = { ready: false, model: null, dim: null, mem: null };
+        this.stats = { requests: 0, totalMs: 0 };
+      }
+      async start() { return false; }
+      async embed() { return []; }
+      async probe() { return { ok: false, error: 'audit stub' }; }
+      dispose() {}
+    },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);

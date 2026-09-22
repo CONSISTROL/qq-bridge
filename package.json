@@ -19,6 +19,8 @@
     "test-slang": "node scripts/test-slang-learn.mjs",
     "test-stickers": "node scripts/test-stickers.mjs",
     "test-console": "node scripts/test-console.mjs",
+    "test-console-theme": "node scripts/test-console-theme.mjs",
+    "test-console-views": "node scripts/test-console-views.mjs",
     "verify:adaptation": "node scripts/verify-dsh-015-adaptation.mjs",
     "verify:persona": "node scripts/verify-persona-config.mjs",
     "test:mcp-servers": "node scripts/test-mcp-servers-stdio.mjs",

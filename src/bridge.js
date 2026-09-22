@@ -2135,6 +2135,45 @@ async function main() {
         req.on('error', () => fail(400, '请求体读取失败'));
         req.on('aborted', () => fail(400, '请求体读取中断'));
       });
+      // 控制台静态资源（/console/*）。
+      // 放在鉴权之前是必须的：<script type="module" src="/console/app.js"> 和它 import
+      // 的模块都带不了 x-console-token 头，若也走令牌校验页面根本起不来。
+      // 这些文件只有 CSS/HTML/JS 片段，不含任何密钥；数据接口 /api/* 仍然全部要令牌。
+      if (req.method === 'GET' && url.pathname.startsWith('/console/')) {
+        const CONSOLE_DIR = path.join(ROOT, 'public', 'console');
+        const rel = url.pathname.slice('/console/'.length);
+        const resolved = path.resolve(CONSOLE_DIR, rel);
+        // 目录穿越防护：解析后必须仍在 public/console 里（符号链接也一并按真实路径核）
+        let real = resolved;
+        try { real = fs.realpathSync(resolved); } catch { /* 不存在时下面统一 404 */ }
+        const inDir = (p) => p === CONSOLE_DIR || p.startsWith(CONSOLE_DIR + path.sep);
+        if (!rel || rel.includes('\0') || !inDir(resolved) || !inDir(real)) {
+          sendJson({ ok: false, error: '非法资源路径' }, 400);
+          return;
+        }
+        // 只放行控制台真正用到的三种类型：片段(.html) / 模块(.js) / 样式(.css)。
+        // 不放进 .json/.svg/.png——避免以后有人往 public/console 里丢数据文件被匿名读到。
+        const STATIC_TYPES = {
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.css': 'text/css; charset=utf-8'
+        };
+        const type = STATIC_TYPES[path.extname(resolved).toLowerCase()];
+        if (!type) {
+          sendJson({ ok: false, error: '不支持的静态资源类型' }, 403);
+          return;
+        }
+        let data;
+        try {
+          data = fs.readFileSync(resolved);
+        } catch {
+          sendJson({ ok: false, error: '静态资源不存在' }, 404);
+          return;
+        }
+        res.writeHead(200, { 'content-type': type, ...SECURITY_HEADERS });
+        res.end(data);
+        return;
+      }
       // 控制台鉴权：所有请求需带 x-console-token 或 ?token=
       const suppliedToken = url.searchParams.get('token') ?? req.headers['x-console-token'];
       if (consoleToken && suppliedToken !== consoleToken) {
@@ -2200,9 +2239,10 @@ async function main() {
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           try {
-            res.end(fs.readFileSync(path.join(ROOT, 'public', 'console.html'), 'utf8'));
+            // 控制台外壳：导航 + 视图容器，具体分区在 public/console/views/*.html
+            res.end(fs.readFileSync(path.join(ROOT, 'public', 'console', 'index.html'), 'utf8'));
           } catch {
-            res.end('控制台页面缺失：qq-bridge/public/console.html');
+            res.end('控制台页面缺失：qq-bridge/public/console/index.html');
           }
           return;
         }

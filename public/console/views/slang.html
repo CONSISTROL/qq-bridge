@@ -1,0 +1,177 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">08</span>群聊黑话 / 网络用语库</h2>
+      <div class="meta">DSH 会从群聊中自动提取疑似黑话候选；二代仿真模式下 AI 也可用 <code>qq_slang_submit</code> 主动提交陌生词。候选可批量送 DSH 深度联网研究，研究结果回到控制台由你删改修正后转正；确认后的词条会写入“黑话提示词”，注入一代/二代 AI 的聊天上下文，成为 AI 可查询和使用的记忆。</div>
+
+      <div class="slang-tabs">
+        <button class="slang-tab active" data-slang-tab="candidate">候选词</button>
+        <button class="slang-tab" data-slang-tab="confirmed">已确认</button>
+        <button class="slang-tab" data-slang-tab="rejected">已拒绝</button>
+      </div>
+      <span class="meta" id="slangMsg"></span>
+
+      <!-- 候选词面板 -->
+      <div class="slang-panel active" id="slangPanelCandidate">
+        <div class="row" style="margin-top:8px">
+          <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="slangCandidateSelectAll"> 全选</label>
+          <button id="slangBatchResearch" class="small">批量送 DSH 深度研究</button>
+          <button id="slangBatchConfirm" class="small">批量确认（有含义）</button>
+          <button id="slangBatchReject" class="small">批量拒绝</button>
+          <button id="slangBatchDeleteCand" class="small danger">批量删除候选</button>
+          <button id="slangExtract" class="small">立即提取候选</button>
+          <button id="slangResearch" class="small">研究全部候选</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="slangSearchCand" placeholder="搜索词条 / 草稿含义 / 语境证据" style="flex:1">
+          <select id="slangLimitCand" style="width:110px">
+            <option value="50">每页 50</option>
+            <option value="100" selected>每页 100</option>
+            <option value="200">每页 200</option>
+            <option value="500">每页 500</option>
+          </select>
+        </div>
+        <div class="slang-scroll" id="slangCandidateList">加载中…</div>
+      </div>
+
+      <!-- 已确认面板 -->
+      <div class="slang-panel" id="slangPanelConfirmed">
+        <div class="row" style="margin-top:8px">
+          <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="slangConfirmedSelectAll"> 全选</label>
+          <button id="slangBatchDeleteConfirmed" class="small danger">批量删除已确认</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="slangSearchConfirmed" placeholder="搜索词条 / 含义 / 用法 / 示例 / 来源" style="flex:1">
+          <select id="slangLimitConfirmed" style="width:110px">
+            <option value="50">每页 50</option>
+            <option value="100" selected>每页 100</option>
+            <option value="200">每页 200</option>
+            <option value="500">每页 500</option>
+          </select>
+        </div>
+        <div class="slang-scroll" id="slangConfirmedList">加载中…</div>
+      </div>
+
+      <!-- 已拒绝面板 -->
+      <div class="slang-panel" id="slangPanelRejected">
+        <div class="row" style="margin-top:8px">
+          <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="slangRejectedSelectAll"> 全选</label>
+          <button id="slangBatchRestore" class="small">恢复为候选</button>
+          <button id="slangBatchDeleteRejected" class="small danger">批量删除已拒绝</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="slangSearchRejected" placeholder="搜索词条 / 拒绝原因" style="flex:1">
+          <select id="slangLimitRejected" style="width:110px">
+            <option value="50">每页 50</option>
+            <option value="100" selected>每页 100</option>
+            <option value="200">每页 200</option>
+            <option value="500">每页 500</option>
+          </select>
+        </div>
+        <div class="slang-scroll" id="slangRejectedList">加载中…</div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">手动添加黑话</div>
+      <div class="row">
+        <input type="text" id="slangContent" placeholder="词条，如：绝绝子" style="flex:1">
+        <input type="text" id="slangMeaning" placeholder="含义，如：很好、很棒" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input type="text" id="slangUsage" placeholder="用法（可选）" style="flex:1">
+        <input type="text" id="slangExample" placeholder="示例（可选）" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="slangAdd" class="small">添加入库（确认）</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary class="meta">黑话系统参数（可调）</summary>
+        <div class="row">
+          <label style="flex:1">启用黑话学习</label><input type="checkbox" id="slangEnabled" style="width:auto">
+        </div>
+        <div class="row">
+          <label style="flex:1">触发提取最少消息数</label><input type="number" id="slangExtractMin" min="1" style="width:90px">
+        </div>
+        <div class="row">
+          <label style="flex:1">提取冷却（毫秒）</label><input type="number" id="slangCooldown" min="0" step="1000" style="width:110px">
+        </div>
+        <div class="row">
+          <label style="flex:1">研究触发阈值（逗号分隔）</label><input type="text" id="slangThresholds" placeholder="2,4,8" style="width:120px">
+        </div>
+        <div class="row">
+          <label style="flex:1">注入最大条数</label><input type="number" id="slangInjectMax" min="1" max="30" style="width:90px">
+        </div>
+        <div class="row">
+          <label style="flex:1">学习会话 preset</label><input type="text" id="slangLearnerPreset" placeholder="qq-chat" style="width:120px">
+        </div>
+        <div class="row">
+          <label style="flex:1">学习工作区名</label><input type="text" id="slangWorkspaceTitle" placeholder="QQ 黑话学习" style="width:120px">
+        </div>
+        <div class="row">
+          <label style="flex:1">自动联网研究</label><input type="checkbox" id="slangAutoResearch" style="width:auto">
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button id="slangConfigSave" class="small">保存黑话参数</button>
+          <span class="meta" id="slangConfigMsg"></span>
+        </div>
+      </details>
+    </section>
+
+    <div class="modal-overlay" id="slangModalOverlay">
+      <div class="modal">
+        <h3 id="slangModalTitle">确认黑话</h3>
+        <div class="meta" id="slangModalContent" style="margin-bottom:6px"></div>
+        <label>含义 *</label>
+        <input type="text" id="slangModalMeaning" placeholder="必须填写，确认后才会注入 AI 上下文">
+        <label>用法（可选）</label>
+        <input type="text" id="slangModalUsage" placeholder="使用场景 / 语气">
+        <label>示例（可选）</label>
+        <input type="text" id="slangModalExample" placeholder="自然短句示例">
+        <label>风险/慎用说明（可选）</label>
+        <input type="text" id="slangModalRisk" placeholder="敏感 / 慎用风险">
+        <label>参考来源（可选，每行一个 URL）</label>
+        <textarea id="slangModalSources" rows="3" placeholder="https://..."></textarea>
+        <div class="row">
+          <button id="slangModalDirectConfirm" class="small">直接确认（转正）</button>
+          <button id="slangModalSendResearch" class="small">送 DSH 深度研究</button>
+          <button id="slangModalCancel" class="small">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="card span-all">
+      <h2><span class="sec-no">RAG</span>本地向量检索（黑话选词 / 语义匹配）</h2>
+      <div class="meta" id="ragStatus">加载中…</div>
+      <div class="row" style="margin-top:8px">
+        <button class="small" id="ragRefresh">刷新状态</button>
+        <button class="small" id="ragRebuild">重建向量索引</button>
+        <button class="small" id="ragRebuildForce">强制全量重建</button>
+        <span class="meta" id="ragMsg"></span>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta"><b>检索调试</b>：同一个查询，看「旧的按出现次数取前 N」和「新的按语义选」各自会注入什么。
+        这是判断 RAG 到底有没有用的唯一手段。</div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="ragQuery" placeholder="输入一条群消息，例如：被笔记本外壳电了一下" style="flex:1">
+        <input type="text" id="ragKey" placeholder="会话 key（可选，如 group:1050666134）" style="width:230px">
+        <button class="small" id="ragDebugBtn">对比</button>
+      </div>
+      <div class="rag-cols" id="ragDebugOut" style="display:none">
+        <div>
+          <div class="meta">旧：按出现次数（与查询无关，永远是这几条）</div>
+          <div class="rag-list" id="ragBaselineList"></div>
+        </div>
+        <div>
+          <div class="meta">新：语义相关 + 会话维度 + 时间衰减</div>
+          <div class="rag-list" id="ragVectorList"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="row">
+        <span class="meta">近义聚类：余弦高于阈值的词条对，人工决定合并 / 建别名 / 忽略</span>
+        <input type="number" id="ragDupThreshold" value="0.6" step="0.02" min="0.3" max="0.99" style="width:90px">
+        <button class="small" id="ragDupBtn">列出</button>
+        <span class="meta" id="ragDupMsg"></span>
+      </div>
+      <div class="slang-scroll" id="ragDupList" style="display:none"></div>
+    </section>

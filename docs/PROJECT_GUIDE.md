@@ -28,7 +28,7 @@
                               └──────────────────────┘
                                       │ 控制台
                                       ▼
-                              public/console.html (127.0.0.1:3100)
+                              public/console/ (127.0.0.1:3100)
 ```
 
 | 层 | 文件 | 职责 |
@@ -39,7 +39,7 @@
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
 | 内核 | `src/slang-learner.js` | 群聊黑话/网络用语学习：存储、候选提取、研究调度、注入 |
 | 内核 | `src/mcp-web-search-safe.js` | 给 DSH agent 用的只读 Web Search MCP（查网络用语/梗） |
-| 外核 | `public/console.html` | 本地控制台：状态、参数、手动切换、重置；**默认浅色，右上角可切深色**（`scripts/test-console-theme.mjs` 守护） |
+| 外核 | `public/console/` | 本地控制台（左侧导航 + hash 路由分区）：外壳 `index.html` + `style.css` + `core/`（api / dom / router / poll / status / fragments / theme）+ `views/*.js|html`（每分区一对，markup 与逻辑同处）；**默认浅色，左下角可切深色**（`scripts/test-console-theme.mjs` 守护） |
 | 外核 | `config.json` | 运行配置（白名单、QQ/DSH 地址、社交参数）；**不入库** |
 | 外核 | `roles/*.md` | 人格卡（如 `小鲸鱼.md`） |
 | 外核 | `state/*` | 运行时状态（会话映射、模式、日志）；**不入库** |
@@ -63,7 +63,20 @@ qq-bridge/
 │   ├── safe-fetch.js           # SSRF 防护的 HTTP(S) 抓取
 │   └── self-test.js            # DSH 侧自检
 ├── public/
-│   └── console.html            # 控制台单页（含黑话/记忆/表情管理）
+│   └── console/                # 控制台前端（无构建，原生 ES module）
+│       ├── index.html          # 外壳：侧边导航 + 视图容器 + 防闪烁内联主题脚本
+│       ├── style.css           # 样式（浅/深两套变量；含布局与吐司提示）
+│       ├── app.js              # 入口：注册分区 → 建导航 → 起路由与状态轮询
+│       ├── core/               # api / dom / router / poll / status / fragments / theme
+│       └── views/              # 每分区一对：xxx.js（逻辑）+ xxx.html（markup）
+│           ├── overview.*      # 01 运行模式 + 02 会话 + 03 挂起 + 04 日志
+│           ├── social1.*       # 06 一代仿真模式
+│           ├── social2.*       # 07 二代仿真模式（含工具级配置弹窗）
+│           ├── slang.*         # 08 黑话库 + 08b 本地向量检索
+│           ├── persona.*       # 05 人格 + 11 静默开关
+│           ├── security.*      # 10 白名单 + 12 安全通知 + 12b 控制台令牌
+│           ├── ops.*           # 13 测试发送 + 14 桥接控制
+│           └── tools.*         # 09 MCP 工具清单 + 15 后台控制端引导
 ├── roles/
 │   ├── 小鲸鱼.md               # 当前人格卡
 │   ├── 傲娇助手.md
@@ -287,14 +300,28 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
-- 控制台：`http://127.0.0.1:3100`（模式、人格、社交参数、白名单/管理员、黑话管理、控制台访问令牌、会话/挂起/日志）。
-- 模式：在**控制台顶部模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
+- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
+- 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
+
+### 控制台前端结构（改 UI 前先读）
+
+控制台曾经是一个 2800 行的单文件 `public/console.html`（HTML + CSS + 1700 行内联脚本全塞在一起）。
+现在拆成 **外壳 + core + 每分区一对文件**，无构建步骤、浏览器直接跑原生 ES module：
+
+- 路由：`#/<view id>`；切换分区时旧分区 `unmount`、其轮询全部 `stopAll()`，只有当前分区在轮询。
+- 每个 view 导出 `{ id, title, icon, group, order, desc?, badge?, mount(root) }`，`mount` 返回可选的清理函数。
+- 静态资源由 `src/bridge.js` 的 `/console/*` 路由提供：只读、路径限制在 `public/console/` 内、
+  扩展名白名单、**不需要令牌**（`<script type="module">` 带不了自定义请求头）；
+  数据接口 `/api/*` 与外壳 `/` 仍然全部要令牌。
+- 新增分区 = 写 `views/xxx.js` + `views/xxx.html`，在 `app.js` 里 import 并加进 `VIEWS`。
 
 ### 常用调试/测试脚本
 
 | 脚本 | 用途 |
 |---|---|
-| `scripts/test-console.mjs` | 控制台 API 自检 |
+| `scripts/test-console.mjs` | 控制台 API 自检 + 分区片段/静态路由自检 |
+| `scripts/test-console-theme.mjs` | 控制台主题回归（浅色默认 / 深色持久化 / 变量一致性） |
+| `scripts/test-console-views.mjs` | 控制台前端结构自检（分区契约 / import / #id / 配置分区开关） |
 | `scripts/test-mcp-safe.mjs` | MCP 安全工具自检 |
 | `scripts/test-mcp-host.mjs` | MCP 进程管理自检 |
 | `scripts/test-mcp-web-search.mjs` | Web Search / Fetch MCP 自检（含内网拦截） |
@@ -317,10 +344,11 @@ node --check src/mcp-web-search-safe.js
 node --check src/slang-learner.js
 ```
 
-控制台 HTML 内联脚本语法校验：
+控制台前端语法校验（每个模块单独 check，ES module 不会被当脚本执行）：
 
 ```bash
-node -e "const fs=require('fs');const vm=require('vm');const h=fs.readFileSync('public/console.html','utf8');const m=h.match(/<script>([\s\S]*?)<\/script>/);new vm.Script(m[1]);console.log('OK')"
+for f in public/console/app.js public/console/core/*.js public/console/views/*.js; do node --check "$f"; done
+node scripts/test-console-theme.mjs   # 主题/变量回归（不需要桥接在跑）
 ```
 
 ### 重启

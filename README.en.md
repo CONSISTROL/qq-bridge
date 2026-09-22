@@ -109,7 +109,8 @@ qq-bridge/
   plugins/qq-mode-console  # DSH plugin: registers the qq-mode settings namespace (host half only; no UI card yet)
   src/                  # bridge core and MCP servers
   public/
-    console.html        # local web console
+    console/            # local web console: shell + core/ + one views/<id>.{js,html} per section
+                        # (left nav + hash routing, no build step, native ES modules)
   roles/                # persona cards
   assets/               # images (the intro video ships as a release asset, not in the repo)
   scripts/              # tests and helper scripts

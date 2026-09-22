@@ -120,18 +120,18 @@ await test('malformed HTTP request targets return 400 without hanging', async (h
 }
 {
   const image = Buffer.from('89504e470d0a1a0a00000000', 'hex');
-  let body;
   const h = await bridgeHarness({ globals: {
     safeFetchBuffer: async () => ({ buffer: image }),
     validateFetchUrl: async () => { throw new Error('must fetch validated bytes instead of passing a URL'); },
-    fetch: async (_url, init) => {
-      body = JSON.parse(init.body);
-      return { ok: true, json: async () => ({ status: 'ok', retcode: 0, data: { message_id: 1 } }) };
-    },
   } });
   try {
     await h.sendStickerV2('group:456', 'fixture-sticker');
-    assert.equal(body.message.find((part) => part.type === 'image').data.file, 'base64://' + image.toString('base64'));
+    // 发送走 OneBot WS（bot.request），所以断言 WS 侧收到的 params，而不是注入的 fetch
+    const send = h.calls.ws.find((entry) => entry.action === 'send_group_msg');
+    assert.ok(send, 'send_group_msg 必须经 OneBot 通道发出');
+    assert.equal(send.params.group_id, 456);
+    const part = send.params.message.find((p) => p.type === 'image');
+    assert.equal(part.data.file, 'base64://' + image.toString('base64'));
     console.log('PASS sticker sending gives OneBot validated bytes, never a URL to refetch');
   } catch (error) { failures++; console.error('FAIL safe sticker sending:', error.message); }
   finally { await h.close(); }

@@ -6,6 +6,9 @@
 //   3. 样式里不能再出现写死的色值，且两套主题的变量集合必须完全一致
 //      （少定义一个变量不会报错，只会静默退化成透明/继承色）。
 //
+// 控制台已拆成分区结构：外壳在 public/console/index.html，样式在
+// public/console/style.css，主题逻辑在 public/console/core/theme.js。
+//
 // 用法：node scripts/test-console-theme.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,8 +17,10 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const HTML = path.join(ROOT, 'public', 'console.html');
-const html = fs.readFileSync(HTML, 'utf8');
+const SHELL = path.join(ROOT, 'public', 'console', 'index.html');const STYLE = path.join(ROOT, 'public', 'console', 'style.css');
+const THEME = path.join(ROOT, 'public', 'console', 'core', 'theme.js');
+const html = fs.readFileSync(SHELL, 'utf8');
+const style = fs.readFileSync(STYLE, 'utf8');
 
 let passed = 0;
 function check(name, fn) {
@@ -25,11 +30,17 @@ function check(name, fn) {
 
 console.log('控制台主题测试\n');
 
+// ── 0. 结构：外壳不内联样式，样式与脚本各自独立加载 ─────────────────
+check('外壳仍是默认浅色 <html data-theme="light">', () => assert.match(html, /<html[^>]*data-theme="light"/));
+check('外壳外链独立样式表（不再内联 <style>）', () => {
+  assert.match(html, /<link rel="stylesheet" href="\/console\/style\.css">/);
+  assert.ok(!html.includes('<style>'), '外壳里不该再有内联 <style>');
+});
+check('外壳以 ES module 加载入口脚本', () => assert.match(html, /<script type="module" src="\/console\/app\.js"><\/script>/));
+
 // ── 1. 结构：有两套主题变量块 ───────────────────────────────────────
-const style = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
 check('存在默认 :root 变量块', () => assert.ok(/:root\s*\{/.test(style)));
 check('存在 [data-theme="dark"] 覆盖块', () => assert.ok(/:root\[data-theme="dark"\]\s*\{/.test(style)));
-check('<html> 默认声明浅色', () => assert.match(html, /<html[^>]*data-theme="light"/));
 
 // ── 2. 变量集合一致 + 无写死色值 ────────────────────────────────────
 const varsOf = (marker) => {
@@ -69,13 +80,14 @@ check('有底色的控件显式指定了前景色', () => {
 });
 
 // ── 3. 行为：默认浅色 / 存 dark 恢复深色 / 点击可切换并写回 ─────────
-const headScript = html.slice(0, html.indexOf('<style>')).match(/<script>([\s\S]*?)<\/script>/)[1];
-const themeScript = html.match(/\/\/ ── 主题切换[\s\S]*?\n\}\);\n/)[0];
+// 首屏防闪烁脚本必须留在外壳内联（ES module 是延迟执行的，等不到它）。
+const headScript = html.slice(0, html.indexOf('</head>')).match(/<script>([\s\S]*?)<\/script>/)[1];
+// theme.js 刻意不 import 任何东西，所以能去掉 export 前缀直接丢进 vm 当普通脚本跑。
+const themeScript = fs.readFileSync(THEME, 'utf8').replace(/^export /gm, '');
 
 function makeDom() {
   const attrs = new Map();
   const listeners = {};
-  const toggles = [];
   const store = new Map();
   const btn = {
     textContent: '', title: '',
@@ -98,21 +110,23 @@ function makeDom() {
   };
 }
 
-function run(saved) {
+function run(saved, { brokenStorage = false } = {}) {
   const dom = makeDom();
   const ctx = {
     document: dom.doc,
-    localStorage: {
-      getItem: (k) => (dom.store.has(k) ? dom.store.get(k) : null),
-      setItem: (k, v) => dom.store.set(k, String(v))
-    }
+    localStorage: brokenStorage
+      ? { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }
+      : {
+        getItem: (k) => (dom.store.has(k) ? dom.store.get(k) : null),
+        setItem: (k, v) => dom.store.set(k, String(v))
+      }
   };
   ctx.window = ctx;
-  if (saved !== undefined) ctx.localStorage.setItem('qq-console-theme', saved);
+  if (saved !== undefined) dom.store.set('qq-console-theme', saved);
   vm.createContext(ctx);
-  vm.runInContext(headScript, ctx);   // 首屏防闪烁脚本
-  vm.runInContext(themeScript, ctx);  // applyTheme / currentTheme / 点击绑定
-  dom.fire('DOMContentLoaded');
+  vm.runInContext(headScript, ctx);    // 首屏防闪烁脚本
+  vm.runInContext(themeScript, ctx);   // currentTheme / applyTheme / initTheme
+  ctx.initTheme();                     // 外壳 app.js 里也是显式调用它
   return { ctx, dom };
 }
 
@@ -138,15 +152,7 @@ check('点击可来回切换并写入 localStorage', () => {
   assert.equal(dom.store.get('qq-console-theme'), 'light', '浅色未持久化');
 });
 check('localStorage 不可用时不影响渲染（隐私模式）', () => {
-  const dom = makeDom();
-  const ctx = {
-    document: dom.doc,
-    localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }
-  };
-  vm.createContext(ctx);
-  vm.runInContext(headScript, ctx);
-  vm.runInContext(themeScript, ctx);
-  dom.fire('DOMContentLoaded');
+  const { dom } = run(undefined, { brokenStorage: true });
   assert.equal(dom.attrs.get('data-theme'), 'light');
 });
 
