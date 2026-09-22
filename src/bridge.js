@@ -19,11 +19,24 @@ import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
+import { EmbeddingClient } from './embedding-client.js';
+import {
+  loadVectorStore,
+  saveVectorStore,
+  buildIndex,
+  planRebuild,
+  selectForInjection,
+  scoreEntries,
+  nearDuplicates,
+  cosine,
+  VECTOR_MODEL
+} from './slang-index.js';
 import {
   loadSlang,
   saveSlang,
   upsertSlangEntry,
   buildSlangContext,
+  formatSlangTable,
   buildExtractionPrompt,
   buildResearchPrompt,
   parseExtractionJson,
@@ -272,7 +285,26 @@ function loadConfig() {
       learnerPreset: 'qq-chat',
       workspaceTitle: 'QQ 黑话学习',
       autoResearch: true,
+      // 研究出释义后是否自动转正。开 RAG 后**默认关闭**：
+      // 语义检索会主动高频召回，LLM 编错的释义会被推到相关对话里，人工闸门的价值上升。
+      // 打开即回到「研究完就能用」的省事模式。
+      autoConfirmResearched: false,
       ...(file.slang ?? {})
+    },
+    // 本地向量检索（RAG）。缺依赖/模型时自动降级为按出现次数选词，不影响主流程。
+    rag: {
+      enabled: true,
+      topK: 8,
+      minFill: 3,          // 相关条目不足时，用本群/全库高频补齐到这个数
+      minCosine: 0.5,     // 语义相关门槛（实测校准：全库规模下无关对可到 0.50，故取 0.5）
+      relativeMargin: 0.08, // 相对判据：只保留离 top-1 不超过这个距离的条目
+      timeoutMs: 1500,     // 单次编码超时；超时就走降级路径，绝不拖慢回复
+      weights: { sem: 1.0, conv: 0.15, global: 0.03, recency: 0.05 },
+      autoRebuild: true,   // 词条增删改后自动补向量
+      // 给 embedder 子进程套 cgroup 内存闸门（本机 OOM 史，实测 190MB 常驻）。
+      // 空字符串即关闭。必须带 --quiet，否则 systemd-run 的提示行会污染 stdio 协议。
+      spawnPrefix: '',
+      ...(file.rag ?? {})
     },
     social: {
       enabled: true,
@@ -731,6 +763,91 @@ async function main() {
   const learnerWaiters = new Map();     // sessionId -> [{resolve,reject,timer}]
   let slangLearnerSessionId = null;
   let slangTaskChain = Promise.resolve();
+
+  // ── 本地向量检索（RAG）运行时 ────────────────────────────────────────
+  // 全程「尽力而为」：模型缺失、子进程崩了、编码超时，都只是退回按频次选词，
+  // 绝不让检索问题影响到回复本身。
+  const VECTOR_FILE = path.join(STATE_DIR, 'slang-vectors.json');
+  const embedder = new EmbeddingClient({
+    timeoutMs: Number(cfg.rag?.timeoutMs) || 1500,
+    spawnPrefix: cfg.rag?.spawnPrefix,
+    log: (m) => log(m)
+  });
+  let vectorStore = loadVectorStore(VECTOR_FILE);
+  let ragRebuild = null;        // 正在进行中的重建 promise（去重用）
+  let ragDirty = true;          // 词条有增删改，需要补向量
+  let ragLastError = '';
+
+  const ragEnabled = () => cfg.rag?.enabled !== false && cfg.slang?.enabled !== false;
+  const ragReady = () => ragEnabled() && embedder.ready;
+
+  function markRagDirty(reason) {
+    ragDirty = true;
+    ragReason = reason || '';
+    if (cfg.rag?.autoRebuild !== false) scheduleRagRebuild();
+  }
+  let ragReason = '';
+
+  /** 后台补向量：不阻塞任何请求，失败也不影响主流程。 */
+  function scheduleRagRebuild(delayMs = 1500) {
+    if (!ragEnabled()) return ragRebuild;
+    if (ragRebuild) return ragRebuild;
+    ragRebuild = (async () => {
+      try {
+        await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref?.(); });
+        await embedder.start();
+        const res = await buildIndex({
+          entries: slangEntries, client: embedder, store: vectorStore, batch: 8,
+          onProgress: (d, t) => { if (d === t) log(`[rag] 向量索引已补齐 ${d}/${t}`); }
+        });
+        if (res.embedded || res.orphans) {
+          saveVectorStore(VECTOR_FILE, vectorStore);
+          log(`[rag] 索引更新：新编码 ${res.embedded} 条，清理 ${res.orphans} 条，库内 ${res.total} 条`);
+        }
+        ragDirty = false;
+        ragLastError = '';
+      } catch (error) {
+        ragLastError = String(error?.message ?? error);
+        log(`[rag] 向量索引更新失败（已降级为按频次选词）：${ragLastError}`);
+      } finally {
+        ragRebuild = null;
+      }
+      return null;
+    })();
+    return ragRebuild;
+  }
+
+  /** 强制全量重建（控制台用），返回统计。 */
+  async function rebuildRagIndex({ force = false } = {}) {
+    await embedder.start();
+    if (force) vectorStore = { model: VECTOR_MODEL, dim: 0, builtAt: '', vectors: {} };
+    const t0 = Date.now();
+    const res = await buildIndex({ entries: slangEntries, client: embedder, store: vectorStore, batch: 8 });
+    saveVectorStore(VECTOR_FILE, vectorStore);
+    ragDirty = false;
+    ragLastError = '';
+    return { ...res, ms: Date.now() - t0, dim: vectorStore.dim };
+  }
+
+  function ragStatus() {
+    const confirmed = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && String(e.meaning || '').trim());
+    const { toEmbed, orphans } = planRebuild(confirmed, vectorStore);
+    return {
+      enabled: ragEnabled(),
+      ready: ragReady(),
+      model: VECTOR_MODEL,
+      dim: vectorStore.dim,
+      builtAt: vectorStore.builtAt,
+      entries: confirmed.length,
+      indexed: Object.keys(vectorStore.vectors || {}).length,
+      stale: toEmbed.length,
+      orphans: orphans.length,
+      dirty: ragDirty,
+      lastError: ragLastError,
+      embedder: embedder.info,
+      stats: embedder.stats
+    };
+  }
 
   // ── 表情包体系（二代仿真）本地知识库 ────────────────────────────────────
   let stickerEntries = loadStickerStore(STICKER_FILE);
@@ -1223,6 +1340,8 @@ async function main() {
 
   function saveSlangStore() {
     try { saveSlang(SLANG_FILE, slangEntries); } catch (error) { log('保存黑话库失败:', error?.message ?? error); }
+    // 所有写路径都经过这里，所以这里标记一次就能保证向量库最终一致（重建是后台异步的）
+    markRagDirty('黑话库变更');
   }
 
   function queueSlangTask(fn) {
@@ -1491,12 +1610,52 @@ async function main() {
       .map(publicSlangEntry);
   }
 
-  function withSlangContext(promptText) {
+  /**
+   * 选本次要注入哪些黑话。
+   * 向量可用 → 语义相关性排序（叠加会话维度与时间衰减）；
+   * 否则/超时/报错 → 退回历史行为（按出现次数取 top-N）。
+   */
+  async function slangBlockFor(promptText, key) {
+    const max = Math.max(1, Math.min(30, Number(cfg.slang?.injectMax) || 8));
+    if (!ragEnabled()) return buildSlangContext(slangEntries, max);
+    try {
+      if (ragDirty && cfg.rag?.autoRebuild !== false) scheduleRagRebuild();
+      const query = String(promptText || '').slice(0, 1000);
+      if (!query.trim()) return buildSlangContext(slangEntries, max);
+      const [qv] = await embedder.embed([query]);
+      if (!qv || !qv.length) return buildSlangContext(slangEntries, max);
+      const confirmed = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && String(e.meaning || '').trim());
+      const { picked } = selectForInjection({
+        queryVec: qv,
+        entries: confirmed,
+        store: vectorStore,
+        key,
+        max: Math.min(max, Number(cfg.rag?.topK) || max),
+        minFill: Number(cfg.rag?.minFill ?? 3),
+        minCosine: Number(cfg.rag?.minCosine ?? 0.5),
+        relativeMargin: Number(cfg.rag?.relativeMargin ?? 0.08),
+        weights: cfg.rag?.weights
+      });
+      if (!picked.length) return buildSlangContext(slangEntries, max);
+      return formatSlangTable(picked.map((p) => p.entry));
+    } catch (error) {
+      ragLastError = String(error?.message ?? error);
+      log(`[rag] 选词失败，本次退回按频次（${ragLastError}）`);
+      return buildSlangContext(slangEntries, max);
+    }
+  }
+
+  /**
+   * 组装注入给 QQ agent 的提示词前缀。
+   * 黑话表优先用向量检索按当前消息选（query-aware）：语义相关的词才占坑位，
+   * 而不是永远固定那 8 条。任何一步失败都退回按出现次数选，保证行为不退化。
+   */
+  async function withSlangContext(promptText, key = '') {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
     const parts = [timeLine];
     if (cfg.slang?.enabled !== false) {
-      const block = buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8);
+      const block = await slangBlockFor(promptText, key);
       if (block) parts.push(block);
       // 遇到完全不懂的梗：主动查。这条提示每次都注入（不依赖预设文件），
       // 因此调整策略不需要重启 DSH。同步查询有硬预算，不会拖慢回复。
@@ -2389,6 +2548,80 @@ async function main() {
           if (!candidates.length) { sendJson({ ok: false, error: '没有可研究的候选黑话' }, 400); return; }
           queueSlangTask(() => runSlangResearch(candidates));
           sendJson({ ok: true, count: candidates.length });
+          return;
+        }
+        // ── 本地向量检索（RAG）：状态 / 重建 / 检索调试 / 近义聚类 ──────────
+        if (req.method === 'GET' && url.pathname === '/api/slang/rag-status') {
+          const probe = ragReady() ? await embedder.probe(2000) : null;
+          sendJson({ ok: true, ...ragStatus(), probe });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/slang/rag-rebuild') {
+          if (!ragEnabled()) { sendJson({ ok: false, error: 'RAG 未启用（config.rag.enabled=false）' }, 400); return; }
+          const body = await readBody();
+          try {
+            const res = await rebuildRagIndex({ force: body.force === true });
+            log(`控制台：向量索引重建完成（${res.embedded} 条，${res.ms}ms）`);
+            sendJson({ ok: true, ...res, status: ragStatus() });
+          } catch (error) {
+            sendJson({ ok: false, error: `重建失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // 检索调试：同一个查询，并排给出「旧的按频次」和「新的向量」各自会注入什么。
+        // 这是判断 RAG 有没有用的唯一手段，也是调 minCosine/topK 的依据。
+        if (req.method === 'POST' && url.pathname === '/api/slang/debug-search') {
+          const body = await readBody();
+          const query = String(body.query ?? '').trim();
+          const key = String(body.key ?? '').trim();
+          const max = Math.max(1, Math.min(30, Number(body.max) || Number(cfg.slang?.injectMax) || 8));
+          if (!query) { sendJson({ ok: false, error: 'query 不能为空' }, 400); return; }
+          const confirmed = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && String(e.meaning || '').trim());
+          const baseline = confirmed.slice()
+            .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0))
+            .slice(0, max)
+            .map((e) => ({ id: e.id, content: e.content }));
+          let vector = null;
+          let error = '';
+          if (ragEnabled()) {
+            try {
+              const [qv] = await embedder.embed([query.slice(0, 1000)]);
+              const ranked = scoreEntries({
+                queryVec: qv, entries: confirmed, store: vectorStore, key,
+                minCosine: Number(cfg.rag?.minCosine ?? 0.5), weights: cfg.rag?.weights
+              });
+              const { picked } = selectForInjection({
+                queryVec: qv, entries: confirmed, store: vectorStore, key, max,
+                minFill: Number(cfg.rag?.minFill ?? 3), minCosine: Number(cfg.rag?.minCosine ?? 0.5),
+                weights: cfg.rag?.weights
+              });
+              const pickedIds = new Set(picked.map((p) => p.entry.id));
+              vector = {
+                picked: picked.map((p) => ({
+                  id: p.entry.id, content: p.entry.content, meaning: String(p.entry.meaning || '').slice(0, 120),
+                  score: +p.score.toFixed(4), sem: +p.sem.toFixed(4), conv: p.conv,
+                  filler: !!p.filler, inThisConv: !!p.inThisConv
+                })),
+                // 候选里没被选中的前几条，方便看「差在哪」
+                runnersUp: ranked.filter((r) => !pickedIds.has(r.entry.id)).slice(0, 5)
+                  .map((r) => ({ id: r.entry.id, content: r.entry.content, score: +r.score.toFixed(4), sem: +r.sem.toFixed(4), conv: r.conv })),
+                eligible: ranked.length,
+                minCosine: Number(cfg.rag?.minCosine ?? 0.5),
+                block: formatSlangTable(picked.map((p) => p.entry))
+              };
+            } catch (e) { error = String(e?.message ?? e); }
+          }
+          sendJson({
+            ok: true, query, key, max, baseline,
+            baselineBlock: buildSlangContext(confirmed, max),
+            vector, error: error || undefined
+          });
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/api/slang/near-duplicates') {
+          const threshold = Math.max(0.3, Number(url.searchParams.get('threshold')) || 0.62);
+          const confirmed = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && String(e.meaning || '').trim());
+          sendJson({ ok: true, threshold, pairs: nearDuplicates({ entries: confirmed, store: vectorStore, threshold, limit: 60 }) });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/slang/config') {
@@ -4124,6 +4357,25 @@ async function main() {
             } });
             return;
           }
+          // ②b 向量兜底：字面没命中、但语义很近的情况——错别字/变体/谐音（「哈鸡米」→「哈基米」）。
+          // 实测这类对的余弦 0.55~0.75，无关对 ≤0.31，所以门槛取 0.5 偏保守，宁可不命中也不乱答。
+          if (ragEnabled()) {
+            try {
+              const confirmed = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && hasMeaning(e));
+              const [qv] = await embedder.embed([word]);
+              const best = scoreEntries({ queryVec: qv, entries: confirmed, store: vectorStore, key, minCosine: 0 })[0];
+              const gate = Number(cfg.rag?.linkMinCosine ?? 0.5);
+              if (best && best.sem >= gate) {
+                const e = best.entry;
+                sendJson({ ok: true, word, from: 'vector', matched: e.content,
+                  similarity: +best.sem.toFixed(3), status: e.status, entry: {
+                    content: e.content, meaning: e.meaning || '', usage: e.usage || '',
+                    example: e.example || '', risk: e.risk || '', sources: e.sources || []
+                  } });
+                return;
+              }
+            } catch { /* 向量不可用就继续走联网检索 */ }
+          }
           // ③ 联网检索：给硬超时，保证不拖慢回复；超时就只给视频标题并转异步深度研究
           const withBudget = (promise, ms) => Promise.race([
             promise,
@@ -4916,11 +5168,25 @@ async function main() {
               || e.example.toLowerCase().includes(q);
           });
           const confirmedTotal = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning).length;
+          // 字面过滤一无所获时用向量兜底：找语义相近的词（「猫」→「哈基米」这类），
+          // 而不是直接告诉 AI「没这个词」。命中会标注 semantic:true，方便区分。
+          let semantic = null;
+          if (q && !list.length && ragEnabled()) {
+            try {
+              const pool = slangEntries.filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && String(e.meaning || '').trim());
+              const [qv] = await embedder.embed([q]);
+              const gate = Number(cfg.rag?.linkMinCosine ?? 0.5);
+              const hits = scoreEntries({ queryVec: qv, entries: pool, store: vectorStore, key, minCosine: gate }).slice(0, 8)
+                .map((r) => ({ ...publicSlangEntry(r.entry), similarity: +r.sem.toFixed(3), semantic: true }));
+              if (hits.length) semantic = hits;
+            } catch { /* 向量不可用就照旧返回空结果 */ }
+          }
           sendJson({
             ok: true,
             key,
-            total: list.length,
+            total: list.length + (semantic?.length ?? 0),
             confirmedTotal,
+            semantic,
             entries: list,
             note: q
               ? (list.length ? '' : `没有匹配「${q}」的已确认黑话；可以试试 qq_lookup_meme 联网现学。`)
@@ -5315,6 +5581,13 @@ async function main() {
     });
     server.listen(port, '127.0.0.1', () => {
       log(`本地控制台已启动：http://127.0.0.1:${port}`);
+      // 预热本地 embedding：模型加载约 200ms，放在启动阶段，别让第一条群消息承担。
+      // 失败只记日志——向量检索是加分项，缺了就走按频次选词。
+      if (ragEnabled()) {
+        embedder.start()
+          .then(() => { log(`[rag] 本地向量检索已启用（${VECTOR_MODEL}，${vectorStore.dim || '?'} 维，库内 ${Object.keys(vectorStore.vectors || {}).length} 条）`); return scheduleRagRebuild(3000); })
+          .catch((error) => log(`[rag] 本地向量检索不可用（降级为按频次选词）：${error?.message ?? error}`));
+      }
     });
     // 端口被占用说明已有实例在跑：以 exit 2 退出，守护脚本会识别为"已有实例"而不是无限重启
     server.on('error', (error) => {
@@ -6855,10 +7128,10 @@ async function main() {
       }
       throw error;
     }
-    let content = [{ type: 'text', text: withSlangContext(promptText) }];
+    let content = [{ type: 'text', text: await withSlangContext(promptText, key) }];
     if (Array.isArray(opts.media) && opts.media.length > 0) {
       const imageParts = await resolveMediaList(opts.media);
-      content = [{ type: 'text', text: withSlangContext(promptText) }, ...imageParts];
+      content = [{ type: 'text', text: await withSlangContext(promptText, key) }, ...imageParts];
     }
     // 媒体解析成功后再标记退场，避免解析异常时残留退场标记。
     if (!isCurrentSession(key, sessionId)) throw new Error('投递前会话已重置或权限已变化');
@@ -8487,10 +8760,10 @@ async function main() {
       }
       throw error;
     }
-    let content = [{ type: 'text', text: withSlangContext(promptText) }];
+    let content = [{ type: 'text', text: await withSlangContext(promptText, key) }];
     if (Array.isArray(mediaList) && mediaList.length > 0) {
       const imageParts = await resolveMediaList(mediaList);
-      content = [{ type: 'text', text: withSlangContext(promptText) }, ...imageParts];
+      content = [{ type: 'text', text: await withSlangContext(promptText, key) }, ...imageParts];
     }
     if (!isCurrentSession(key, sessionId)) throw new Error('投递前会话已重置或权限已变化');
     const accepted = await api.sessions.prompt({

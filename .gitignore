@@ -46,3 +46,4 @@ config.json
 
 # 本地图库（B 站抓图，勿发布）
 assets/stickers/
+models/

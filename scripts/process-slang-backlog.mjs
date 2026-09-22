@@ -26,6 +26,7 @@ const DRY_RUN = args.get('dry-run') === 'true';
 const BATCH = Math.max(1, Number(args.get('batch') || 6));
 const TIMEOUT_MS = Math.max(10000, Number(args.get('timeout') || 180000));
 const LIMIT = Math.max(0, Number(args.get('limit') || 0));
+const CONFIRM = args.get('confirm') === 'true';   // 默认不代为确认（人工把关）
 
 const token = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
 const BASE = `http://127.0.0.1:3100`;
@@ -102,6 +103,7 @@ const total = queue.length;
 let round = 0;
 let promoted = 0;
 let noMeaning = [];
+const readyToConfirm = [];   // 已出释义、等待人工确认的
 
 for (let i = 0; i < queue.length; i += BATCH) {
   const batch = queue.slice(i, i + BATCH);
@@ -132,13 +134,19 @@ for (let i = 0; i < queue.length; i += BATCH) {
   const got = latest.filter((e) => (e.meaning || '').trim());
   const miss = latest.filter((e) => !(e.meaning || '').trim());
   // 兜底：bridge 若未开自动转正，这里补一次确认，避免“研究了却查不到”。
+  // 默认只研究、不确认——与「关掉自动转正、人工把关」的策略一致。
+  // 显式传 --confirm 才代为确认（脚本本身就是管理员主动跑的工具）。
   const stillCandidate = got.filter((e) => e.status === 'candidate');
   if (stillCandidate.length) {
-    try {
-      const c = await api('/api/slang/batch-confirm', { method: 'POST', body: { ids: stillCandidate.map((e) => e.id) } });
-      log(`   兜底确认 ${c.confirmedCount ?? 0} 条`);
-    } catch (error) {
-      log(`   兜底确认失败：${error.message}`);
+    if (CONFIRM) {
+      try {
+        const c = await api('/api/slang/batch-confirm', { method: 'POST', body: { ids: stillCandidate.map((e) => e.id) } });
+        log(`   代为确认 ${c.confirmedCount ?? 0} 条（--confirm）`);
+      } catch (error) {
+        log(`   确认失败：${error.message}`);
+      }
+    } else {
+      readyToConfirm.push(...stillCandidate.map((e) => e.content));
     }
   }
   promoted += got.length;
@@ -153,4 +161,8 @@ log(`处理 ${total} 条：出释义 ${promoted} 条，未出释义 ${noMeaning.
 log(`最终状态：confirmed ${mine.filter((e) => e.status === 'confirmed').length} / candidate ${mine.filter((e) => e.status === 'candidate').length}`);
 const all = finalSnap.entries;
 log(`全库：confirmed ${all.filter((e) => e.status === 'confirmed').length}，candidate ${all.filter((e) => e.status === 'candidate').length}，总计 ${all.length}`);
+if (readyToConfirm.length) {
+  log(`\n已出释义、等待人工确认（控制台 08 面板点「批量确认（有含义）」，或重跑时加 --confirm）：`);
+  log('  ' + readyToConfirm.join('、'));
+}
 if (noMeaning.length) log(`仍未出释义（可择日重试）：${noMeaning.join('、')}`);

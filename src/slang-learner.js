@@ -46,6 +46,13 @@ export function normalizeSlangEntry(raw) {
     example: String(entry.example ?? '').trim(),
     risk: String(entry.risk ?? '').trim(),
     sources: Array.isArray(entry.sources) ? entry.sources.map((s) => String(s ?? '').trim()).filter(Boolean).slice(-10) : [],
+    // 检索用字段：别名（变体/错别字/简称）与标签（域）。老数据没有，加载时回填空数组。
+    aliases: Array.isArray(entry.aliases)
+      ? [...new Set(entry.aliases.map((s) => String(s ?? '').trim()).filter(Boolean))].slice(0, 12)
+      : [],
+    tags: Array.isArray(entry.tags)
+      ? [...new Set(entry.tags.map((s) => String(s ?? '').trim()).filter(Boolean))].slice(0, 8)
+      : [],
     status,
     source: entry.source === 'manual' ? 'manual' : 'ai',
     count: Math.max(0, Number(entry.count) || 0),
@@ -131,11 +138,12 @@ export function mergeEvidence(current, incoming) {
   return merged.slice(-20);
 }
 
-export function buildSlangContext(entries, max = 8) {
-  const confirmed = (entries || [])
-    .filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning)
-    .sort((a, b) => (b.count || 0) - (a.count || 0))
-    .slice(0, Math.max(1, Math.min(30, Number(max) || 8)));
+/**
+ * 把一组已选定的词条渲染成注入用的黑话表（不再排序/过滤，是谁进来就渲染谁）。
+ * 向量检索路径与按频次路径共用这一套渲染，保证提示词格式只有一份。
+ */
+export function formatSlangTable(list) {
+  const confirmed = (list || []).filter((e) => e && e.content && e.meaning);
   if (!confirmed.length) return '';
   const lines = confirmed.map((e) => {
     const clean = (s) => escapeLearnerText(String(s ?? '').replace(/\[CQ:/gi, '[CQ：'));
@@ -144,7 +152,16 @@ export function buildSlangContext(entries, max = 8) {
     if (e.example) line += `（例：${clean(e.example)}）`;
     return line;
   });
-  return `【群聊黑话表】群里已确认/常用的网络用语和梗（按出现次数排序，知道即可，不要刻意堆砌）：\n${lines.join('\n')}`;
+  return `【群聊黑话表】群里已确认/常用的网络用语和梗（与当前话题相关者优先，知道即可，不要刻意堆砌）：\n${lines.join('\n')}`;
+}
+
+/** 按出现次数取 top-N 后渲染（未启用向量检索时的路径，也是长期以来的默认行为）。 */
+export function buildSlangContext(entries, max = 8) {
+  const confirmed = (entries || [])
+    .filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning)
+    .sort((a, b) => (b.count || 0) - (a.count || 0))
+    .slice(0, Math.max(1, Math.min(30, Number(max) || 8)));
+  return formatSlangTable(confirmed);
 }
 
 export function buildExtractionPrompt(messages) {

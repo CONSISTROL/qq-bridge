@@ -27,7 +27,10 @@
     "test:mux-reconnect": "node scripts/test-mux-reconnect.mjs",
     "probe:events": "node scripts/probe-events.mjs",
     "probe:tools": "node scripts/probe-tools.mjs",
-    "postinstall": "node scripts/patch-snowluma-sdk.mjs"
+    "postinstall": "node scripts/patch-snowluma-sdk.mjs",
+    "fetch:model": "node scripts/fetch-embed-model.mjs",
+    "eval:rag": "node scripts/eval-slang-retrieval.mjs",
+    "test:rag": "node scripts/test-rag-retrieval.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
@@ -37,5 +40,11 @@
     "@snowluma/sdk": "^1.14.0",
     "js-yaml": "^4.3.2",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "@xenova/transformers": "^2.17.2"
+  },
+  "overrides": {
+    "sharp": "^0.33.5"
   }
 }

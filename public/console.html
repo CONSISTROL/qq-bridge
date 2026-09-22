@@ -265,6 +265,15 @@
     cursor: pointer;
   }
   .tool-log-cell.expanded { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* 本地向量检索（RAG）面板 */
+  .rag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+  @media (max-width: 900px) { .rag-cols { grid-template-columns: 1fr; } }
+  .rag-list { max-height: 340px; overflow: auto; border: 1px solid var(--card-border); border-radius: 8px; margin-top: 6px; padding: 6px 10px; font-size: 12px; }
+  .rag-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--card-border); }
+  .rag-row:last-child { border-bottom: 0; }
+  .rag-score { font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto; }
+  .rag-name { font-weight: 600; }
+  .rag-why { color: var(--muted); font-size: 11px; }
   .slang-tabs { display: flex; gap: 6px; margin: 10px 0 4px; flex-wrap: wrap; }
   .slang-tab {
     background: var(--ctrl-bg);
@@ -887,6 +896,46 @@
         </div>
       </div>
     </div>
+
+    <!-- ============ 08b 本地向量检索（RAG） ============ -->
+    <section class="card span-all">
+      <h2><span class="sec-no">RAG</span>本地向量检索（黑话选词 / 语义匹配）</h2>
+      <div class="meta" id="ragStatus">加载中…</div>
+      <div class="row" style="margin-top:8px">
+        <button class="small" id="ragRefresh">刷新状态</button>
+        <button class="small" id="ragRebuild">重建向量索引</button>
+        <button class="small" id="ragRebuildForce">强制全量重建</button>
+        <span class="meta" id="ragMsg"></span>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta"><b>检索调试</b>：同一个查询，看「旧的按出现次数取前 N」和「新的按语义选」各自会注入什么。
+        这是判断 RAG 到底有没有用的唯一手段。</div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="ragQuery" placeholder="输入一条群消息，例如：被笔记本外壳电了一下" style="flex:1">
+        <input type="text" id="ragKey" placeholder="会话 key（可选，如 group:1050666134）" style="width:230px">
+        <button class="small" id="ragDebugBtn">对比</button>
+      </div>
+      <div class="rag-cols" id="ragDebugOut" style="display:none">
+        <div>
+          <div class="meta">旧：按出现次数（与查询无关，永远是这几条）</div>
+          <div class="rag-list" id="ragBaselineList"></div>
+        </div>
+        <div>
+          <div class="meta">新：语义相关 + 会话维度 + 时间衰减</div>
+          <div class="rag-list" id="ragVectorList"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="row">
+        <span class="meta">近义聚类：余弦高于阈值的词条对，人工决定合并 / 建别名 / 忽略</span>
+        <input type="number" id="ragDupThreshold" value="0.6" step="0.02" min="0.3" max="0.99" style="width:90px">
+        <button class="small" id="ragDupBtn">列出</button>
+        <span class="meta" id="ragDupMsg"></span>
+      </div>
+      <div class="slang-scroll" id="ragDupList" style="display:none"></div>
+    </section>
 
     <!-- ============ 09 DSH 侧 MCP 工具 ============ -->
     <section class="card span-all">
@@ -2316,7 +2365,103 @@ async function changeConsoleToken(generate) {
 document.getElementById('consoleTokenSave').addEventListener('click', () => changeConsoleToken(false));
 document.getElementById('consoleTokenRandom').addEventListener('click', () => changeConsoleToken(true));
 
-refresh(); refreshRoles(); refreshWhitelist(); refreshSessions(); refreshPending(); refreshPresets(); loadSocialForm(); loadV2Config(); refreshV2Activity(); loadV2ToolLog(); loadV2SessionOptions(); refreshSocialStatus(); refreshSlang(); loadSlangConfig(); loadSecurity();
+// ── 本地向量检索（RAG）面板 ──────────────────────────────────────────
+const ragEsc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function loadRagStatus() {
+  const el = document.getElementById('ragStatus');
+  try {
+    const r = await api('/api/slang/rag-status');
+    if (!r.ok) { el.textContent = '状态获取失败'; return; }
+    const info = r.embedder || {};
+    const mem = info.mem ? `常驻 ${info.mem.rssMB}MB / 峰值 ${info.mem.peakMB}MB` : '未启动';
+    const st = r.stats || {};
+    const avg = st.requests ? (st.totalMs / st.requests).toFixed(1) : '—';
+    el.innerHTML = [
+      r.enabled ? (r.ready ? '<span class="ok">● 已启用</span>' : '<span class="err">● 已启用但子进程不可用</span>') : '<span class="muted">○ 已关闭</span>',
+      `模型 <b>${ragEsc(r.model)}</b>${r.dim ? `（${r.dim} 维）` : ''}`,
+      `已索引 <b>${r.indexed}</b>/${r.entries} 条`,
+      r.stale ? `<span class="err">待补 ${r.stale} 条</span>` : '待补 0 条',
+      r.orphans ? `孤儿 ${r.orphans} 条` : '',
+      r.builtAt ? `构建于 ${ragEsc(new Date(r.builtAt).toLocaleString('zh-CN', { hour12: false }))}` : '尚未构建',
+      `embedder ${ragEsc(mem)}`,
+      st.requests ? `累计编码 ${st.requests} 次（均值 ${avg}ms）` : '',
+      r.lastError ? `<span class="err">最近错误：${ragEsc(r.lastError)}</span>` : ''
+    ].filter(Boolean).join(' · ');
+  } catch (e) { el.textContent = `状态获取失败：${e.message}`; }
+}
+
+async function ragReindex(force) {
+  const msg = document.getElementById('ragMsg');
+  msg.className = 'meta';
+  msg.textContent = force ? '强制全量重建中…（会清空后重编码，几十秒）' : '补齐中…';
+  try {
+    const r = await api('/api/slang/rag-rebuild', 'POST', { force });
+    if (!r.ok) throw new Error(r.error || '重建失败');
+    msg.className = 'meta ok';
+    msg.textContent = `完成：新编码 ${r.embedded} 条，清理 ${r.orphans} 条，库内 ${r.total} 条，耗时 ${r.ms}ms`;
+    await loadRagStatus();
+  } catch (e) { msg.className = 'meta err'; msg.textContent = `失败：${e.message}`; }
+}
+
+async function ragDebug() {
+  const q = document.getElementById('ragQuery').value.trim();
+  const key = document.getElementById('ragKey').value.trim();
+  const msg = document.getElementById('ragMsg');
+  if (!q) { msg.className = 'meta err'; msg.textContent = '先填一个查询'; return; }
+  msg.className = 'meta'; msg.textContent = '检索中…';
+  try {
+    const r = await api('/api/slang/debug-search', 'POST', { query: q, key });
+    document.getElementById('ragDebugOut').style.display = '';
+    document.getElementById('ragBaselineList').innerHTML = r.baseline.length
+      ? r.baseline.map((e) => `<div class="rag-row"><span class="rag-name">${ragEsc(e.content)}</span></div>`).join('')
+      : '<div class="meta">（库中无已确认词条）</div>';
+    const v = r.vector;
+    const box = document.getElementById('ragVectorList');
+    if (!v) {
+      box.innerHTML = `<div class="meta err">向量检索不可用${r.error ? `：${ragEsc(r.error)}` : ''}</div>`;
+    } else {
+      const rows = v.picked.map((p) => `<div class="rag-row">
+          <span class="rag-score">${p.sem.toFixed(3)}</span>
+          <span class="rag-name">${ragEsc(p.content)}</span>
+          <span class="rag-why">sem=${p.sem.toFixed(3)} conv=${p.conv} score=${p.score.toFixed(3)}${p.filler ? ' · 补位' : ''}</span>
+        </div>`).join('') || '<div class="meta">没有条目达到相关门槛（会退回按频次）</div>';
+      const near = v.runnersUp.length
+        ? `<div class="meta" style="margin-top:6px">差一点没进（门槛 ${v.minCosine}）：</div>` + v.runnersUp.map((p) =>
+          `<div class="rag-row"><span class="rag-score">${p.sem.toFixed(3)}</span><span class="rag-name">${ragEsc(p.content)}</span></div>`).join('')
+        : '';
+      box.innerHTML = rows + near;
+    }
+    msg.className = 'meta';
+    msg.textContent = v ? `候选 ${v.eligible} 条达标，选中 ${v.picked.length} 条` : '';
+  } catch (e) { msg.className = 'meta err'; msg.textContent = `失败：${e.message}`; }
+}
+
+async function ragNearDuplicates() {
+  const th = document.getElementById('ragDupThreshold').value || 0.6;
+  const msg = document.getElementById('ragDupMsg');
+  msg.textContent = '计算中…';
+  try {
+    const r = await api(`/api/slang/near-duplicates?threshold=${encodeURIComponent(th)}`);
+    const box = document.getElementById('ragDupList');
+    box.style.display = '';
+    box.innerHTML = r.pairs.length
+      ? `<table><thead><tr><th style="width:70px">余弦</th><th>词条 A</th><th>词条 B</th></tr></thead><tbody>`
+        + r.pairs.map((p) => `<tr><td>${p.sim.toFixed(3)}</td><td>${ragEsc(p.a.content)}</td><td>${ragEsc(p.b.content)}</td></tr>`).join('')
+        + '</tbody></table>'
+      : '<div class="meta" style="padding:8px">没有超过该阈值的词条对</div>';
+    msg.textContent = `共 ${r.pairs.length} 对`;
+  } catch (e) { msg.textContent = `失败：${e.message}`; }
+}
+
+document.getElementById('ragRefresh').addEventListener('click', loadRagStatus);
+document.getElementById('ragRebuild').addEventListener('click', () => ragReindex(false));
+document.getElementById('ragRebuildForce').addEventListener('click', () => ragReindex(true));
+document.getElementById('ragDebugBtn').addEventListener('click', ragDebug);
+document.getElementById('ragQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') ragDebug(); });
+document.getElementById('ragDupBtn').addEventListener('click', ragNearDuplicates);
+
+refresh(); refreshRoles(); refreshWhitelist(); refreshSessions(); refreshPending(); refreshPresets(); loadSocialForm(); loadV2Config(); refreshV2Activity(); loadV2ToolLog(); loadV2SessionOptions(); refreshSocialStatus(); refreshSlang(); loadSlangConfig(); loadSecurity(); loadRagStatus();
 setInterval(() => { refresh(); refreshSessions(); refreshPending(); refreshSocialStatus(); refreshSlang(); }, 3000);
 
 // ── 工具级配置弹窗 ───────────────────────────────────────────────────────
