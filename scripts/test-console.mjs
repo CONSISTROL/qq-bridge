@@ -1,6 +1,7 @@
 // 控制台增强功能综合测试（node 直接调 API）
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,6 +124,31 @@ if (!TOKEN) {
   ok('「忘记本机令牌」能清掉 Cookie',
     logout.status === 200 && /Max-Age=0/i.test(logout.headers.get('set-cookie') || ''),
     logout.headers.get('set-cookie') || '(无 Set-Cookie)');
+
+  // 进站页（401）的决策逻辑：同一个源能读到 localStorage 里那份令牌，所以它应该先
+  // 自动带令牌重试一次，只有真的没有/已经试过才弹输入框。用 vm 把页面脚本跑一遍。
+  const entryHtml = await (await fetch(BASE + '/')).text();
+  const entryScript = entryHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1] || '';
+  const runEntryPage = ({ saved, search }) => {
+    const calls = { replaced: [], prompted: 0 };
+    const ctx = {
+      localStorage: { getItem: () => saved ?? null },
+      location: { search, replace: (url) => calls.replaced.push(url) },
+      prompt: () => { calls.prompted += 1; return null; }
+    };
+    vm.createContext(ctx);
+    vm.runInContext(entryScript, ctx);
+    return calls;
+  };
+  ok('进站页内嵌了自动重试脚本', entryScript.includes('consoleToken') && entryScript.includes('location.replace'), `${entryScript.length} 字节`);
+  const noSaved = runEntryPage({ saved: null, search: '' });
+  ok('进站页：没有本地令牌 → 弹输入框', noSaved.prompted === 1 && noSaved.replaced.length === 0, JSON.stringify(noSaved));
+  const savedHit = runEntryPage({ saved: TOKEN, search: '' });
+  ok('进站页：有本地令牌 → 自动带令牌重试，不再弹框',
+    savedHit.prompted === 0 && savedHit.replaced[0] === '/?token=' + TOKEN, JSON.stringify(savedHit));
+  const savedMiss = runEntryPage({ saved: TOKEN, search: '?token=stale-value' });
+  ok('进站页：令牌试过仍失败 → 回到输入框（不会无限重定向）',
+    savedMiss.prompted === 1 && savedMiss.replaced.length === 0, JSON.stringify(savedMiss));
 }
 
 // 2. 角色列表

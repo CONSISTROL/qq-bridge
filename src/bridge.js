@@ -2210,8 +2210,20 @@ async function main() {
         // 带着失效/过期的 Cookie 反复重试没有意义，顺手清掉，让浏览器回到「输入令牌」的干净状态
         if (cookieToken) res.setHeader('Set-Cookie', consoleCookieHeader('', 0));
         if (req.method === 'GET' && url.pathname === '/') {
+          // 进站页：同一个源能读到 localStorage 里那份令牌，所以先拿它自动重试一次
+          // （典型场景：老页面/别的标签页里已经有令牌，只是这个浏览器还没 Cookie）。
+          // `?token=` 已经试过就不再自动跳，否则令牌错了会变成无限重定向。
           res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
-          res.end('<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>const t=prompt(\'请输入控制台访问令牌\');if(t)location.href=\'/?token=\'+encodeURIComponent(t);</script>');
+          res.end([
+            '<!doctype html><meta charset="utf-8"><title>需要令牌</title>',
+            '<script>(function(){',
+            "var saved=null;try{saved=localStorage.getItem('consoleToken');}catch(e){}",
+            "var tried=/[?&]token=/.test(location.search);",
+            "if(saved&&!tried){location.replace('/?token='+encodeURIComponent(saved));return;}",
+            "var t=prompt('请输入控制台访问令牌：');",
+            "if(t)location.replace('/?token='+encodeURIComponent(t.trim()));",
+            '})();</script>'
+          ].join(''));
         } else {
           sendJson({ ok: false, error: '未授权：请提供控制台访问令牌' }, 401);
         }
