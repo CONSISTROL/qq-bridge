@@ -197,8 +197,27 @@ export function buildStickerStrategyHint() {
     '- 选择：优先用备注（desc）和你的记忆（localNote/tags）能准确对上语境的；没有备注/不确定的表情，先 qq_get_sticker_image 看图再决定，不要瞎发。',
     '- 发送：用 qq_send_sticker；一条消息只能是一张表情，不能在同一气泡里附带文字；想说的话先用 qq_send_message / qq_reply 作为单独气泡发出，再单独发表情。需要引用/点名时传 replyToMessageId / atUserId（群聊）。',
     '- 不要：在严肃/正式/敏感话题硬塞表情；不要每次都用同一个；不要一条消息里塞多个表情；不要把文字和表情混在同一个气泡里；不要把表情包当回复的唯一内容（偶尔可以，但别让群友觉得你在敷衍）。',
-    '- 学习：看到新表情不确定含义时，先用 qq_get_sticker_image 看图，再用 qq_sticker_note 记下你的理解，下次就能更准地选。'
+    '- 学习：看到新表情不确定含义时，先用 qq_get_sticker_image 看图，再用 qq_sticker_note 记下你的理解，下次就能更准地选。',
+    '- 挑图：不确定发哪张、或收藏里没有对得上语境的，调用 qq_pick_sticker（传当前语境/心情）——它会先判时机，再从「QQ 收藏表情 + 本地图库」里挑候选；本地都不合适时它会联网找一批（偏二次元/DeepSeek 二创风格），返回的候选可以直接用 send 参数发出去。'
   ].join('\n');
+}
+
+// 把「此刻适不适合发表情包」的硬判断渲染成一行注入提示的文本。
+// moment 由 bridge 侧 evaluateMoment() 算出（纯函数在 sticker-picker.js）。
+export function buildStickerMomentHint(moment, { top = [] } = {}) {
+  if (!moment || typeof moment !== 'object') return '';
+  if (moment.allowed === false) {
+    return `【此刻发表情包】不适合：${moment.reason}。没到时机就别硬塞表情。`;
+  }
+  const level = moment.level === 'good' ? '合适' : '一般';
+  const bits = [`【此刻发表情包】${level}：${moment.reason}`];
+  if (moment.lastStickerMinAgo != null) bits.push(`上次发表情：${moment.lastStickerMinAgo} 分钟前`);
+  const list = Array.isArray(top) ? top.filter(Boolean).slice(0, 3) : [];
+  if (list.length) {
+    bits.push('本地瞄到的候选：' + list.map((c) => `${c.label}${c.score != null ? `(${c.score})` : ''}`).join(' / '));
+  }
+  bits.push('要发就用 qq_pick_sticker 确认时机与候选（它会先查本地、不够再联网找），别凭印象瞎发。');
+  return bits.join('；');
 }
 
 // 把 AI 本地认知（note/tags/usage）更新到一条表情记录上，并返回新数组。

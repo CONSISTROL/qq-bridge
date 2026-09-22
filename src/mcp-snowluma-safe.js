@@ -1025,6 +1025,58 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.image?.enabled !==
   );
 }
 
+if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.pickSticker !== false) {
+  defineTool(
+    'qq_pick_sticker',
+    '「现在适不适合发表情包 + 该发哪张」的专用工具。它先做时机判断（冷却、本轮是否已发过、语境是否偏严肃），再从「你的 QQ 收藏表情 + 本地图库」里按当前语境/心情打分排序给出候选；如果本地都不够合适，会自动去网上找一批（偏二次元 / DeepSeek 二创 / 梗图风格）返回图片直链。返回里的 candidates[i].id 可以直接用 send 参数发出去（本地候选走收藏表情库），online[i].url 也能用 send 发（按图片直发）。不确定发哪张、或收藏里没有对得上语境的时候用它；一次只发一张，别把它当刷图工具。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      context: z.string().optional().describe('当前语境/心情描述，例如「群友在嘲笑我菜，我想回一张不服气的」。不传则用会话最近消息自动判断'),
+      topic: z.string().optional().describe('话题词（联网找图时用），例如「原神」「考试」'),
+      limit: z.number().optional().describe('返回候选数，默认取配置（通常 5）'),
+      minScore: z.number().optional().describe('本地候选的合格分（0~100），低于它才联网兜底；不传用配置'),
+      searchOnline: z.boolean().optional().describe('是否强制/禁止联网兜底；不传=本地不够好时自动联网'),
+      preview: z.boolean().optional().describe('要不要把候选图直接返回给你看（最多 2 张，视觉模型可看图）。本地图库（lib: 开头）的条目没有含义描述，不确定长什么样时传 true'),
+      send: z.object({
+        id: z.string().optional().describe('本地候选的 id（来自 candidates）'),
+        url: z.string().optional().describe('联网候选的 url（来自 online）'),
+        replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（可选）'),
+        atUserId: z.union([z.number(), z.string()]).optional().describe('要 @ 的群成员 QQ 号（可选）')
+      }).optional().describe('要直接发出去时传：本地候选传 id，联网候选传 url；不传则只返回候选不发')
+    },
+    async ({ key, token, context, topic, limit, minScore, searchOnline, preview, send }) => {
+      try {
+        const data = await agentApi('/api/socialV2/pick-sticker', {
+          method: 'POST',
+          body: JSON.stringify({
+            key,
+            context: context || '',
+            topic: topic || '',
+            limit,
+            minScore,
+            searchOnline: typeof searchOnline === 'boolean' ? searchOnline : undefined,
+            preview: preview === true,
+            send: send && (send.id || send.url) ? send : null
+          }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 180000
+        });
+        const content = [{ type: 'text', text: JSON.stringify(data, null, 2) }];
+        // 预览图跟着结果一起进视觉上下文，让 AI 真的「看图选表情」
+        for (const p of (Array.isArray(data?.previews) ? data.previews : [])) {
+          if (!p?.data || !p?.mimeType) continue;
+          content.push({ type: 'text', text: `候选预览：${p.label || p.id}` });
+          content.push({ type: 'image', mimeType: String(p.mimeType), data: String(p.data) });
+        }
+        return { content };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `挑表情失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !== false) {
   defineTool(
     'qq_send_image',

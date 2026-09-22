@@ -412,6 +412,21 @@ restart.bat
 - 联网研究需要 DSH 学习会话能使用 `web_search` 工具。
 - 黑话候选不会自动转正，需到控制台「黑话管理」人工确认。
 
+### Q：AI 不知道该不该发表情包 / 收藏里没有合适的？
+
+- 二代仿真模式有专门的 `qq_pick_sticker`：先判时机（冷却、本轮是否已发过、语境是否偏严肃），
+  再从「QQ 收藏表情 + 本地图库」里按语境打分排序给候选；本地都不够好时自动联网找一批
+  （搜索词会叠加 `sticker.pick.styleKeywords` 的风格偏置，默认偏二次元/Q版/梗图/DeepSeek 二创）。
+- 参数在控制台 **07 二代仿真模式 → 表情包时机与选图**（`config.json` 的 `socialV2.sticker.pick`）：
+  `minIntervalMs`（硬冷却，冷却内桥接直接拒绝发送）、`maxPerTurn`（每轮上限）、`minScore`（本地合格分，
+  低于它才算「本地不满足」并触发联网）、`onlineFallback`、`librarySources`（默认只把 `style/manual/ai`
+  当表情候选，`bili-cover/dynamic` 这类资讯配图排除在外）。
+- 唤醒提示里每轮都会带一行「此刻发表情包」时机判断，AI 不用自己猜。
+- 本地图库条目只有文件名/关键词、没有含义描述，选不准是正常的：`qq_pick_sticker` 传
+  `preview: true` 会把候选图直接返回给视觉模型看一眼再决定。
+- 想让本地池更好用，跑 `node scripts/fetch-style-stickers.mjs`（按风格关键词抓图入库，
+  sha256 去重、幂等可重复跑；换新关键词才有新图）。
+
 ---
 
 *公开版文档，不包含本地开发历史与个人配置。*

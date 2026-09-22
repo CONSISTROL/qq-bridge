@@ -17,6 +17,7 @@ import { mdToPlain, splitForQQ } from './md-to-plain.js';
 import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
+import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { EmbeddingClient } from './embedding-client.js';
@@ -53,13 +54,25 @@ import {
   formatStickerList,
   buildStickerContext,
   buildStickerStrategyHint,
+  buildStickerMomentHint,
   applyStickerNote,
   markStickerUsed
 } from './sticker-lib.js';
+import {
+  buildPickPlan,
+  buildOnlineQuery,
+  evaluateMoment,
+  detectIntents,
+  STYLE_KEYWORDS,
+  STICKER_LIBRARY_SOURCES
+} from './sticker-picker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const STATE_DIR = path.join(ROOT, 'state');
+// 状态目录同样支持本地隔离测试（QQ_BRIDGE_STATE_DIR），默认仍是仓库下的 state/。
+const STATE_DIR = process.env.QQ_BRIDGE_STATE_DIR
+  ? path.resolve(ROOT, String(process.env.QQ_BRIDGE_STATE_DIR))
+  : path.join(ROOT, 'state');
 const STATE_FILE = path.join(STATE_DIR, 'sessions.json');
 const ROLE_STATE_FILE = path.join(STATE_DIR, 'current-role.json');
 const SLANG_FILE = path.join(STATE_DIR, 'slang.json');
@@ -233,7 +246,10 @@ function normalizeIdList(value) {
 
 // ── 配置 ────────────────────────────────────────────────────────────────────
 function loadConfig() {
-  const p = path.join(ROOT, 'config.json');
+  // QQ_BRIDGE_CONFIG 只用于本地测试：让隔离实例跑另一份配置（端口/状态目录都分开），
+  // 不必为了验证一处改动去动线上 config.json。
+  const override = String(process.env.QQ_BRIDGE_CONFIG ?? '').trim();
+  const p = override ? path.resolve(ROOT, override) : path.join(ROOT, 'config.json');
   const file = readJsonSafe(p, null, true);
   if (!file || typeof file !== 'object' || Array.isArray(file)) throw new Error(`配置格式错误：${p}`);
   const cfg = {
@@ -454,6 +470,25 @@ function loadConfig() {
           maxPerMinute: 2,         // 每分钟最多收藏次数
           maxPerHour: 10,          // 每小时最多收藏次数
           maxRemarkChars: 20       // 收藏时备注最大长度
+        },
+        // 表情包「时机判断 + 选图」（qq_pick_sticker + 唤醒提示里的时机门）
+        pick: {
+          enabled: true,               // 时机判断/推荐总开关
+          hintInPrompt: true,          // 是否把「此刻适不适合发表情」写进唤醒提示
+          autoUseOnGoodMoment: false,  // true=时机判定为 good 时自动帮 AI 挑好图并附上可直接发送的参数
+          minIntervalMs: 90000,        // 两次表情之间的硬冷却（毫秒）
+          maxPerTurn: 1,               // 单个回合最多发几张表情
+          minScore: 30,                // 本地候选低于该分视为「不满足」，触发联网兜底
+          defaultLimit: 5,             // 默认返回候选数
+          includeLibrary: true,        // 本地图库（assets/stickers）是否参与候选池
+          onlineFallback: true,        // 本地不满足时是否联网找图
+          onlineCount: 6,              // 联网返回候选数上限
+          styleKeywords: [...STYLE_KEYWORDS], // 联网搜索的风格偏置词
+          seedHome: true,              // 联网高分候选是否自动存进本地图库（越用越准）
+          librarySources: [...STICKER_LIBRARY_SOURCES], // 参与候选的图库来源（bili-cover/dynamic 这类资讯图不算表情）
+          libraryMaxSide: 2600,        // 图库候选的最长边上限（像素）
+          libraryMaxRatio: 2.0,        // 图库候选的长宽比上限（挡手机长截图）
+          libraryMaxBytes: 3 * 1024 * 1024
         }
       },
       proactive: {
@@ -1164,7 +1199,352 @@ async function main() {
     return { emojiId, entry: entry || null, remark: cleanRemark };
   }
 
-  // ── 从外部来源保存表情（qq_save_sticker）────────────────────────────────
+  // ── 表情包「时机判断 + 选图」（qq_pick_sticker）─────────────────────────
+  // 与「保存图片」共用同一套安全校验：远程图一律由桥接 safeFetchBuffer 下载。
+  function readPickConfig() {
+    const p = cfg.socialV2?.sticker?.pick ?? {};
+    return {
+      enabled: p.enabled !== false,
+      hintInPrompt: p.hintInPrompt !== false,
+      autoUseOnGoodMoment: p.autoUseOnGoodMoment === true,
+      minIntervalMs: Math.max(0, Number(p.minIntervalMs ?? 90000) || 0),
+      maxPerTurn: Math.max(1, Number(p.maxPerTurn ?? 1) || 1),
+      minScore: Math.max(0, Math.min(100, Number(p.minScore ?? 30) || 0)),
+      defaultLimit: Math.max(1, Math.min(20, Number(p.defaultLimit ?? 5) || 5)),
+      includeLibrary: p.includeLibrary !== false,
+      onlineFallback: p.onlineFallback !== false,
+      onlineCount: Math.max(1, Math.min(12, Number(p.onlineCount ?? 6) || 6)),
+      seedHome: p.seedHome !== false,
+      librarySources: Array.isArray(p.librarySources) ? p.librarySources.map(String) : [...STICKER_LIBRARY_SOURCES],
+      libraryMaxSide: Math.max(0, Number(p.libraryMaxSide ?? 900) || 0),
+      libraryMaxBytes: Math.max(0, Number(p.libraryMaxBytes ?? 3 * 1024 * 1024) || 0),
+      styleKeywords: Array.isArray(p.styleKeywords) && p.styleKeywords.length
+        ? p.styleKeywords.map(String).filter(Boolean).slice(0, 12)
+        : [...STYLE_KEYWORDS]
+    };
+  }
+
+  // 本地图库缓存：目录扫描兜底 + index.json 元数据合并（index 缺条目也能被选到）
+  let imageLibraryCache = { at: 0, items: [] };
+  const IMAGE_LIBRARY_TTL_MS = 30000;
+  function loadImageLibrary(force = false) {
+    const now = Date.now();
+    if (!force && now - imageLibraryCache.at < IMAGE_LIBRARY_TTL_MS) return imageLibraryCache.items;
+    const limits = resolveImageConfig();
+    let indexed = new Map();
+    try {
+      const lib = readJsonSafe(path.join(limits.libraryDir, 'index.json'), { items: [] });
+      for (const item of (Array.isArray(lib?.items) ? lib.items : [])) {
+        if (item?.file) indexed.set(String(item.file), item);
+      }
+    } catch { /* 图库还没建立 */ }
+    let files = [];
+    try {
+      files = fs.readdirSync(limits.libraryDir, { withFileTypes: true })
+        .filter((d) => d.isFile() && /\.(png|jpe?g|gif|webp)$/i.test(d.name))
+        .map((d) => d.name);
+    } catch { files = []; }
+    const items = files.map((file) => {
+      const meta = indexed.get(file) || {};
+      return {
+        file,
+        title: String(meta.title || '').trim(),
+        source: String(meta.source || 'library'),
+        origin: String(meta.origin || '').trim(),
+        width: Number(meta.width) || 0,
+        height: Number(meta.height) || 0,
+        bytes: Number(meta.bytes) || 0,
+        sha256: String(meta.sha256 || '')
+      };
+    });
+    imageLibraryCache = { at: now, items };
+    return items;
+  }
+
+  // 只留「适合当表情包」的图库条目：来源白名单 + 尺寸/体积上限 + 排除测试图。
+  // 默认不包含 bili-cover/dynamic/article（那是资讯配图，不是表情包）。
+  function stickerLibraryItems() {
+    const pickCfg = readPickConfig();
+    const allow = new Set([
+      ...STICKER_LIBRARY_SOURCES,
+      ...(Array.isArray(pickCfg.librarySources) ? pickCfg.librarySources.map((s) => String(s).toLowerCase()) : [])
+    ]);
+    const maxSide = Math.max(0, Number(pickCfg.libraryMaxSide ?? 2600) || 0);
+    const maxBytes = Math.max(0, Number(pickCfg.libraryMaxBytes ?? 3 * 1024 * 1024) || 0);
+    const maxRatio = Math.max(0, Number(pickCfg.libraryMaxRatio ?? 2.0) || 0);
+    return loadImageLibrary().filter((item) => {
+      if (/^p\d+-test|^test-/i.test(item.file)) return false;
+      if (!allow.has(String(item.source || '').toLowerCase())) return false;
+      if (maxSide && item.width && item.height && Math.max(item.width, item.height) > maxSide) return false;
+      if (maxBytes && item.bytes && item.bytes > maxBytes) return false;
+      // 长截图（手机相册式表情包合集、竖版长图）不适合直接当表情发
+      if (maxRatio && item.width && item.height) {
+        const ratio = Math.max(item.width, item.height) / Math.max(1, Math.min(item.width, item.height));
+        if (ratio > maxRatio) return false;
+      }
+      return true;
+    });
+  }
+
+  // 最近发过的表情 id（每个会话保留一小段），用于「别连着发同一张」。
+  function recentStickerIdsV2(st, limit = 5) {
+    const list = Array.isArray(st.recentStickerIds) ? st.recentStickerIds : [];
+    return list.slice(-limit);
+  }
+  function rememberStickerIdV2(st, id) {
+    if (!id) return;
+    st.recentStickerIds = [...(Array.isArray(st.recentStickerIds) ? st.recentStickerIds : []), String(id)].slice(-8);
+  }
+
+  // 会话当前语境文本（最近几条群友消息 + 最后一条消息）
+  function pickContextTextV2(st, extra = '') {
+    const msgs = (Array.isArray(st.recentMessages) ? st.recentMessages : []).slice(-6);
+    const incoming = msgs.filter((m) => m && !m.isSelf).map((m) => String(m.text || m.plain || '')).filter(Boolean);
+    const last = msgs[msgs.length - 1];
+    return [extra, ...incoming.slice(-4), last ? String(last.text || last.plain || '') : ''].filter(Boolean).join(' ');
+  }
+
+  // 本地候选（QQ 收藏表情 + 本地图库）排序：只读、不发网。
+  async function rankLocalStickersV2(key, { context = '', topic = '', minScore, limit, st: stIn = null } = {}) {
+    const pickCfg = readPickConfig();
+    const st = stIn || getSocialV2State(key);
+    const ctx = pickContextTextV2(st, [context, topic].filter(Boolean).join(' '));
+    const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx });
+    let qqItems = stickerEntries;
+    try {
+      const synced = await syncStickerLibrary(false);
+      qqItems = synced?.entries ?? stickerEntries;
+    } catch { /* 同步失败就用内存里的库 */ }
+    const plan = buildPickPlan({
+      qqItems,
+      libraryItems: pickCfg.includeLibrary ? stickerLibraryItems() : [],
+      context: ctx,
+      topic,
+      moment,
+      options: {
+        cfg: pickCfg,
+        minScore: minScore ?? pickCfg.minScore,
+        limit: limit ?? pickCfg.defaultLimit,
+        recentIds: recentStickerIdsV2(st, 5)
+      }
+    });
+    const candidates = plan.candidates
+      .filter((c) => c && (c.kind !== 'library' || pickCfg.includeLibrary))
+      .map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        ref: c.ref,
+        channel: c.channel,
+        label: c.label,
+        score: c.score,
+        tags: c.tags,
+        source: c.source,
+        useCount: c.useCount,
+        width: c.width,
+        height: c.height,
+        kb: c.bytes ? Math.round(c.bytes / 1024) : 0
+      }));
+    return { pickCfg, st, ctx, moment, plan, candidates };
+  }
+
+  // 注入唤醒提示用的一行「此刻表情包时机」（纯本地判断，不出网）。
+  function buildStickerMomentLineV2(key, stIn = null) {
+    try {
+      const pickCfg = readPickConfig();
+      if (pickCfg.enabled === false || pickCfg.hintInPrompt === false) return '';
+      const st = stIn || getSocialV2State(key);
+      const ctx = pickContextTextV2(st);
+      const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx });
+      const top = buildPickPlan({
+        qqItems: stickerEntries,
+        libraryItems: pickCfg.includeLibrary ? stickerLibraryItems() : [],
+        context: ctx,
+        moment,
+        options: { cfg: pickCfg, minScore: 0, limit: 3, recentIds: recentStickerIdsV2(st, 5) }
+      }).candidates;
+      return buildStickerMomentHint(moment, { top });
+    } catch (error) {
+      log(`[sticker] 生成时机提示失败：${error?.message ?? error}`);
+      return '';
+    }
+  }
+
+  // 「此刻适不适合发表情包」+ 本地候选 + （必要时）联网兜底，全部只读、不发送。
+  async function buildStickerPickResultV2(key, { context = '', topic = '', minScore, limit, searchOnline } = {}) {
+    const { pickCfg, plan, candidates, moment, ctx } = await rankLocalStickersV2(key, { context, topic, minScore, limit });
+    const result = {
+      key,
+      moment,
+      intents: plan.intents,
+      need: plan.need,
+      topic: plan.topic,
+      minScore: plan.minScore,
+      decided: plan.decided,
+      thresholdMet: candidates.length > 0 && candidates[0].score >= plan.minScore,
+      candidates,
+      poolSize: plan.poolSize,
+      onlineQuery: plan.onlineQuery,
+      onlineUsed: false,
+      online: [],
+      onlineNotes: [],
+      seedHome: pickCfg.seedHome,
+      source: 'local'
+    };
+    const shouldSearchOnline = searchOnline ?? (pickCfg.onlineFallback && !result.thresholdMet);
+    if (!shouldSearchOnline) return result;
+    if (result.moment?.allowed === false) {
+      result.onlineNotes.push(`时机门未通过（${result.moment.reason}），不联网找了`);
+      return result;
+    }
+    if (!ctx.trim()) {
+      result.onlineNotes.push('当前没有可判断的语境文本，联网找图容易瞎找，先给关键词或话题再找');
+      return result;
+    }
+    try {
+      const client = createBiliClient({ cookie: readBiliCookie(ROOT) });
+      const items = await client.searchImages(result.onlineQuery, {
+        count: pickCfg.onlineCount,
+        sources: ['comment', 'article'],
+        videoTop: 4,
+        commentPages: 1,
+        animatedOnly: false
+      });
+      const limits = resolveImageConfig();
+      const hostAllowed = (u) => {
+        try {
+          const host = new URL(u).hostname.toLowerCase();
+          return limits.refererAllow.length === 0 || limits.refererAllow.some((entry) => {
+            try { return new URL(entry).hostname.toLowerCase() === host; } catch { return false; }
+          });
+        } catch { return false; }
+      };
+      // 只探测前 4 张的真实体积/尺寸（并发），其余的只回 URL 不再下载：
+      // 一次调用最多拖 1~2 秒，避免把整个回合卡住。
+      const heads = [];
+      for (const it of items.slice(0, 12)) {
+        const url = String(it?.url || '').trim();
+        if (!/^https?:\/\//i.test(url)) continue;
+        if (!hostAllowed(url)) { result.onlineNotes.push(`跳过非白名单站点：${url.slice(0, 60)}`); continue; }
+        heads.push({ url, title: String(it.title || '').slice(0, 60), source: it.source || 'comment' });
+        if (heads.length >= 8) break;
+      }
+      const probeTargets = heads.slice(0, 4);
+      const others = heads.slice(4);
+      const probed = await Promise.all(probeTargets.map(async (entry) => {
+        try {
+          const fetched = await safeFetchBuffer(entry.url, limits.maxBytes, { headers: { referer: limits.imageReferer } });
+          if (!looksLikeImageBuffer(fetched.buffer)) {
+            result.onlineNotes.push(`不是有效图片，已跳过：${entry.url.slice(0, 60)}`);
+            return null;
+          }
+          const dims = getImageDimensions(fetched.buffer) || { width: 0, height: 0 };
+          // 长边超过 2000 的基本是长图/插画，发到 QQ 上会被压得没法看，不如不推
+          if (dims.width && dims.height && Math.max(dims.width, dims.height) > 2000) {
+            result.onlineNotes.push(`尺寸过大已跳过（${dims.width}x${dims.height}）：${entry.url.slice(0, 50)}`);
+            return null;
+          }
+          return {
+            ...entry,
+            width: dims.width,
+            height: dims.height,
+            kb: Math.round(fetched.buffer.length / 1024),
+            animated: describeAnimation(fetched.buffer).animated === true,
+            checked: true
+          };
+        } catch (error) {
+          result.onlineNotes.push(`探测失败（${String(error?.message ?? error).slice(0, 50)}）：${entry.url.slice(0, 50)}`);
+          return null;
+        }
+      }));
+      result.online = [...probed.filter(Boolean), ...others].slice(0, pickCfg.onlineCount);
+      result.onlineUsed = true;
+      result.source = result.thresholdMet ? 'local+online' : 'online';
+      if (!result.online.length) result.onlineNotes.push(`联网搜「${result.onlineQuery}」没有可用结果，换个话题词或用 qq_search_images 再试`);
+      else result.onlineNotes.push(`联网搜索词：${result.onlineQuery}（风格偏置：${pickCfg.styleKeywords.join('/')}）`);
+    } catch (error) {
+      result.onlineUsed = true;
+      result.onlineNotes.push(`联网找图失败：${String(error?.message ?? error).slice(0, 120)}`);
+    }
+    return result;
+  }
+
+  // 给 AI「亲眼看一下」候选图的能力：本地图库条目只有文件名/关键词，没有含义描述，
+  // 光看 label 是选不准的。这里最多取 2 张（QQ 收藏表情走收藏 URL，本地图库直接读文件），
+  // base64 回给 MCP 层当图像内容返回给视觉模型。
+  async function buildStickerPickPreviews(candidates, max = 2) {
+    const out = [];
+    const limits = resolveImageConfig();
+    for (const c of (Array.isArray(candidates) ? candidates : []).slice(0, Math.max(1, max))) {
+      try {
+        let buf = null;
+        if (c.kind === 'library') {
+          const file = path.join(limits.libraryDir, path.basename(String(c.ref || '')));
+          if (!file.startsWith(limits.libraryDir + path.sep)) continue;
+          buf = await fs.promises.readFile(file);
+        } else {
+          const entry = await getStickerImageData(c.ref);
+          if (!entry?.url) continue;
+          const fetched = await safeFetchBuffer(entry.url, limits.maxBytes);
+          buf = fetched.buffer;
+        }
+        if (!buf || !looksLikeImageBuffer(buf)) continue;
+        if (buf.length > limits.maxBytes) continue;
+        out.push({ id: c.id, label: c.label || '', mimeType: mimeFromBuffer(buf), data: buf.toString('base64') });
+      } catch (error) {
+        log(`[sticker] 预览 ${c.id} 失败：${error?.message ?? error}`);
+      }
+    }
+    return out;
+  }
+
+  // AI 选好之后真正发出（工具里传 send.{id|url}）。只接受本地候选 id 或本次联网返回过的 url。
+  async function sendPickedStickerV2(key, spec, { candidates = [], online = [] } = {}) {
+    const pickCfg = readPickConfig();
+    const st = getSocialV2State(key);
+    const moment = evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st) });
+    if (!moment.allowed) throw new Error(`现在不适合发表情包：${moment.reason}`);
+    const wanted = String(spec?.id ?? spec?.ref ?? spec?.url ?? '').trim();
+    if (!wanted) throw new Error('send 需要 id（候选列表里的 id）或 url（联网候选里的地址）');
+    const local = candidates.find((c) => String(c.id) === wanted || String(c.ref) === wanted);
+    const remote = !local ? online.find((o) => o.url === wanted) : null;
+    if (!local && !remote) throw new Error('这个表情不在本次候选里，请先调用 qq_pick_sticker 拿候选再发（不要自己拼 URL）');
+    const replyToMessageId = spec?.replyToMessageId ?? null;
+    const atUserId = spec?.atUserId ?? null;
+    let sent;
+    if (local) {
+      sent = local.channel === 'image'
+        ? await sendImageV2(key, local.ref, { source: 'library', replyToMessageId, atUserId })
+        : await sendStickerV2(key, local.ref, { replyToMessageId, atUserId });
+      rememberStickerIdV2(st, local.id);
+    } else {
+      sent = await sendImageV2(key, remote.url, { source: 'url', replyToMessageId, atUserId });
+      rememberStickerIdV2(st, remote.url);
+    }
+    const now = Date.now();
+    st.lastStickerAt = now;
+    st.lastAiReplyAt = now;
+    st.lastActionAt = now;
+    st.wakeConfig.noActionCount = 0;
+    saveSocialV2State();
+    const label = local?.label || (remote?.title ? `联网图：${remote.title}` : '联网图');
+    recordSelfMediaV2(key, {
+      text: `[表情包:${label}]`,
+      kind: 'sticker',
+      messageId: sent?.messageId ?? sent?.data?.message_id ?? null,
+      media: [{ kind: 'sticker', label: String(label).slice(0, 60) }]
+    });
+    log(`[sticker] pick 发送 ${key}: ${local ? local.kind + ':' + local.ref : 'url ' + remote.url}`);
+    appendActivity(`${key} [sticker] 发表情：${String(label).slice(0, 40)}`);
+    return {
+      ok: true,
+      key,
+      via: local ? (local.channel === 'image' ? 'library' : 'sticker') : 'url',
+      sticker: local ? { id: local.id, kind: local.kind, label: local.label } : { url: remote.url, title: remote.title },
+      messageId: sent?.messageId ?? sent?.data?.message_id ?? null
+    };
+  }
+
+  // 从外部来源保存表情（qq_save_sticker）────────────────────────────────
   // 来源：本地图库文件名 / data:base64 / 裸 base64 / 远程 URL（需显式开启）。
   // 铁律：远程图片一律由桥接自己下载（safeFetchBuffer：SSRF 防护 + 体积/格式校验），
   //       绝不把 URL 交给 OneBot 网关去抓。
@@ -3073,7 +3453,7 @@ async function main() {
             merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
           }
           // tools：只接受布尔开关
-          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage'];
+          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker'];
           if (body.tools && typeof body.tools === 'object') {
             merged.tools = { ...(current.tools ?? {}), ...body.tools };
             for (const k of toolFlags) {
@@ -3162,7 +3542,10 @@ async function main() {
           }
           // sticker：表情包体系参数归一化
           if (body.sticker && typeof body.sticker === 'object') {
+            // 保留未随请求提交的子段（例如控制台只改 collect 时不能顺手抹掉 pick）
+            const keepPick = merged.sticker?.pick ?? current.sticker?.pick;
             merged.sticker = { ...(current.sticker ?? {}), ...body.sticker };
+            if (keepPick && merged.sticker.pick === undefined) merged.sticker.pick = keepPick;
             if (merged.sticker.enabled !== undefined) merged.sticker.enabled = merged.sticker.enabled === true;
             for (const k of ['syncTtlMs', 'maxListCount', 'promptMaxStickers']) {
               if (merged.sticker[k] !== undefined) {
@@ -3181,6 +3564,39 @@ async function main() {
                   const n = Number(merged.sticker.collect[k]);
                   merged.sticker.collect[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.sticker?.collect?.[k] ?? 0;
                 }
+              }
+            }
+            // pick：时机判断 + 选图参数（可单独提交，也可跟着 sticker 一起提交）
+            const pickPatch = (body.sticker.pick && typeof body.sticker.pick === 'object' && !Array.isArray(body.sticker.pick))
+              ? body.sticker.pick
+              : (body.stickerPick && typeof body.stickerPick === 'object' && !Array.isArray(body.stickerPick) ? body.stickerPick : null);
+            if (pickPatch) {
+              merged.sticker.pick = { ...(current.sticker?.pick ?? {}), ...pickPatch };
+              for (const k of ['minIntervalMs', 'maxPerTurn', 'minScore', 'defaultLimit', 'onlineCount', 'libraryMaxSide', 'libraryMaxRatio', 'libraryMaxBytes']) {
+                if (merged.sticker.pick[k] !== undefined) {
+                  const n = Number(merged.sticker.pick[k]);
+                  merged.sticker.pick[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.sticker?.pick?.[k] ?? 0;
+                }
+              }
+              if (merged.sticker.pick.minScore !== undefined) merged.sticker.pick.minScore = Math.min(100, merged.sticker.pick.minScore);
+              if (merged.sticker.pick.libraryMaxRatio !== undefined) merged.sticker.pick.libraryMaxRatio = Number(merged.sticker.pick.libraryMaxRatio) || 0;
+              if (merged.sticker.pick.librarySources !== undefined) {
+                const list = Array.isArray(merged.sticker.pick.librarySources)
+                  ? merged.sticker.pick.librarySources
+                  : String(merged.sticker.pick.librarySources ?? '').split(/[,，\s]+/);
+                merged.sticker.pick.librarySources = list.map(String).map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 12);
+              }
+              if (merged.sticker.pick.defaultLimit !== undefined) merged.sticker.pick.defaultLimit = Math.min(20, Math.max(1, merged.sticker.pick.defaultLimit));
+              if (merged.sticker.pick.onlineCount !== undefined) merged.sticker.pick.onlineCount = Math.min(12, Math.max(1, merged.sticker.pick.onlineCount));
+              if (merged.sticker.pick.maxPerTurn !== undefined) merged.sticker.pick.maxPerTurn = Math.min(5, Math.max(1, merged.sticker.pick.maxPerTurn));
+              for (const k of ['enabled', 'hintInPrompt', 'autoUseOnGoodMoment', 'includeLibrary', 'onlineFallback', 'seedHome']) {
+                if (merged.sticker.pick[k] !== undefined) merged.sticker.pick[k] = merged.sticker.pick[k] === true;
+              }
+              if (merged.sticker.pick.styleKeywords !== undefined) {
+                const list = Array.isArray(merged.sticker.pick.styleKeywords)
+                  ? merged.sticker.pick.styleKeywords
+                  : String(merged.sticker.pick.styleKeywords ?? '').split(/[,，\s]+/);
+                merged.sticker.pick.styleKeywords = list.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 12);
               }
             }
           }
@@ -3343,10 +3759,11 @@ async function main() {
             sendImage: 'qq_send_image',
             listImageLibrary: 'qq_list_image_library',
             searchImages: 'qq_search_images',
+            pickSticker: 'qq_pick_sticker',
             getSelfImage: 'qq_get_self_image'
           };
           const tools = cfg.socialV2?.tools ?? {};
-          const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker']);
+          const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'pickSticker']);
           const enabledTools = [];
           for (const [flag, name] of Object.entries(toolMap)) {
             if (tools[flag] !== false && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
@@ -3378,7 +3795,12 @@ async function main() {
               enabled: cfg.socialV2?.sticker?.enabled !== false,
               total: stickerEntries.length,
               context: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerContext(stickerEntries, cfg.socialV2?.sticker?.promptMaxStickers ?? 8) : '',
-              strategy: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerStrategyHint() : ''
+              strategy: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerStrategyHint() : '',
+              moment: buildStickerMomentLineV2(key, st),
+              library: {
+                enabled: readPickConfig().includeLibrary,
+                total: readPickConfig().includeLibrary ? stickerLibraryItems().length : 0
+              }
             }
           });
           return;
@@ -3590,7 +4012,12 @@ async function main() {
         }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/states') {
           const list = [];
+          const pickCfg = readPickConfig();
+          const libItems = pickCfg.enabled !== false && pickCfg.includeLibrary ? stickerLibraryItems() : [];
           for (const [key, st] of socialV2.conversations) {
+            const moment = pickCfg.enabled === false
+              ? null
+              : evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st) });
             list.push({
               key,
               wakeConfig: st.wakeConfig,
@@ -3598,10 +4025,19 @@ async function main() {
               recentCount: st.recentMessages.length,
               lastWakeReason: st.lastWakeReason,
               lastAiReplyAt: st.lastAiReplyAt,
-              noActionCount: st.wakeConfig.noActionCount || 0
+              noActionCount: st.wakeConfig.noActionCount || 0,
+              sticker: moment ? {
+                allowed: moment.allowed,
+                level: moment.level,
+                reason: moment.reason,
+                lastStickerMinAgo: moment.lastStickerMinAgo,
+                cooldownLeftMs: moment.cooldownLeftMs,
+                thisTurn: moment.stickersThisTurn,
+                pool: stickerEntries.length + libItems.length
+              } : null
             });
           }
-          sendJson({ ok: true, conversations: list });
+          sendJson({ ok: true, conversations: list, pick: { enabled: pickCfg.enabled, minScore: pickCfg.minScore, onlineFallback: pickCfg.onlineFallback, minIntervalMs: pickCfg.minIntervalMs, library: libItems.length } });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/wake') {
@@ -4181,6 +4617,120 @@ async function main() {
             saveSocialV2State();
             log(`[sticker] 工具发送表情失败 ${key}: ${error?.message ?? error}`);
             sendJson({ ok: false, error: `发送表情失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // ── 表情包时机判断 + 选图（qq_pick_sticker）──────────────────────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/pick-sticker') {
+          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
+          const pickCfg = readPickConfig();
+          if (!pickCfg.enabled) { sendJson({ ok: false, error: '表情包时机判断已关闭' }, 403); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('pickSticker')) { sendJson({ ok: false, error: '工具未启用：qq_pick_sticker' }, 403); return; }
+          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const context = String(body.context ?? '').slice(0, 400);
+          const topic = String(body.topic ?? '').slice(0, 60);
+          const limit = Math.max(1, Math.min(20, Number(body.limit) || pickCfg.defaultLimit));
+          const minScore = body.minScore === undefined || body.minScore === null
+            ? pickCfg.minScore
+            : Math.max(0, Math.min(100, Number(body.minScore) || 0));
+          const searchOnline = body.searchOnline === true ? true : (body.searchOnline === false ? false : undefined);
+          const sendSpec = body.send && typeof body.send === 'object' && !Array.isArray(body.send) ? body.send : null;
+          const wantPreview = body.preview === true;
+          const st = getSocialV2State(key);
+          const now = Date.now();
+          // 只有「真的要出网找图」才吃 image.maxPerMinute 额度；纯本地查询不吃。
+          const willSearchOnline = searchOnline === true || (searchOnline === undefined && pickCfg.onlineFallback);
+          const maxPerMinute = Math.max(0, Number(cfg.socialV2?.image?.maxPerMinute) || 0);
+          const recentMinute = (st.imageSearchTimes || []).filter((t) => now - t < 60000).length;
+          if (willSearchOnline && !sendSpec && maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) {
+            sendJson({ ok: false, error: '找图太频繁了，请过一会儿再试（也可以先用本地候选）' }, 429);
+            return;
+          }
+          const reservedSearch = willSearchOnline && !sendSpec;
+          if (reservedSearch) {
+            st.imageSearchTimes = st.imageSearchTimes || [];
+            st.imageSearchTimes.push(now);
+            if (st.imageSearchTimes.length > 500) st.imageSearchTimes = st.imageSearchTimes.slice(-500);
+          }
+          try {
+            const result = await buildStickerPickResultV2(key, { context, topic, minScore, limit, searchOnline });
+            if (reservedSearch && !result.onlineUsed) {
+              st.imageSearchTimes = st.imageSearchTimes.filter((t) => t !== now);
+            }
+            if (sendSpec) {
+              if (result.moment.allowed === false) {
+                saveSocialV2State();
+                sendJson({ ok: false, error: `现在不适合发表情包：${result.moment.reason}`, moment: result.moment }, 409);
+                return;
+              }
+              // 发出去也走统一的发送限频（与 qq_send_sticker / qq_send_message 同一档额度）
+              const sendCfg = cfg.socialV2?.send ?? {};
+              const sendMaxMin = Math.max(0, Number(sendCfg.maxSendPerMinute) || 0);
+              const sendMaxHour = Math.max(0, Number(sendCfg.maxSendPerHour) || 0);
+              const sentMin = (st.sendTimes || []).filter((t) => now - t < 60000).length;
+              const sentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
+              if ((sendMaxMin > 0 && sentMin + 1 > sendMaxMin) || (sendMaxHour > 0 && sentHour + 1 > sendMaxHour)) {
+                sendJson({ ok: false, error: '发送频率超限，稍后再试' }, 429);
+                return;
+              }
+              st.sendTimes = st.sendTimes || [];
+              st.sendTimes.push(now);
+              if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
+              try {
+                const sent = await sendPickedStickerV2(key, sendSpec, { candidates: result.candidates, online: result.online });
+                scheduleReplyCheckV2(key);
+                sendJson({ ...sent, moment: result.moment, label: sent.sticker?.label || sent.sticker?.title || '' });
+              } catch (error) {
+                st.sendTimes = st.sendTimes.filter((t) => t !== now);
+                saveSocialV2State();
+                throw error;
+              }
+              return;
+            }
+            saveSocialV2State();
+            const hint = result.moment.allowed === false
+              ? `现在不建议发表情包：${result.moment.reason}`
+              : result.candidates.length
+                ? `本地候选 top1：${result.candidates[0].label}（${result.candidates[0].score} 分，${result.candidates[0].kind === 'qq' ? '用 qq_send_sticker' : '用 qq_send_image(source=library)'}）；满意就直接发，别硬发不相关的。`
+                : '本地没有候选，看看联网结果或换个关键词。';
+            const onlineHint = result.online.length
+              ? `联网候选可先用 qq_send_image(source=url) 直接发，或 qq_save_sticker(source=url) 存进收藏表情库以后再发。`
+              : '';
+            log(`[sticker] pick ${key}: moment=${result.moment.allowed ? result.moment.level : 'no'} local=${result.candidates.length} online=${result.online.length}`);
+            appendActivity(`${key} [sticker] 选表情：本地 ${result.candidates.length} / 联网 ${result.online.length}（${result.decided ? '有合适' : '没定'}）`);
+            const previews = wantPreview ? await buildStickerPickPreviews(result.candidates, 2) : [];
+            sendJson({
+              ok: true,
+              key,
+              moment: result.moment,
+              previews,
+              intent: result.intents,
+              need: result.need,
+              topic: result.topic,
+              minScore: result.minScore,
+              decided: result.decided,
+              thresholdMet: result.thresholdMet,
+              candidates: result.candidates,
+              poolSize: result.poolSize,
+              onlineUsed: result.onlineUsed,
+              onlineQuery: result.onlineQuery,
+              online: result.online,
+              onlineNotes: result.onlineNotes,
+              seedHome: result.seedHome,
+              source: result.source,
+              hint: [hint, onlineHint].filter(Boolean).join(' '),
+              sendHint: '选好后调用 qq_pick_sticker 并传 send：本地候选 {id}，联网候选 {url}；一次只发一张。本地图库（lib: 开头）的条目没有含义描述，不确定长什么样就传 preview=true 看一眼再发。'
+            });
+          } catch (error) {
+            st.imageSearchTimes = st.imageSearchTimes.filter((t) => t !== now);
+            saveSocialV2State();
+            log(`[sticker] pick 失败 ${key}: ${error?.message ?? error}`);
+            sendJson({ ok: false, error: `选表情失败：${error?.message ?? error}` }, 500);
           }
           return;
         }
@@ -8152,7 +8702,7 @@ async function main() {
     const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
     const stickerCfg = cfg.socialV2?.sticker ?? {};
     const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
-      ? `${buildStickerStrategyHint()}\n${buildStickerContext(stickerEntries, stickerCfg.promptMaxStickers ?? 8)}\n\n`
+      ? `${buildStickerStrategyHint()}\n${buildStickerContext(stickerEntries, stickerCfg.promptMaxStickers ?? 8)}\n${buildStickerMomentLineV2(key, st)}\n\n`
       : '';
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';

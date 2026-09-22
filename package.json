@@ -18,6 +18,8 @@
     "test-forward": "node scripts/test-forward.mjs",
     "test-slang": "node scripts/test-slang-learn.mjs",
     "test-stickers": "node scripts/test-stickers.mjs",
+    "test-sticker-picker": "node scripts/test-sticker-picker.mjs",
+    "test-sticker-pick-e2e": "node scripts/test-sticker-pick-e2e.mjs",
     "test-console": "node scripts/test-console.mjs",
     "test-console-theme": "node scripts/test-console-theme.mjs",
     "test-console-views": "node scripts/test-console-views.mjs",

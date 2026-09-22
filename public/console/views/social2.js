@@ -86,6 +86,20 @@ const FIELDS = [
   { id: 'v2StickerCollectPerHour', path: 'sticker.collect.maxPerHour', def: 10, min: 0 },
   { id: 'v2StickerCollectRemarkMax', path: 'sticker.collect.maxRemarkChars', def: 20, min: 1, max: 50 },
 
+  { id: 'v2PickEnabled', path: 'sticker.pick.enabled', type: 'bool', def: true },
+  { id: 'v2PickHint', path: 'sticker.pick.hintInPrompt', type: 'bool', def: true },
+  { id: 'v2PickMinIntervalSec', path: 'sticker.pick.minIntervalMs', unit: 1000, def: 90, min: 0 },
+  { id: 'v2PickMaxPerTurn', path: 'sticker.pick.maxPerTurn', def: 1, min: 1, max: 5 },
+  { id: 'v2PickMinScore', path: 'sticker.pick.minScore', def: 30, min: 0, max: 100 },
+  { id: 'v2PickLimit', path: 'sticker.pick.defaultLimit', def: 5, min: 1, max: 20 },
+  { id: 'v2PickIncludeLibrary', path: 'sticker.pick.includeLibrary', type: 'bool', def: true },
+  { id: 'v2PickOnlineFallback', path: 'sticker.pick.onlineFallback', type: 'bool', def: true },
+  { id: 'v2PickOnlineCount', path: 'sticker.pick.onlineCount', def: 6, min: 1, max: 12 },
+  { id: 'v2PickLibraryMaxSide', path: 'sticker.pick.libraryMaxSide', def: 2600, min: 0 },
+  { id: 'v2PickLibraryMaxRatio', path: 'sticker.pick.libraryMaxRatio', step: 0.1, def: 2, min: 0 },
+  { id: 'v2PickLibrarySources', path: 'sticker.pick.librarySources', type: 'list', def: ['style', 'manual', 'ai'] },
+  { id: 'v2PickStyleKeywords', path: 'sticker.pick.styleKeywords', type: 'list', def: ['表情包', '二次元', 'Q版', '沙雕', '梗图'] },
+
   { id: 'v2ContextRecentLimit', path: 'context.recentLimit', def: 100, min: 1 },
   { id: 'v2ContextUnreadLimit', path: 'context.unreadLimit', def: 30, min: 1 },
   { id: 'v2ContextWindow', path: 'context.contextWindow', def: 20, min: 1 },
@@ -146,7 +160,10 @@ function readForm(view) {
     if (!Number.isFinite(n)) n = f.def;
     if (f.min !== undefined) n = Math.max(f.min, n);
     if (f.max !== undefined) n = Math.min(f.max, n);
-    setPath(body, f.path, f.unit && f.unit !== 1 ? Math.round(n * f.unit) : n);
+    // 带小数步长的字段（如长宽比 2.0 / 1.5）不能取整，否则 1.5 会被吃成 2。
+    const fractional = Number.isFinite(Number(f.step)) && Number(f.step) > 0 && Number(f.step) < 1;
+    if (f.unit && f.unit !== 1) setPath(body, f.path, Math.round(n * f.unit));
+    else setPath(body, f.path, fractional ? Math.round(n * 100) / 100 : n);
   }
   const tools = {};
   for (const el of $$('[data-v2-tool]', view)) tools[el.dataset.v2Tool] = el.checked;

@@ -54,6 +54,7 @@
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getMemberAvatar"> <span><b>qq_get_member_avatar</b><span class="meta">查看群成员/群头像（图片进视觉上下文）</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="searchImages"> <span><b>qq_search_images</b><span class="meta">AI 按聊天主题去 B 站搜图（默认从相关视频的评论区取图，不够补专栏配图；不含视频封面），再用 qq_send_image 发出</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="bili" title="配置 SESSDATA / 定时抓取关键词">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getSelfImage"> <span><b>qq_get_self_image</b><span class="meta">查看自己的默认 Q 版形象图片</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="pickSticker"> <span><b>qq_pick_sticker</b><span class="meta">判时机 + 从收藏/图库挑表情，不够再联网找</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="stickerNote"> <span><b>qq_sticker_note</b><span class="meta">给表情记录本地含义/标签/用法</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="setStickerRemark"> <span><b>qq_set_sticker_remark</b><span class="meta">修改 QQ 官方表情备注（默认禁用，慎用）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="sticker" title="配置该工具的参数">⚙</button></label>
       </div>
@@ -129,6 +130,16 @@
   <div class="form-row"><label>每小时最多收藏</label><div class="ctl"><input type="number" id="v2StickerCollectPerHour" min="0"></div></div>
   <div class="form-row"><label>收藏备注最大字数</label><div class="ctl"><input type="number" id="v2StickerCollectRemarkMax" min="1" max="50"> <span class="meta" style="flex:2">AI 收藏别人表情时写的简短备注长度上限。</span></div></div>
 </div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">表情包时机与选图（sticker.pick：qq_pick_sticker + 唤醒提示里的时机门）</div>
+<div class="form-row pairs"><label>启用时机判断</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickEnabled"> <span class="meta" style="flex:2">关掉后 qq_pick_sticker 直接拒绝调用。</span></div><label>唤醒提示里带时机</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickHint"> <span class="meta" style="flex:2">每轮告诉 AI「此刻适不适合发表情」+ 本地候选。</span></div></div>
+<div class="form-row pairs"><label>两次表情冷却（秒）</label><div class="ctl"><input type="number" id="v2PickMinIntervalSec" min="0"> <span class="meta" style="flex:2">硬约束，冷却内桥接直接拒绝发送。</span></div><label>每轮最多发几张</label><div class="ctl"><input type="number" id="v2PickMaxPerTurn" min="1" max="5"></div></div>
+<div class="form-row pairs"><label>本地候选合格分</label><div class="ctl"><input type="number" id="v2PickMinScore" min="0" max="100"> <span class="meta" style="flex:2">低于它才算「本地不满足」，触发联网兜底。</span></div><label>默认返回候选数</label><div class="ctl"><input type="number" id="v2PickLimit" min="1" max="20"></div></div>
+<div class="form-row pairs"><label>本地图库参与候选</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickIncludeLibrary"></div><label>本地不满足时联网找</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickOnlineFallback"></div></div>
+<div class="form-row pairs"><label>图库来源白名单</label><div class="ctl"><input type="text" id="v2PickLibrarySources" style="flex:3"> <span class="meta" style="flex:3">逗号分隔；style=抓图脚本入库、manual/ai=人工或 AI 存的。bili-cover/dynamic 这类资讯图默认不算表情。</span></div><label>联网候选数</label><div class="ctl"><input type="number" id="v2PickOnlineCount" min="1" max="12"></div></div>
+<div class="form-row pairs"><label>图库最长边上限</label><div class="ctl"><input type="number" id="v2PickLibraryMaxSide" min="0"> <span class="meta" style="flex:2">像素；太大的是插画/长图，不适合当表情。</span></div><label>图库长宽比上限</label><div class="ctl"><input type="number" id="v2PickLibraryMaxRatio" step="0.1" min="0"> <span class="meta" style="flex:2">挡手机相册式长截图。</span></div></div>
+<div class="form-row"><label>联网风格偏置词</label><div class="ctl"><input type="text" id="v2PickStyleKeywords" style="flex:3"> <span class="meta" style="flex:3">逗号分隔；联网找图时叠加在话题词后面（默认表情包/二次元/Q版/沙雕/梗图）。</span></div></div>
 
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">上下文参数（recent / unread / contextWindow）</div>
