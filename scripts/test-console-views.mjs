@@ -160,11 +160,55 @@ check('data-slang-tab 指向的标签页都已定义', () => {
 check('TAB_INFO 的每个面板 id 都存在于片段', () => {
   const html = read(viewMeta.get('slang').html);
   const code = viewMeta.get('slang').code;
+  // \b 是必须的：否则 "search:" 会命中 "slangAutoResearch: 'autoResearch'" 这种字段名
   const ids = ['list', 'search', 'limit', 'selectAll']
-    .flatMap((field) => [...code.matchAll(new RegExp(`${field}: '([\\w]+)'`, 'g'))].map((m) => m[1]));
+    .flatMap((field) => [...code.matchAll(new RegExp(`\\b${field}: '([\\w]+)'`, 'g'))].map((m) => m[1]));
   const missing = ids.filter((id) => !html.includes(`id="${id}"`));
   assert(missing.length === 0, `片段里缺少：${missing.join(', ')}`);
   return `${ids.length} 个控件`;
+});
+
+// ── 6b. 交互约定：开关 = 即改即存，必须真的有地方接住这个事件 ─────────
+// 外观即语义：.switch 长得就是「拨一下就生效」，所以每个开关都必须在 js 里有对应处理，
+// 否则又会回到「拨了没反应」那种最容易误判的状态。
+check('片段里的每个开关都在 js 里有对应处理', () => {
+  const problems = [];
+  let total = 0;
+  for (const [id, meta] of viewMeta) {
+    const html = read(meta.html);
+    const tags = [...html.matchAll(/<input[^>]*class="switch"[^>]*>/g)].map((m) => m[0]);
+    for (const tag of tags) {
+      total += 1;
+      const elId = /id="([^"]+)"/.exec(tag)?.[1];
+      const tool = /data-v2-tool="([^"]+)"/.exec(tag)?.[1];
+      if (elId) {
+        // js 里引用元素 id 要么写成 '#id'（选择器），要么写成裸 id（开关映射表）
+        if (!meta.code.includes(`'#${elId}'`) && !meta.code.includes(elId)) {
+          problems.push(`${id}.html 的开关 #${elId} 在 ${id}.js 里没有出现`);
+        }
+      } else if (tool) {
+        if (!/dataset\.v2Tool/.test(meta.code)) problems.push(`${id}.html 的工具开关没有统一处理（缺 dataset.v2Tool）`);
+      } else {
+        problems.push(`${id}.html 有一个既没有 id 也没有 data-v2-tool 的开关`);
+      }
+    }
+  }
+  assert(problems.length === 0, problems.join('\n    '));
+  return `${total} 个开关`;
+});
+
+check('数据表里声明的 id 都真的存在于片段', () => {
+  const problems = [];
+  let total = 0;
+  for (const [id, meta] of viewMeta) {
+    const html = read(meta.html);
+    for (const m of meta.code.matchAll(/\bid: '([^']+)'/g)) {
+      total += 1;
+      if (!html.includes(`id="${m[1]}"`)) problems.push(`${id}.js 的字段表声明了 #${m[1]}，片段里没有`);
+    }
+  }
+  assert(problems.length === 0, problems.join('\n    '));
+  return `${total} 个字段`;
 });
 
 // ── 7. 每个分区片段都被 shell 的样式/路由体系覆盖 ────────────────────

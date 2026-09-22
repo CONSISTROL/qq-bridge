@@ -5,6 +5,7 @@
 // mount 里渲染自己的 markup 并绑定事件，返回的 cleanup 在切换分区时调用；
 // 轮询交给 core/poll.js，切走时统一 stopAll()。
 import { stopAll } from './poll.js';
+import { confirmLeave } from './dirty.js';
 
 const registry = new Map();
 let rootEl = null;
@@ -50,7 +51,6 @@ function showError(message) {
 }
 
 async function render() {
-  const mySeq = ++seq;
   let id = currentRoute();
   if (!registry.has(id)) {
     id = fallbackId;
@@ -61,7 +61,28 @@ async function render() {
   const view = registry.get(id);
   if (!view) { showError(`未知分区：#${currentRoute()}`); return; }
 
+  // 早返回必须在领序号之前：否则一次「同分区的重复 hashchange」也会把序号 +1，
+  // 让正在挂载中的那次 render 误判自己过期，于是刚挂好的分区被 cleanup 掉——
+  // DOM 还在、tracker/轮询/守卫却已经死了（jsdom 回归测试抓到的就是这个）。
   if (id === activeId) return;
+
+  // 当前分区有未保存改动时先问一句；用户选择「留下」就把地址栏改回去、DOM 原样不动
+  // （旧分区还挂着，导航高亮也没变）。
+  if (activeId) {
+    const ok = await confirmLeave();
+    if (!ok) {
+      try { history.replaceState(null, '', '#/' + activeId); } catch (e) { /* 忽略 */ }
+      return;
+    }
+    // 等用户确认期间可能又切了一次，交给那一次 render 处理
+    if (currentRoute() !== id) return;
+    // 同一 tick 里的两次 hashchange 可能都在等守卫：先到的那次已经挂上了，这次就别重复挂
+    if (id === activeId) return;
+  }
+
+  // 到这里才算一次真正的切换，序号只在这里前进：
+  // 只有「已经替换了 rootEl」的新 render 才会让旧的 render 作废。
+  const mySeq = ++seq;
 
   if (teardown) {
     try { teardown(); } catch (e) { /* 单个 view 的清理失败不该影响切换 */ }

@@ -3,6 +3,7 @@ import { api } from '../core/api.js';
 import { $, esc, toast, setMsg } from '../core/dom.js';
 import { every } from '../core/poll.js';
 import { mountFragment } from '../core/fragments.js';
+import { trackDirty } from '../core/dirty.js';
 
 export const id = 'social1';
 export const title = '一代仿真模式';
@@ -80,6 +81,11 @@ function readForm(view) {
 const PHASE_LABEL = { idle: '观望', active: '活跃', probing: '试探', exiting: '退场中' };
 const PHASE_CLASS = { idle: 'pill g', active: 'pill b', probing: 'pill r', exiting: 'pill' };
 
+// 开关类字段拨动即写盘（服务端按字段合并，不会碰别的键）；
+// 其余数字/文本/多选仍走「保存社交配置」，由 trackDirty 负责提示未保存。
+const SWITCH_FIELDS = FIELDS.filter((f) => f.type === 'bool');
+const MANUAL_SELECTOR = FIELDS.filter((f) => f.type !== 'bool').map((f) => '#' + f.id).join(', ');
+
 function renderSocialStatus(view, s) {
   const buff = Object.entries(s.pendingSummaries || {}).map(([k, n]) => k + ':' + n).join('  ') || '无';
   const entries = Object.entries(s.states || {});
@@ -123,15 +129,42 @@ export async function mount(root) {
   await status();
   const stopPoll = every(3000, status);
 
+  // 基线要在表单填好之后建，否则会把「刚加载出来的值」当成用户改动
+  const dirty = trackDirty(view, {
+    selector: MANUAL_SELECTOR,
+    label: '一代社交参数',
+    onChange: (n) => {
+      $('#social1DirtyHint', view).textContent = n ? `● 有 ${n} 项未保存` : '';
+      $('#socialSave', view).classList.toggle('dirty', n > 0);
+    }
+  });
+
   const save = async (body, okText) => {
     const r = await api('/api/social', 'POST', body).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#socialMsg', view), r.ok ? (okText || '✅ 已保存') : ('❌ ' + (r.error || '失败')), r.ok);
     return r;
   };
 
+  // 开关：拨动即写盘，失败就把开关拨回去（不让界面撒谎）
+  view.addEventListener('change', async (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement) || el.type !== 'checkbox') return;
+    const field = SWITCH_FIELDS.find((f) => f.id === el.id);
+    if (!field) return;
+    el.classList.add('saving');
+    const r = await api('/api/social', 'POST', { [field.key]: el.checked }).catch((err) => ({ ok: false, error: err.message }));
+    el.classList.remove('saving');
+    if (r.ok) {
+      setMsg($('#socialMsg', view), '', true);
+    } else {
+      el.checked = !el.checked;
+      toast(r.error || '保存失败', 'err');
+    }
+  });
+
   $('#socialSave', view).addEventListener('click', async () => {
     const r = await save(readForm(view));
-    if (r.ok) { await load(); await status(); }
+    if (r.ok) { await load(); await status(); dirty.markClean(); }
   });
   $('#socialFlush', view).addEventListener('click', async () => {
     const r = await api('/api/social/flush', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
@@ -149,5 +182,5 @@ export async function mount(root) {
   $('#sStateActive', view).addEventListener('click', () => setPhase('active'));
   $('#sStateIdle', view).addEventListener('click', () => setPhase('idle'));
 
-  return () => stopPoll();
+  return () => { dirty.dispose(); stopPoll(); };
 }

@@ -18,7 +18,7 @@
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">群聊活跃超时主动退出</div>
       <div class="row">
-        <label style="flex:1">启用</label><input type="checkbox" id="sActiveDurationEnabled" style="width:auto">
+        <label style="flex:1">启用</label><input type="checkbox" class="switch" id="sActiveDurationEnabled">
       </div>
       <div class="row">
         <label style="flex:1">活跃最长持续时间（分）</label>
@@ -53,7 +53,7 @@
       <div class="meta" style="margin-bottom:6px">分条发送（按空格分句）</div>
       <div class="meta" style="margin-bottom:8px">AI 用空格表示“分成下一条消息”；中英文/数字之间的空格也会被当成分条信号，不想分条就不要加空格、用标点连接。单条只做安全长度上限，不再限制条数。</div>
       <div class="row">
-        <label style="flex:1">启用分条发送</label><input type="checkbox" id="sBurstEnabled" style="width:auto">
+        <label style="flex:1">启用分条发送</label><input type="checkbox" class="switch" id="sBurstEnabled">
       </div>
       <div class="row">
         <label style="flex:1">条间间隔（毫秒）</label>
@@ -74,7 +74,7 @@
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">主动开话题（观望期第三种触发）</div>
       <div class="row">
-        <label style="flex:1">启用主动开话题</label><input type="checkbox" id="sProactiveEnabled" style="width:auto">
+        <label style="flex:1">启用主动开话题</label><input type="checkbox" class="switch" id="sProactiveEnabled">
       </div>
       <div class="row">
         <label style="flex:1">群安静多久判定（分）</label><input type="number" id="sProactiveIdle" min="1" style="width:80px">
@@ -88,9 +88,11 @@
         <label style="flex:1">判定成功概率</label><input type="number" id="sProactiveProb" step="0.05" min="0" max="1" style="width:80px">
       </div>
 
+      <div class="meta">开关（分条发送、主动退出、主动开话题）拨动即生效；数值/概率改完后点「保存社交配置」。</div>
       <div class="row" style="margin-top:10px">
         <button id="socialSave">保存社交配置</button>
         <button id="socialFlush">立刻投喂摘要</button>
+        <span class="meta dirty-hint" id="social1DirtyHint"></span>
         <span class="meta" id="socialMsg"></span>
       </div>
       <div class="row" style="margin-top:10px">

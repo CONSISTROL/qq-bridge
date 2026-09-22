@@ -318,6 +318,17 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
   `qq_console_token` Cookie 就是后续导航/刷新的凭据，前端因此不需要把令牌塞进 URL。
   前端 `core/api.js` 仍会带 `x-console-token`（localStorage 那份），两边任一有效即可。
 
+**交互约定（改控件前先确认属于哪一类）**：
+
+| 类别 | 外观 | 生效方式 | 实现 |
+|---|---|---|---|
+| 单点开关（工具开关、各种「启用」） | `input.switch` 拨动开关 | 拨动即写 config.json、立即生效 | 各 view 里的 `SWITCH_FIELDS` + 一个委托的 `change` 监听；失败会把开关拨回去 |
+| 成组参数（数值/概率/文本/多选） | 输入框 | 改完点「保存…」 | `core/dirty.js` 的 `trackDirty()`：显示「有 N 项未保存」、点亮保存按钮、切分区/关页面时拦一下 |
+| 列表选择（黑话批量操作） | 普通勾选框 | 只影响选择状态 | 不写配置，`data-*` + 事件委托 |
+
+服务端的配置接口（`/api/socialV2/config`、`/api/social`、`/api/slang/config`、`/api/security`）
+都是**字段级/子分区深合并**，所以「只提交一个开关」不会碰其它字段——这是开关能即改即存的前提。
+
 ### 常用调试/测试脚本
 
 | 脚本 | 用途 |
@@ -325,6 +336,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `scripts/test-console.mjs` | 控制台 API 自检 + 分区片段/静态路由自检 |
 | `scripts/test-console-theme.mjs` | 控制台主题回归（浅色默认 / 深色持久化 / 变量一致性） |
 | `scripts/test-console-views.mjs` | 控制台前端结构自检（分区契约 / import / #id / 配置分区开关） |
+| `scripts/test-console-router.mjs` | 分区路由回归（重复 hashchange、挂载竞态、未保存离开守卫） |
 | `scripts/test-mcp-safe.mjs` | MCP 安全工具自检 |
 | `scripts/test-mcp-host.mjs` | MCP 进程管理自检 |
 | `scripts/test-mcp-web-search.mjs` | Web Search / Fetch MCP 自检（含内网拦截） |

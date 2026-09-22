@@ -20,12 +20,9 @@
     <section class="card">
       <h2><span class="sec-no">12</span>安全拦截通知</h2>
       <div class="row">
-        <label style="flex:1">拦截时在群里发提示</label><input type="checkbox" id="secInterceptNotify" style="width:auto">
+        <label style="flex:1">拦截时在群里发提示</label><input type="checkbox" class="switch" id="secInterceptNotify">
       </div>
-      <div class="row" style="margin-top:8px">
-        <button id="secSave" class="small">保存安全设置</button>
-        <span class="meta" id="secMsg"></span>
-      </div>
+      <div class="meta">拨动即写入 config.json 并立即生效。</div>
       <div class="meta">开启：回复被安全拦截时会在群里提示；关闭：直接沉默，只在日志/活动记录里留下记录。</div>
     </section>
 

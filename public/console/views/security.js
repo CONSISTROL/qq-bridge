@@ -68,10 +68,19 @@ export async function mount(root) {
     }
   });
 
-  $('#secSave', view).addEventListener('click', async () => {
-    const r = await api('/api/security', 'POST', { interceptNotify: $('#secInterceptNotify', view).checked })
+  // 安全拦截通知是单点开关：拨动即写盘，失败就拨回去
+  $('#secInterceptNotify', view).addEventListener('change', async (ev) => {
+    const el = ev.target;
+    el.classList.add('saving');
+    const r = await api('/api/security', 'POST', { interceptNotify: el.checked })
       .catch((e) => ({ ok: false, error: e.message }));
-    setMsg($('#secMsg', view), r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '失败')), r.ok);
+    el.classList.remove('saving');
+    if (r.ok) {
+      toast(el.checked ? '已开启拦截时群内提示' : '已关闭拦截时群内提示', 'ok');
+    } else {
+      el.checked = !el.checked;
+      toast(r.error || '保存失败', 'err');
+    }
   });
 
   $('#consoleTokenSave', view).addEventListener('click', () => changeConsoleToken(view, false));

@@ -2,6 +2,7 @@
 import { api } from '../core/api.js';
 import { $, $$, esc, toast, setMsg, confirmDanger } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
+import { trackDirty } from '../core/dirty.js';
 
 export const id = 'slang';
 export const title = '黑话 / 向量检索';
@@ -15,6 +16,13 @@ const TAB_INFO = {
   confirmed: { list: 'slangConfirmedList', search: 'slangSearchConfirmed', limit: 'slangLimitConfirmed', selectAll: 'slangConfirmedSelectAll' },
   rejected: { list: 'slangRejectedList', search: 'slangSearchRejected', limit: 'slangLimitRejected', selectAll: 'slangRejectedSelectAll' }
 };
+
+// 开关：拨动即写盘（/api/slang/config 是字段级合并）；其余参数走「保存黑话参数」。
+const SLANG_SWITCHES = { slangEnabled: 'enabled', slangAutoResearch: 'autoResearch' };
+const SLANG_MANUAL_SELECTOR = [
+  '#slangExtractMin', '#slangCooldown', '#slangThresholds',
+  '#slangInjectMax', '#slangLearnerPreset', '#slangWorkspaceTitle'
+].join(', ');
 
 const state = {
   view: null,
@@ -298,6 +306,9 @@ async function loadSlangConfig(view) {
 export async function mount(root) {
   const view = await mountFragment(root, 'slang');
   state.view = view;
+  // 基线只能在表单填好之后建（见函数末尾），所以这里先声明、稍后赋值；
+  // 保存按钮在那之前不可能被点到，用可选链兜底。
+  let dirty = null;
   state.selected.clear();
   state.entries = [];
 
@@ -440,7 +451,7 @@ export async function mount(root) {
       autoResearch: $('#slangAutoResearch', view).checked
     }).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#slangConfigMsg', view), r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '失败')), r.ok);
-    if (r.ok) loadSlangConfig(view);
+    if (r.ok) { await loadSlangConfig(view); dirty?.markClean(); }
   });
 
   // 弹窗
@@ -478,8 +489,33 @@ export async function mount(root) {
 
   setTab(state.tab);
   await refreshSlang();
-  loadSlangConfig(view);
+  // 必须 await：基线要在表单填好之后建，否则刚加载出来的值会被当成用户改动
+  await loadSlangConfig(view);
   loadRagStatus();
+
+  // 两个开关：拨动即写盘，失败就拨回去
+  view.addEventListener('change', async (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement) || el.type !== 'checkbox') return;
+    const key = SLANG_SWITCHES[el.id];
+    if (!key) return;
+    el.classList.add('saving');
+    const r = await api('/api/slang/config', 'POST', { [key]: el.checked }).catch((err) => ({ ok: false, error: err.message }));
+    el.classList.remove('saving');
+    if (!r.ok) {
+      el.checked = !el.checked;
+      toast(r.error || '保存失败', 'err');
+    }
+  });
+
+  dirty = trackDirty(view, {
+    selector: SLANG_MANUAL_SELECTOR,
+    label: '黑话参数',
+    onChange: (n) => {
+      $('#slangDirtyHint', state.view).textContent = n ? `● 有 ${n} 项未保存` : '';
+      $('#slangConfigSave', state.view).classList.toggle('dirty', n > 0);
+    }
+  });
 
   // 故意不在卸载时把 state.view 置空：有些异步加载（如 loadRagStatus）可能在切走
   // 之后才回来，置空会让它们拿到 null 根节点直接抛错；保留旧元素最多写到已脱离文档的

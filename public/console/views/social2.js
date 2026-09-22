@@ -6,8 +6,10 @@
 //      字段但只改了 save 没改 load」的错位；
 //   2. 弹窗的事件委托挂在 view 根节点而不是 document 上，切走分区就随之失效。
 import { api } from '../core/api.js';
-import { $, $$, esc, toast, setMsg, confirmDanger, delegate, fmtClock } from '../core/dom.js';import { every } from '../core/poll.js';
+import { $, $$, esc, toast, setMsg, confirmDanger, delegate, fmtClock } from '../core/dom.js';
+import { every } from '../core/poll.js';
 import { mountFragment } from '../core/fragments.js';
+import { trackDirty } from '../core/dirty.js';
 
 export const id = 'social2';
 export const title = '二代仿真模式';
@@ -91,6 +93,10 @@ const FIELDS = [
   { id: 'v2FeedbackMaxLength', path: 'feedback.maxLength', def: 500, min: 1 },
   { id: 'v2FeedbackNotifyOwner', path: 'feedback.notifyOwnerOnError', type: 'bool', def: false }
 ];
+
+// 开关类字段（含 36 个工具开关）：拨动即写盘；其余参数走「保存当前参数」+ 未保存提示。
+const SWITCH_FIELDS = FIELDS.filter((f) => f.type === 'bool');
+const MANUAL_SELECTOR = FIELDS.filter((f) => f.type !== 'bool').map((f) => '#' + f.id).join(', ');
 
 function getPath(obj, path) {
   return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -585,6 +591,38 @@ export async function mount(root) {
       .catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) await loadConfig();
+    return r;
+  };
+
+  // 单个开关即改即存：服务端对 tools 与各子分区都是深合并，只发这一项不会碰别的字段。
+  // 失败就把开关拨回去——界面不能显示一个其实没生效的状态。
+  const saveSwitch = async (el, patch) => {
+    el.classList.add('saving');
+    const r = await api('/api/socialV2/config', 'POST', patch).catch((e) => ({ ok: false, error: e.message }));
+    el.classList.remove('saving');
+    if (!r.ok) {
+      el.checked = !el.checked;
+      toast(r.error || '保存失败', 'err');
+      return false;
+    }
+    if (r.config) state.config = r.config;
+    setMsg($('#v2ConfigMsg', view), '', true);
+    return true;
+  };
+
+  const saveToolSwitch = (el) => saveSwitch(el, { tools: { [el.dataset.v2Tool]: el.checked } });
+
+  const setAllTools = async (enabled) => {
+    const tools = {};
+    for (const el of $$('[data-v2-tool]', view)) tools[el.dataset.v2Tool] = enabled;
+    const boxes = $$('[data-v2-tool]', view);
+    for (const el of boxes) el.classList.add('saving');
+    const r = await api('/api/socialV2/config', 'POST', { tools }).catch((e) => ({ ok: false, error: e.message }));
+    for (const el of boxes) el.classList.remove('saving');
+    if (!r.ok) { toast(r.error || '保存失败', 'err'); return; }
+    for (const el of boxes) el.checked = enabled;
+    if (r.config) state.config = r.config;
+    toast(enabled ? '已启用全部工具' : '已禁用全部工具', 'ok');
   };
 
   const loadToolLog = async () => {
@@ -637,8 +675,39 @@ export async function mount(root) {
   loadToolLog();
   loadSessionOptions();
 
-  $('#v2ConfigSave', view).addEventListener('click', saveConfig);
-  $('#v2ConfigSaveTop', view).addEventListener('click', saveConfig);
+  // 基线要在表单填好之后建，否则「刚加载出来的值」会被当成用户改动
+  const dirty = trackDirty(view, {
+    selector: MANUAL_SELECTOR,
+    label: '二代参数',
+    onChange: (n) => {
+      $('#v2DirtyHint', view).textContent = n ? `● 有 ${n} 项未保存` : '';
+      $('#v2ConfigSave', view).classList.toggle('dirty', n > 0);
+      $('#v2ConfigSaveTop', view).classList.toggle('dirty', n > 0);
+    }
+  });
+
+  // 所有开关（含 36 个工具开关）都是拨动即写盘
+  view.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement) || el.type !== 'checkbox') return;
+    if (el.dataset.v2Tool) { saveToolSwitch(el); return; }
+    const field = SWITCH_FIELDS.find((f) => f.id === el.id);
+    if (!field) return;
+    const patch = {};
+    setPath(patch, field.path, el.checked);
+    saveSwitch(el, patch);
+  });
+  $('#v2ToolsAllOn', view).addEventListener('click', () => setAllTools(true));
+  $('#v2ToolsAllOff', view).addEventListener('click', () => setAllTools(false));
+
+  $('#v2ConfigSave', view).addEventListener('click', async () => {
+    const r = await saveConfig();
+    if (r.ok) dirty.markClean();
+  });
+  $('#v2ConfigSaveTop', view).addEventListener('click', async () => {
+    const r = await saveConfig();
+    if (r.ok) dirty.markClean();
+  });
 
   $('#v2PauseBtn', view).addEventListener('click', async () => {
     await api('/api/socialV2/activity', 'POST', { paused: true }).catch(() => {});
@@ -878,6 +947,7 @@ export async function mount(root) {
   const stopActivity = every(5000, refreshActivity);
 
   return () => {
+    dirty.dispose();
     stopActivity();
     document.removeEventListener('keydown', onKey);
   };

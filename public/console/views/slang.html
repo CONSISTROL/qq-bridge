@@ -85,7 +85,7 @@
       <details style="margin-top:10px">
         <summary class="meta">黑话系统参数（可调）</summary>
         <div class="row">
-          <label style="flex:1">启用黑话学习</label><input type="checkbox" id="slangEnabled" style="width:auto">
+          <label style="flex:1">启用黑话学习</label><input type="checkbox" class="switch" id="slangEnabled">
         </div>
         <div class="row">
           <label style="flex:1">触发提取最少消息数</label><input type="number" id="slangExtractMin" min="1" style="width:90px">
@@ -106,10 +106,12 @@
           <label style="flex:1">学习工作区名</label><input type="text" id="slangWorkspaceTitle" placeholder="QQ 黑话学习" style="width:120px">
         </div>
         <div class="row">
-          <label style="flex:1">自动联网研究</label><input type="checkbox" id="slangAutoResearch" style="width:auto">
+          <label style="flex:1">自动联网研究</label><input type="checkbox" class="switch" id="slangAutoResearch">
         </div>
+        <div class="meta">开关（启用黑话学习、自动联网研究）拨动即生效；数值/文本改完后点「保存黑话参数」。</div>
         <div class="row" style="margin-top:8px">
           <button id="slangConfigSave" class="small">保存黑话参数</button>
+          <span class="meta dirty-hint" id="slangDirtyHint"></span>
           <span class="meta" id="slangConfigMsg"></span>
         </div>
       </details>
