@@ -20,6 +20,29 @@ import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
+import {
+  normalizeImageLimits,
+  hostInImageAllowList,
+  hostNeedsImageReferer,
+  hostnameOf,
+  imageAllowRejectHint
+} from './image-allow.js';
+import { cardSegmentToText, extractCardFromSegments, CARD_SUMMARY_MAX } from './card-parse.js';
+
+/** 含卡片的消息允许的 text/plain 截断上限：要放得下 CARD_SUMMARY_MAX + 前缀。 */
+const CARD_TEXT_LIMIT = CARD_SUMMARY_MAX + 80;
+import {
+  loadMemberStore,
+  saveMemberStore,
+  conversationRemarks,
+  setMemberRemark,
+  removeMemberRemark,
+  listMemberRemarks,
+  findMemberRemark,
+  formatMemberRemarkList,
+  normalizeUserId,
+  MEMBER_REMARKS_PER_KEY_MAX
+} from './member-remarks.js';
 import { EmbeddingClient } from './embedding-client.js';
 import {
   loadVectorStore,
@@ -79,6 +102,7 @@ const SLANG_FILE = path.join(STATE_DIR, 'slang.json');
 const SLANG_SESSION_FILE = path.join(STATE_DIR, 'slang-session.json');
 const SOCIAL_V2_FILE = path.join(STATE_DIR, 'social-v2.json');
 const STICKER_FILE = path.join(STATE_DIR, 'stickers.json');
+const MEMBER_REMARKS_FILE = path.join(STATE_DIR, 'member-remarks.json');
 const FEEDBACK_FILE = path.join(STATE_DIR, 'feedback.json');
 const TOOL_LOG_FILE = path.join(STATE_DIR, 'tool-calls.jsonl');
 const ACTIVITY_LOG = path.join(STATE_DIR, 'qq-activity.log');
@@ -408,8 +432,16 @@ function loadConfig() {
         maxBytes: 5 * 1024 * 1024,
         maxPerMinute: 5,
         maxPerHour: 30,
-        // 允许抓取的目标站点 origin；imageReferer 是命中白名单时发送的 Referer
-        refererAllow: ['https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com'],
+        // 允许抓取的目标站点 origin；imageReferer 只发给 refererHosts 里的图床
+        // （B 站图床有防盗链；QQ/腾讯图床带了 Referer 反而可能被拒）。
+        refererAllow: [
+          'https://i0.hdslb.com', 'https://i1.hdslb.com', 'https://i2.hdslb.com',
+          // QQ 聊天里收到的图片/表情就挂在腾讯自家 CDN 上，AI 拿到的 media.url 通常是这些域名。
+          'https://multimedia.nt.qq.com.cn', 'https://multimedia.qpic.cn',
+          'https://gchat.qpic.cn', 'https://c2cpicdw.qpic.cn', 'https://p.qpic.cn',
+          'https://q1.qlogo.cn', 'https://tianquan.gtimg.cn'
+        ],
+        refererHosts: ['hdslb.com', 'bilibili.com'],
         imageReferer: 'https://www.bilibili.com'
       },
       // 排队超过该时长就强制清空忙标记并补投（0 = 禁用看门狗）
@@ -438,18 +470,23 @@ function loadConfig() {
       },
       send: {
         burstEnabled: true,
-        burstMaxMessages: 8,
+        // 放宽到 24：复杂任务（分析/查资料后的结论/给方案）本来就需要把一件事讲清楚，
+        // 原来的 8 条上限会让 AI 半路被 429/400 打断。闲聊仍由提示词约束在 1~3 条。
+        burstMaxMessages: 24,
         burstIntervalMinMs: 1000,
         burstIntervalMaxMs: 3000,
         longGapProbability: 0.2,
         longGapMinMs: 5000,
         longGapMaxMs: 10000,
-        maxSendPerMinute: 8,
-        maxSendPerHour: 60,
+        // 这两个是「防刷屏」的硬闸门，不是「回答长度」限制。
+        // 但太紧会直接把长回答打断（一个 20 条的回复会撞上每分钟 8 条），所以一起放宽。
+        maxSendPerMinute: 30,
+        maxSendPerHour: 300,
         maxMessageChars: 500,
         maxGapMs: 10000,
         gapBaseMs: 800,
         gapPerCharMs: 20,
+        burstHintThreshold: 10,
         recommendedHint: '普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。'
       },
       wait: {
@@ -719,7 +756,13 @@ async function segmentsToText(segments, options = {}) {
         out.push(replyText || '[引用消息]');
         break;
       }
-      case 'json': out.push('[卡片消息]'); break;
+      case 'json':
+      case 'xml':
+      case 'share':
+        // 卡片消息：原来只输出 [卡片消息]，AI 完全看不到标题/摘要/链接。
+        // 现在解析成一句话（json/xml/share 三种形态统一处理），解析结果只做文本，不抓取不跳转。
+        out.push(cardSegmentToText(seg));
+        break;
       case 'forward': {
         const fid = forwardIdFromData(d);
         out.push(fid ? `[转发消息 id=${fid}]` : '[转发消息]');
@@ -888,6 +931,17 @@ async function main() {
   let stickerEntries = loadStickerStore(STICKER_FILE);
   let stickerSyncedAt = 0; // 上次从 SnowLuma 拉取收藏表情的时间戳（毫秒）
   let lastForcedAgentStickerSync = 0; // AI 强制刷新表情库的最小间隔保护
+
+  // ── 群成员备注（二代仿真）：AI 私有记忆，按 会话 key + QQ 号 索引 ──────
+  // 独立于 social-v2.json：/reset、切模式、清空会话状态都不该丢掉「谁是谁」。
+  let memberStore = loadMemberStore(MEMBER_REMARKS_FILE);
+  // 真·群名片的冷却表：`key:userId` -> 上次改动时间。QQ 侧对改名片有频率限制，
+  // 也防止 AI 在循环里反复改同一个人。
+  const memberCardCooldown = new Map();
+
+  function saveMemberStoreSafe() {
+    try { saveMemberStore(MEMBER_REMARKS_FILE, memberStore); } catch (error) { log('保存成员备注失败:', error?.message ?? error); }
+  }
 
   // ── B 站抓图（本地图库）的路径与状态 ──────────────────────────────────
   const BILI_COOKIE_FILE = path.join(ROOT, 'state', 'bili-cookie.txt');
@@ -1410,14 +1464,7 @@ async function main() {
         animatedOnly: false
       });
       const limits = resolveImageConfig();
-      const hostAllowed = (u) => {
-        try {
-          const host = new URL(u).hostname.toLowerCase();
-          return limits.refererAllow.length === 0 || limits.refererAllow.some((entry) => {
-            try { return new URL(entry).hostname.toLowerCase() === host; } catch { return false; }
-          });
-        } catch { return false; }
-      };
+      const hostAllowed = (u) => hostInImageAllowList(hostnameOf(u), limits.refererAllow);
       // 只探测前 4 张的真实体积/尺寸（并发），其余的只回 URL 不再下载：
       // 一次调用最多拖 1~2 秒，避免把整个回合卡住。
       const heads = [];
@@ -1551,13 +1598,8 @@ async function main() {
   function resolveImageConfig() {
     const img = cfg.socialV2?.image ?? {};
     return {
-      maxBytes: Math.max(1, Number(img.maxBytes) || 5 * 1024 * 1024),
-      allowRemoteUrl: img.allowRemoteUrl === true,
-      libraryDir: path.resolve(ROOT, String(img.libraryDir || 'assets/stickers')),
-      // refererAllow：允许抓取的**目标站点 origin** 白名单；为空表示不限制目标站点（仍受 SSRF 防护）。
-      refererAllow: Array.isArray(img.refererAllow) ? img.refererAllow.map(String).filter(Boolean) : [],
-      // imageReferer：命中白名单时实际发送的 Referer。B 站图片在 i0.hdslb.com，但防盗链要的 Referer 是 www.bilibili.com。
-      imageReferer: String(img.imageReferer || 'https://www.bilibili.com')
+      ...normalizeImageLimits(img),
+      libraryDir: path.resolve(ROOT, String(img.libraryDir || 'assets/stickers'))
     };
   }
 
@@ -1584,12 +1626,13 @@ async function main() {
       if (!limits.allowRemoteUrl) throw new Error('远程图片已禁用：需要把 config.json 的 socialV2.image.allowRemoteUrl 设为 true');
       const target = new URL(raw);
       const allowList = limits.refererAllow;
-      const hostAllowed = allowList.length === 0 || allowList.some((entry) => {
-        // 按 hostname 比较（B 站的封面/表情链接 http、https 混用，按 origin 比会漏）
-        try { return new URL(entry).hostname.toLowerCase() === target.hostname.toLowerCase(); } catch { return false; }
-      });
-      if (!hostAllowed) throw new Error(`图片站点不在 refererAllow 白名单内：${target.origin}`);
-      const headers = allowList.length ? { referer: limits.imageReferer } : {};
+      if (!hostInImageAllowList(target.hostname, allowList)) {
+        // 群里/私聊里看到的图，AI 手里往往只有 media.url；这时正确的工具是 qq_collect_sticker。
+        throw new Error(`图片站点不在 refererAllow 白名单内：${target.hostname}${imageAllowRejectHint(target.hostname)}`);
+      }
+      // 只有需要防盗链 Referer 的图床才带 Referer（QQ/腾讯图床带了反而可能被拒）。
+      const needsReferer = hostNeedsImageReferer(target.hostname, limits.refererHosts);
+      const headers = needsReferer ? { referer: limits.imageReferer } : {};
       const res = await safeFetchBuffer(raw, limits.maxBytes, Object.keys(headers).length ? { headers } : {});
       if (!looksLikeImageBuffer(res.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
       return { buffer: res.buffer, via: 'url', url: res.url, referer: headers.referer || '' };
@@ -1688,6 +1731,15 @@ async function main() {
   function forceClearBusyV2(key, reason) {
     const st = getSocialV2State(key);
     const sid = state.sessions[key];
+    // 先记下“清之前有哪些标记”，这是判断卡死根因的唯一线索。
+    const cleared = [];
+    if (st && st.pendingWakeTimer) cleared.push('pendingWakeTimer');
+    if (pendingWakeKeys.has(key)) cleared.push('pendingWakeKey');
+    const q0 = promptQueues.get(key);
+    if (q0 && q0.running) cleared.push('promptQueue.running');
+    if (q0 && q0.queue.length) cleared.push(`promptQueue.queued(${q0.queue.length})`);
+    if (sid && v2TurnStartAt.has(sid)) cleared.push(`turn(${Math.round((Date.now() - (Number(v2TurnStartAt.get(sid)) || Date.now())) / 1000)}s)`);
+    if (sid && collectors.has(sid)) cleared.push('collector');
     if (sid) {
       v2TurnStartAt.delete(sid);
       collectors.delete(sid);
@@ -1699,7 +1751,7 @@ async function main() {
     if (q) { q.running = false; q.queue.length = 0; }
     if (st.pendingWakeTimer) { clearTimeout(st.pendingWakeTimer); st.pendingWakeTimer = null; }
     st.pendingSince = 0;
-    log(`[reserved2] ⚠ 会话繁忙超时，强制清空忙标记 ${key}（${reason}）`);
+    log(`[reserved2] ⚠ 会话繁忙超时，强制清空忙标记 ${key}（${reason}；清掉：${cleared.join('+') || '无'}）`);
   }
 
   function startBusyWatchdogV2() {
@@ -2034,6 +2086,24 @@ async function main() {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
     const parts = [timeLine];
+    // 任务分级：让 AI 自己判断「闲聊」还是「正经事」。后者明确允许花更多时间、写更长。
+    // 之所以在这里注入而不只改 preset：改 preset 要重启 DSH，而这条立即生效、可随时回退。
+    if (cfg.socialV2?.taskTriage !== false) {
+      // 硬上限从配置里读出来写进提示词：让 AI 知道天花板在哪，
+      // 而不是笼统地说「不受限制」——那样它只会撞上 400/429 再重试，白费一轮。
+      const capMsgs = Math.max(1, Number(cfg.socialV2?.send?.burstMaxMessages) || 8);
+      const capChars = Math.max(1, Number(cfg.socialV2?.send?.maxMessageChars) || 500);
+      parts.push([
+        '【先分清是闲聊还是正经事，这决定你花多少力气】',
+        '闲聊/接梗/斗嘴：1~3 条、短句，别端着，别写小作文。',
+        '正经事（分析、对比、查资料给结论、写东西、算账、debug）：条数可以放宽——',
+        '可以先做多步检索（搜索→打开正文→换关键词交叉验证）再回，可以花几分钟，',
+        '可以写长、分多条把一件事讲清楚。宁可多花时间给一个有依据的答案，也不要为了显得随意而敷衍一句。',
+        `但硬上限必须遵守：一次最多 ${capMsgs} 条、单条最多 ${capChars} 字，`,
+        '超了会被直接拒绝（不是截断），所以要主动分批或精简，别撞上去。',
+        '过程中不必向群里汇报进度，做完再回。'
+      ].join(''));
+    }
     if (cfg.slang?.enabled !== false) {
       const block = await slangBlockFor(promptText, key);
       if (block) parts.push(block);
@@ -3453,11 +3523,16 @@ async function main() {
             merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
           }
           // tools：只接受布尔开关
-          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker'];
+          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker', 'memberRemark'];
+          // 默认关闭的高危工具（真·QQ 写操作）：非布尔一律按「当前值 === true」兜底，不能用 !== false。
+          const optInToolFlags = ['setMemberCard'];
           if (body.tools && typeof body.tools === 'object') {
             merged.tools = { ...(current.tools ?? {}), ...body.tools };
             for (const k of toolFlags) {
               if (typeof merged.tools[k] !== 'boolean') merged.tools[k] = current.tools?.[k] !== false;
+            }
+            for (const k of optInToolFlags) {
+              if (typeof merged.tools[k] !== 'boolean') merged.tools[k] = current.tools?.[k] === true;
             }
           }
           // image：从外部保存表情的能力参数（体积/频率/是否允许远程 URL）
@@ -3760,13 +3835,18 @@ async function main() {
             listImageLibrary: 'qq_list_image_library',
             searchImages: 'qq_search_images',
             pickSticker: 'qq_pick_sticker',
-            getSelfImage: 'qq_get_self_image'
+            getSelfImage: 'qq_get_self_image',
+            memberRemark: 'qq_get_member_remarks / qq_set_member_remark / qq_remove_member_remark',
+            setMemberCard: 'qq_set_member_card'
           };
           const tools = cfg.socialV2?.tools ?? {};
           const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'pickSticker']);
+          // 默认关闭的工具：必须显式 true 才出现在可用工具表里（真·QQ 写操作）。
+          const optInToolFlags = new Set(['setMemberCard']);
           const enabledTools = [];
           for (const [flag, name] of Object.entries(toolMap)) {
-            if (tools[flag] !== false && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
+            const on = optInToolFlags.has(flag) ? tools[flag] === true : tools[flag] !== false;
+            if (on && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
           }
           sendJson({
             ok: true,
@@ -4167,7 +4247,12 @@ async function main() {
             log(`[reserved2] 工具分条发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
             appendActivity(`${key} [reserved2] 工具分条发送：成功 ${sentMessages.length}/${messages.length} 条`);
             if (sentMessages.length > 0) scheduleReplyCheckV2(key);
-            const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
+            // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
+            // 现在阈值可配，且文案明确把正经事排除在外。
+            const burstHintThreshold = Math.max(3, Number(sendCfg.burstHintThreshold) || 10);
+            const burstHint = messages.length >= burstHintThreshold
+              ? '你连发了较多条。如果这是在回答分析/资料/正经问题，忽略这条提示；如果只是闲聊，真人很少一口气补完。'
+              : undefined;
             const spaceWarn = findCjkSpaceWarning(messages);
             const splitWarn = findSplitBoundaryWarning(messages);
             sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
@@ -4313,7 +4398,12 @@ async function main() {
             log(`[reserved2] 工具统一发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
             appendActivity(`${key} [reserved2] 工具统一发送：成功 ${sentMessages.length}/${messages.length} 条`);
             if (sentMessages.length > 0) scheduleReplyCheckV2(key);
-            const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
+            // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
+            // 现在阈值可配，且文案明确把正经事排除在外。
+            const burstHintThreshold = Math.max(3, Number(sendCfg.burstHintThreshold) || 10);
+            const burstHint = messages.length >= burstHintThreshold
+              ? '你连发了较多条。如果这是在回答分析/资料/正经问题，忽略这条提示；如果只是闲聊，真人很少一口气补完。'
+              : undefined;
             const spaceWarn = findCjkSpaceWarning(messages);
             const splitWarn = findSplitBoundaryWarning(messages);
             sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, delays, quoted: quotedInfo, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
@@ -5497,20 +5587,22 @@ async function main() {
             if (found && found.messageId && String(found.messageId) !== messageId) {
               info = {
                 sender: String(found.sender || ''),
-                text: String(found.text || found.plain || '').slice(0, 200),
+                text: String(found.text || found.plain || '').slice(0, found.card ? CARD_TEXT_LIMIT : 200),
                 userId: found.userId ? String(found.userId) : null,
                 messageId: String(found.messageId),
-                seq: found.seq
+                seq: found.seq,
+                card: found.card ?? null
               };
             } else {
               info = await resolveReplyInfo(kind, id, messageId);
               if (!info && found) {
                 info = {
                   sender: String(found.sender || ''),
-                  text: String(found.text || found.plain || '').slice(0, 200),
+                  text: String(found.text || found.plain || '').slice(0, found.card ? CARD_TEXT_LIMIT : 200),
                   userId: found.userId ? String(found.userId) : null,
                   messageId: found.messageId ? String(found.messageId) : null,
-                  seq: found.seq
+                  seq: found.seq,
+                  card: found.card ?? null
                 };
               }
             }
@@ -5753,7 +5845,9 @@ async function main() {
             raw.activeTopics = [];
             raw.pendingThoughts = [];
           }
-          sendJson({ ok: true, key, category, formatted: formatMemoryV2({ ...st, ...raw }), raw });
+          // 成员备注单独返回：它不在 social-v2 状态里，但控制台的「记忆」面板要一起显示。
+          const remarkList = listMemberRemarks(memberStore, key, { limit: MEMBER_REMARKS_PER_KEY_MAX });
+          sendJson({ ok: true, key, category, formatted: formatMemoryV2({ ...st, ...raw }), raw, memberRemarks: remarkList.entries });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-remove') {
@@ -5797,6 +5891,151 @@ async function main() {
           if (!category || category === 'memberImpression') st.memberImpressions = {};
           saveSocialV2State();
           sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryV2(st) });
+          return;
+        }
+        // ── 群成员备注（二代仿真）：AI 私有记忆，只存桥接本地，不动 QQ ───────
+        // 网关没有「群成员本地备注」接口，所以「谁是谁」这件事由桥接自己记：
+        // 按 会话 key + QQ 号 索引，昵称只作快照；默认不注入提示词，AI 主动查询。
+        if (req.method === 'GET' && url.pathname === '/api/socialV2/member-remarks') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const q = String(url.searchParams.get('q') ?? '').trim();
+          const limit = Math.min(MEMBER_REMARKS_PER_KEY_MAX, Math.max(1, Number(url.searchParams.get('limit')) || 100));
+          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('memberRemark')) { sendJson({ ok: false, error: '工具未启用：qq_get_member_remarks' }, 403); return; }
+          const result = listMemberRemarks(memberStore, key, { q, limit });
+          // 带 q 时额外给一条「最像的那个」：AI 常拿群里看到的名字来问「这是谁」。
+          const match = q ? findMemberRemark(memberStore, key, q) : null;
+          sendJson({
+            ok: true,
+            key,
+            total: result.total,
+            allTotal: result.allTotal,
+            match: match ?? null,
+            entries: result.entries,
+            block: formatMemberRemarkList(result.entries, {
+              empty: q ? `没有匹配「${q}」的成员备注` : '（这个会话还没有成员备注；可以用 qq_set_member_remark 记一条）'
+            })
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/member-remark') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const userId = String(body.userId ?? body.qq ?? '').trim();
+          if (!key || !userId) { sendJson({ ok: false, error: 'key 和 userId 不能为空' }, 400); return; }
+          if (!normalizeUserId(userId)) { sendJson({ ok: false, error: 'userId 必须是正整数 QQ 号' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('memberRemark')) { sendJson({ ok: false, error: '工具未启用：qq_set_member_remark' }, 403); return; }
+          if (body.remark === undefined && body.note === undefined && body.nick === undefined) {
+            sendJson({ ok: false, error: '至少要传 remark / note / nick 之一；想删除请用 qq_remove_member_remark' }, 400);
+            return;
+          }
+          // 顺手补一份昵称快照：群友改昵称后，AI 还能对上「当初记的是谁」。失败不影响写入。
+          let nick = body.nick !== undefined && body.nick !== null ? String(body.nick) : undefined;
+          if (nick === undefined && key.startsWith('group:')) {
+            const groupId = Number(key.slice(6));
+            try {
+              const cached = await resolveGroupMemberName(groupId, userId);
+              if (cached) nick = cached;
+            } catch { /* 缓存/WS 不可用，下面直接查一次 */ }
+            if (!nick) {
+              // 优先走 postOneBot（WS 失败自动回退 HTTP），WS 正在重连时也能拿到快照。
+              try {
+                const info = await postOneBot('get_group_member_info', { group_id: groupId, user_id: Number(userId) }, { timeoutMs: 5000, retries: 0 });
+                const snap = info?.card || info?.nickname;
+                if (snap) nick = String(snap);
+              } catch { /* 网关不支持就留空 */ }
+            }
+          }
+          const { entry, removed } = setMemberRemark(memberStore, key, userId, {
+            remark: body.remark === undefined || body.remark === null ? undefined : String(body.remark),
+            note: body.note === undefined || body.note === null ? undefined : String(body.note),
+            nick,
+            source: req.headers['x-agent-token'] ? 'ai' : 'manual'
+          });
+          if (entry || removed) saveMemberStoreSafe();
+          if (entry) log(`[member-remark] ${key} 记录备注 QQ ${entry.qq} -> ${entry.remark || '（无短名）'}`);
+          else if (removed) log(`[member-remark] ${key} 备注为空，已删除 QQ ${userId}`);
+          sendJson({
+            ok: true,
+            key,
+            removed,
+            entry: entry ?? null,
+            total: Object.keys(conversationRemarks(memberStore, key)).length,
+            block: formatMemberRemarkList(Object.values(conversationRemarks(memberStore, key)))
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/member-remark-remove') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const userId = String(body.userId ?? body.qq ?? '').trim();
+          if (!key || !userId) { sendJson({ ok: false, error: 'key 和 userId 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('memberRemark')) { sendJson({ ok: false, error: '工具未启用：qq_remove_member_remark' }, 403); return; }
+          const removed = removeMemberRemark(memberStore, key, userId);
+          if (removed) {
+            saveMemberStoreSafe();
+            log(`[member-remark] ${key} 删除备注 QQ ${userId}`);
+          }
+          sendJson({
+            ok: true,
+            key,
+            removed,
+            total: Object.keys(conversationRemarks(memberStore, key)).length,
+            block: formatMemberRemarkList(Object.values(conversationRemarks(memberStore, key)))
+          });
+          return;
+        }
+        // 真·QQ 群名片（set_group_card）：默认关闭，需要机器人是管理员/群主，且全群可见。
+        // 这是写操作，只适合做「正名」，不该拿来当 AI 的私有记忆——私有记忆走上面的备注库。
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/set-member-card') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const userId = String(body.userId ?? body.qq ?? '').trim();
+          const card = body.card === undefined || body.card === null ? '' : String(body.card).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 60);
+          if (!key || !userId) { sendJson({ ok: false, error: 'key 和 userId 不能为空' }, 400); return; }
+          if (!normalizeUserId(userId)) { sendJson({ ok: false, error: 'userId 必须是正整数 QQ 号' }, 400); return; }
+          if (!key.startsWith('group:')) { sendJson({ ok: false, error: '群名片只能在群聊会话里设置' }, 400); return; }
+          // 默认关闭：必须由管理员在控制台显式打开 socialV2.tools.setMemberCard。
+          if (cfg.socialV2?.tools?.setMemberCard !== true) {
+            sendJson({ ok: false, error: '该工具未启用（需要在控制台打开 socialV2.tools.setMemberCard）' }, 403);
+            return;
+          }
+          if (req.headers['x-agent-token']) {
+            if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+            if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+            if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+            if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能改群名片' }, 403); return; }
+          } else if (currentMode === 'reserved2') {
+            // reserved2 下不允许「无 token 的管理端」绕过：控制台请走备注库或切模式后再改。
+            sendJson({ ok: false, error: 'reserved2 模式下改群名片必须携带 agent token' }, 403);
+            return;
+          }
+          const groupId = Number(key.slice(6));
+          const lastAt = memberCardCooldown.get(`${key}:${userId}`) || 0;
+          const cooldownMs = 15000;
+          if (Date.now() - lastAt < cooldownMs) {
+            sendJson({ ok: false, error: `改群名片太频繁，请 ${Math.ceil((cooldownMs - (Date.now() - lastAt)) / 1000)} 秒后再试` }, 429);
+            return;
+          }
+          try {
+            await postOneBot('set_group_card', { group_id: groupId, user_id: Number(userId), card }, { timeoutMs: 10000, retries: 1 });
+            memberCardCooldown.set(`${key}:${userId}`, Date.now());
+            // 有界：冷却表只用来防抖，超过 500 条就丢最早的一批。
+            if (memberCardCooldown.size > 500) {
+              for (const old of [...memberCardCooldown.keys()].slice(0, memberCardCooldown.size - 500)) memberCardCooldown.delete(old);
+            }
+            log(`[member-card] ${key} 群名片 QQ ${userId} -> ${card ? `「${card}」` : '（已清除）'}`);
+            appendActivity(`${key} [群名片] ${userId} -> ${card || '清除'}`);
+            sendJson({ ok: true, key, userId, card, note: card ? '已修改群名片（全群可见）' : '已清除群名片' });
+          } catch (error) {
+            sendJson({ ok: false, error: `改群名片失败：${error?.message ?? error}（机器人需要是管理员/群主）` }, 500);
+          }
           return;
         }
         // ── 二代黑话学习（reserved2）：AI 查询/提交黑话候选 ─────────────────
@@ -8279,10 +8518,13 @@ async function main() {
         includeReply: false
       });
       const senderUserId = raw.sender?.user_id ?? raw.user_id ?? null;
+      // 引用/详情也要能拿到完整卡片链接（text 里的摘要是可能被截断的）
+      const card = extractCardFromSegments(raw.message ?? []) ?? null;
       const info = {
         sender: String(sender ?? ''),
-        text: String(text ?? '').slice(0, 200),
-        userId: senderUserId != null ? String(senderUserId) : null
+        text: String(text ?? '').slice(0, card ? CARD_TEXT_LIMIT : 200),
+        userId: senderUserId != null ? String(senderUserId) : null,
+        card
       };
       replyInfoCache.set(cacheKey, { info, ts: Date.now() });
       return info;
@@ -8305,10 +8547,11 @@ async function main() {
       return {
         info: realInfo || {
           sender: String(found.sender || ''),
-          text: String(found.text || found.plain || '').slice(0, 200),
+          text: String(found.text || found.plain || '').slice(0, found.card ? CARD_TEXT_LIMIT : 200),
           userId: null,
           messageId: realId,
-          seq: found.seq
+          seq: found.seq,
+          card: found.card ?? null
         },
         messageId: realId
       };
@@ -8321,10 +8564,11 @@ async function main() {
       return {
         info: realInfo || {
           sender: String(found.sender || ''),
-          text: String(found.text || found.plain || '').slice(0, 200),
+          text: String(found.text || found.plain || '').slice(0, found.card ? CARD_TEXT_LIMIT : 200),
           userId: null,
           messageId: realId,
-          seq: found.seq
+          seq: found.seq,
+          card: found.card ?? null
         },
         messageId: realId
       };
@@ -8345,7 +8589,7 @@ async function main() {
   }
 
   // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
-  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null) {
+  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null, card = null) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
@@ -8371,14 +8615,21 @@ async function main() {
         }
       }
     }
+    // 卡片消息的摘要本来就长（要放得下一条完整链接），给它更高的截断上限；
+    // 普通消息维持 200 字，避免整个上下文被少数长消息挤爆。
+    const textLimit = card ? CARD_TEXT_LIMIT : 200;
     const msg = {
       seq: (st.lastUnreadSeq || 0) + 1,
       messageId: messageId != null ? String(messageId) : null,
       sender,
       userId: userId != null ? String(userId) : null,
-      text: String(textContent).slice(0, 200),
-      plain: String(plainContent ?? textContent).slice(0, 200),
+      text: String(textContent).slice(0, textLimit),
+      plain: String(plainContent ?? textContent).slice(0, textLimit),
       tail: String(plainContent ?? textContent).slice(-200),
+      // 卡片的结构化字段：url/preview 是**完整**的，不受摘要截断影响。
+      // AI 想打开卡片正文时必须读这里，而不是从 text 里抠链接。
+      // 非卡片消息不加这个字段，避免给每条消息都塞一个 card:null。
+      ...(card ? { card } : {}),
       quoteTargetIsSelf: !!quoteTargetIsSelf,
       isOwner: !!isOwner,
       ownerLabel: isOwner ? `管理员（ownerQQ ${cfg.ownerQQ ?? ''}）` : '',
@@ -8772,18 +9023,29 @@ async function main() {
     saveSocialV2State();
     // 防重入：如果该会话已经有一个 DSH turn 在进行中（AI 正在思考/调用工具），
     // 或已有排队/在途 prompt，则不再投递新的候选唤醒，避免“思维链进行中又塞入一个 question 唤醒”。
-    if (isConversationBusyV2(key, st)) {
-      if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
-      const seq = st.lastUnreadSeq || 0;
-      if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
-        st.pendingWakeReasons.push({ reason, seq });
-        // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
-        if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
+    const busyMarkers = busyMarkersV2(key, st);
+    if (busyMarkers.length) {
+      // 关键分支：busy 标记可能是**残留的**（桥接在回合中途重启、DSH 侧回合异常结束而终帧丢失），
+      // 此时干等看门狗（默认 8 分钟）表现为「AI 没反应」。这里先判一次卡死：
+      // 只认「turn/collector 标记已超过 busyRecoveryMs 且当前不在长轮询」这一种，
+      // 确认卡死就立刻清标记并继续往下投递，不再白等。
+      const staleTurn = staleTurnMarkerV2(key, busyMarkers);
+      if (staleTurn) {
+        forceClearBusyV2(key, `stale ${staleTurn}`);
+        log(`[reserved2] 检测到残留忙标记（${busyMarkers.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
+      } else {
+        if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
+        const seq = st.lastUnreadSeq || 0;
+        if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
+          st.pendingWakeReasons.push({ reason, seq });
+          // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
+          if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
+        }
+        st.pendingSince = Number(st.pendingSince) || Date.now();
+        log(`[reserved2] 会话繁忙（${busyMarkers.join('+')}），暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
+        saveSocialV2State();
+        return;
       }
-      st.pendingSince = Number(st.pendingSince) || Date.now();
-      log(`[reserved2] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
-      saveSocialV2State();
-      return;
     }
     // 唤醒频率硬限制：超限则跳过本次唤醒，避免成本失控
     const now = Date.now();
@@ -8884,13 +9146,53 @@ async function main() {
   }
 
   function isConversationBusyV2(key, st) {
-    if (st && st.pendingWakeTimer) return true;
-    if (pendingWakeKeys.has(key)) return true;
+    return busyMarkersV2(key, st).length > 0;
+  }
+
+  /**
+   * 列出当前让会话被判为「忙」的具体标记。
+   * 原实现只能回答「忙/不忙」，出问题时日志里只有一句「会话繁忙」，
+   * 无法判断到底是 DSH 真有回合在跑、还是某个内存标记残留 —— 排查要翻代码猜。
+   * 现在把标记名（含 turn 已经跑了多久）带出来，日志直接可读。
+   */
+  function busyMarkersV2(key, st) {
+    const markers = [];
+    if (st && st.pendingWakeTimer) markers.push('pendingWakeTimer');
+    if (pendingWakeKeys.has(key)) markers.push('pendingWakeKey');
     const q = promptQueues.get(key);
-    if (q && (q.running || q.queue.length > 0)) return true;
+    if (q && q.running) markers.push('promptQueue.running');
+    if (q && q.queue.length > 0) markers.push(`promptQueue.queued(${q.queue.length})`);
     const sid = state.sessions[key];
-    if (sid && (v2TurnStartAt.has(sid) || collectors.has(sid))) return true;
-    return false;
+    if (sid) {
+      const started = Number(v2TurnStartAt.get(sid)) || 0;
+      if (started) markers.push(`turn(${Math.round((Date.now() - started) / 1000)}s)`);
+      if (collectors.has(sid)) markers.push('collector');
+    }
+    return markers;
+  }
+
+  /**
+   * 判断「忙」是否属于卡死：只有 turn/collector 这一种标记可能残留
+   * （桥接在回合中途重启、或 DSH 侧回合异常结束而 turn/end 丢失）。
+   * 条件：
+   *   - 阻塞标记只有 turn/collector（pendingWakeKey / promptQueue 另有看门狗与租约兜底）；
+   *   - turn 已经跑了超过 busyRecoveryMs；
+   *   - 该会话当前**不在** qq_wait_for_messages 长轮询里（长轮询是合法的“忙”，不能打断）。
+   * 返回卡死的标记描述，未卡死返回空串。
+   */
+  function staleTurnMarkerV2(key, markers) {
+    const list = Array.isArray(markers) ? markers : [];
+    const turnMarker = list.find((m) => m === 'collector' || m.startsWith('turn('));
+    if (!turnMarker) return '';
+    if (list.some((m) => m === 'pendingWakeKey' || m.startsWith('promptQueue') || m === 'pendingWakeTimer')) return '';
+    if (activeWaits.has(key)) return '';
+    const timeoutMs = Math.max(0, Number(cfg.socialV2?.busyRecoveryMs ?? 480000));
+    if (!timeoutMs) return '';
+    const sid = state.sessions[key];
+    const started = sid ? (Number(v2TurnStartAt.get(sid)) || 0) : 0;
+    // 只有 turn 起点能证明“跑了多久”；只有 collector 而缺 turn 起点时不冒险打断。
+    if (!started || Date.now() - started < timeoutMs) return '';
+    return turnMarker;
   }
 
   const WAKE_PRIORITY = {
@@ -9100,6 +9402,8 @@ async function main() {
     const textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply });
     const plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false });
     const mediaList = extractMediaFromSegments(event.message ?? []);
+    // 卡片的结构化信息（完整 url/preview）：摘要里放不下的链接，AI 从这里拿。
+    const cardInfo = extractCardFromSegments(event.message ?? []);
     const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
     const seqRef = event.message_seq != null ? String(event.message_seq) : '';
     const refsToStore = [...new Set([messageRef, seqRef].filter(Boolean))];
@@ -9260,7 +9564,7 @@ async function main() {
           + (quotedMedia.length ? `（要看内容请调用 qq_get_message_images，messageId 传 ${quotedId}）` : '')
           + '\n';
       }
-      appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId);
+      appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId, cardInfo);
       // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {

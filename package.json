@@ -36,7 +36,11 @@
     "postinstall": "node scripts/patch-snowluma-sdk.mjs",
     "fetch:model": "node scripts/fetch-embed-model.mjs",
     "eval:rag": "node scripts/eval-slang-retrieval.mjs",
-    "test:rag": "node scripts/test-rag-retrieval.mjs"
+    "test:rag": "node scripts/test-rag-retrieval.mjs",
+    "test:member-remarks": "node scripts/test-member-remarks.mjs",
+    "test:card-parse": "node scripts/test-card-parse.mjs",
+    "test:html-text": "node scripts/test-html-text.mjs",
+    "test:browser-render": "node scripts/test-browser-render.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
@@ -48,7 +52,8 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@xenova/transformers": "^2.17.2"
+    "@xenova/transformers": "^2.17.2",
+    "puppeteer": "^24.10.0"
   },
   "overrides": {
     "sharp": "^0.33.5"

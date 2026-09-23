@@ -1,7 +1,8 @@
 // 表情包体系自检：
 // 1) sticker-lib 纯函数（合并/查找/格式化/笔记/使用统计）
-// 2) 配置项与 MCP 工具描述存在性
-// 3) 可选 live 模式：QQ_BRIDGE_TEST_LIVE=1 时调用 SnowLuma 拉取收藏表情并验证 safeFetchBuffer 可抓图
+// 2) 图片来源白名单 image-allow 纯函数（AI 存聊天里的图被白名单拦掉的回归）
+// 3) 配置项与 MCP 工具描述存在性
+// 4) 可选 live 模式：QQ_BRIDGE_TEST_LIVE=1 时调用 SnowLuma 拉取收藏表情并验证 safeFetchBuffer 可抓图
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,15 @@ import {
   applyStickerNote,
   markStickerUsed
 } from '../src/sticker-lib.js';
+import {
+  DEFAULT_REFERER_ALLOW,
+  DEFAULT_REFERER_HOSTS,
+  hostInImageAllowList,
+  hostNeedsImageReferer,
+  isQqImageCdnHost,
+  imageAllowRejectHint,
+  normalizeImageLimits
+} from '../src/image-allow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -97,6 +107,34 @@ console.log('## 配置文件');
   ok(!('sendCaptionMaxChars' in (cfg.socialV2?.sticker ?? {})), 'config sticker 不再包含 sendCaptionMaxChars');
 }
 
+console.log('## 图片来源白名单（image-allow 纯函数）');
+{
+  // 真实踩过的坑：AI 拿聊天消息里的 media.url（腾讯 CDN）去调 qq_save_sticker，
+  // 被 refererAllow 拒掉，于是「存不了群友发的表情」。
+  ok(hostInImageAllowList('multimedia.nt.qq.com.cn', DEFAULT_REFERER_ALLOW), '腾讯图片 CDN 默认在允许列表内');
+  ok(hostInImageAllowList('i0.hdslb.com', DEFAULT_REFERER_ALLOW), 'B 站图床默认在允许列表内');
+  ok(hostInImageAllowList('example.com', []) === true, '空白名单 = 不限制站点（旧语义保留）');
+  ok(hostInImageAllowList('example.com', DEFAULT_REFERER_ALLOW) === false, '未列出的站点被拒');
+  ok(hostInImageAllowList('i0.hdslb.com', ['i0.hdslb.com']) === true, '白名单条目允许只写域名');
+  ok(hostInImageAllowList('evil-i0.hdslb.com', ['i0.hdslb.com']) === false, '白名单是精确 hostname 匹配');
+
+  ok(hostNeedsImageReferer('i0.hdslb.com', DEFAULT_REFERER_HOSTS) === true, 'B 站图床要带 Referer');
+  ok(hostNeedsImageReferer('multimedia.nt.qq.com.cn', DEFAULT_REFERER_HOSTS) === false, '腾讯 CDN 不带 Referer（带了会被判盗链）');
+  ok(hostNeedsImageReferer('evil-hdslb.com', DEFAULT_REFERER_HOSTS) === false, 'Referer 后缀匹配不会被子域名伪装骗过');
+  ok(hostNeedsImageReferer('x.hdslb.com', []) === true, 'refererHosts 为空时回落到默认表');
+
+  ok(isQqImageCdnHost('multimedia.nt.qq.com.cn') === true && isQqImageCdnHost('gchat.qpic.cn') === true, '识别 QQ 图片 CDN');
+  ok(isQqImageCdnHost('i0.hdslb.com') === false, 'B 站图床不算 QQ CDN');
+  ok(/qq_collect_sticker/.test(imageAllowRejectHint('multimedia.nt.qq.com.cn')), '被拒时提示改用 qq_collect_sticker');
+  ok(/refererAllow/.test(imageAllowRejectHint('example.com')), '非腾讯站点提示怎么加白名单');
+
+  const limits = normalizeImageLimits({ maxBytes: 1024, allowRemoteUrl: true, refererAllow: ['x.com'] });
+  ok(limits.maxBytes === 1024 && limits.allowRemoteUrl === true && limits.imageReferer === 'https://www.bilibili.com', 'normalizeImageLimits 归一化');
+  ok(normalizeImageLimits({}).refererHosts.join(',') === DEFAULT_REFERER_HOSTS.join(','), 'refererHosts 缺省回落默认');
+  const allowed = normalizeImageLimits({}).refererAllow;
+  ok(allowed.length === 0, '配置没写 refererAllow 时保持旧语义（空=不限制），默认表只在 defaultConfig 里');
+}
+
 console.log('## 表情单气泡约束');
 {
   const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
@@ -111,9 +149,14 @@ console.log('## 表情单气泡约束');
 console.log('## MCP 工具描述存在性');
 {
   const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
-  for (const name of ['qq_list_stickers', 'qq_get_sticker_image', 'qq_send_sticker', 'qq_sticker_note', 'qq_set_sticker_remark']) {
+  for (const name of ['qq_list_stickers', 'qq_get_sticker_image', 'qq_send_sticker', 'qq_sticker_note', 'qq_set_sticker_remark', 'qq_collect_sticker', 'qq_save_sticker']) {
     ok(mcp.includes(`'${name}'`) || mcp.includes(`"${name}"`), `MCP 工具 ${name} 已注册`);
   }
+  // 模型最容易犯的错：拿聊天里的 media.url 去调 qq_save_sticker。描述必须把它推回 qq_collect_sticker。
+  const collectBlock = mcp.slice(mcp.indexOf("'qq_collect_sticker'"), mcp.indexOf("'qq_save_sticker'"));
+  ok(/首选工具/.test(collectBlock), 'qq_collect_sticker 描述标明是收藏聊天图的首选');
+  const saveBlock = mcp.slice(mcp.indexOf("'qq_save_sticker'"), mcp.indexOf("'qq_send_image'"));
+  ok(/qq_collect_sticker/.test(saveBlock), 'qq_save_sticker 描述把聊天图指向 qq_collect_sticker');
 }
 
 console.log('## bridge 路由/函数存在性');
@@ -122,6 +165,8 @@ console.log('## bridge 路由/函数存在性');
   for (const s of ['/api/socialV2/sticker-list', '/api/socialV2/sticker-image', '/api/socialV2/sticker-note', '/api/socialV2/send-sticker', '/api/socialV2/sticker-remark', '/api/stickers', 'syncStickerLibrary', 'sendStickerV2']) {
     ok(bridge.includes(s), `bridge 包含 ${s}`);
   }
+  ok(bridge.includes('imageAllowRejectHint'), 'bridge 的图片来源被拒时给出可执行提示');
+  ok(bridge.includes('hostNeedsImageReferer'), 'bridge 按图床决定是否带 Referer');
 }
 
 if (process.env.QQ_BRIDGE_TEST_LIVE === '1') {

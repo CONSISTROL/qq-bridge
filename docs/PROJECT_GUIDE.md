@@ -59,6 +59,12 @@ qq-bridge/
 │   ├── mcp-host-server.js      # MCP（SnowLuma 进程管理，默认禁用启停）
 │   ├── mcp-web-search-safe.js  # 安全 MCP（只读 Web Search/Fetch）
 │   ├── slang-learner.js        # 黑话/网络用语学习模块
+│   ├── member-remarks.js       # 群成员备注库（AI 私有记忆，纯函数）
+│   ├── image-allow.js          # 图片来源白名单 / Referer 判定（纯函数）
+│   ├── card-parse.js           # QQ 卡片消息（json/xml/share）解析（纯函数）
+│   ├── html-text.js            # HTML 正文/元信息抽取 + SPA 识别（纯函数）
+│   ├── browser-render.js       # 无头浏览器渲染（内存优先设计）
+│   ├── safe-proxy.js           # 无头浏览器的出网过滤代理（网络层 SSRF 边界）
 │   ├── md-to-plain.js          # Markdown 转纯文本
 │   ├── safe-fetch.js           # SSRF 防护的 HTTP(S) 抓取
 │   └── self-test.js            # DSH 侧自检
@@ -234,7 +240,10 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 - 发送/互动：`qq_send_message`、`qq_send_burst`、`qq_send_poke`、`qq_send_sticker`
 - 等待/收尾：`qq_wait_for_messages`、`qq_mark_read`、`qq_set_wake_config`
 - 记忆/黑话/表情：`qq_memory_*`、`qq_slang_query`、`qq_slang_submit`、`qq_list_stickers`、`qq_get_sticker_image`、`qq_sticker_note`、`qq_collect_sticker`
+- 群成员备注：`qq_get_member_remarks`、`qq_set_member_remark`、`qq_remove_member_remark`（本地私有记忆，见 §5.5）
 - 形象：`qq_get_self_image`
+
+`mcp-web-search-safe.js` 另有（给所有模式用）：`web_search`、`web_fetch`、`web_render`（无头浏览器，读 SPA）。
 
 `mcp-host-server.js`：
 
@@ -245,6 +254,32 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 
 - `web_search(query)`：只读搜索。
 - `web_fetch(url)`：只读抓取 HTTP(S) 网页正文，带内网/本机地址 SSRF 拦截。
+
+### 5.5 群成员备注（AI 私有记忆）
+
+先明确一件事：**SnowLuma/OneBot 没有「群成员本地备注」接口**。查遍网关的 178 个 action，
+和「备注/名片」相关的只有三个，都不是「只给自己看的成员备注」：
+
+| action | 实际语义 | 为什么不适合当记忆 |
+|---|---|---|
+| `set_group_remark` | 改**群**备注（自己视角的群名） | 对象是群，不是成员 |
+| `set_friend_remark` | 好友备注 | 只对已是好友的人生效；群聊里显示的还是群名片/昵称 |
+| `set_group_card` | 群名片 | 需要机器人是管理员/群主，且**全群可见** |
+
+所以「AI 自己记住谁是谁」这件事由桥接本地承担：
+
+- 存储：`state/member-remarks.json`，按 `会话 key`（`group:群号` / `private:QQ号`）+ **QQ 号** 索引；
+  昵称/群名片只作为「记录当时的快照」，群友改昵称不会丢备注。
+- 读写：`qq_get_member_remarks`（可传 `q` 按 QQ 号/备注/昵称/说明模糊搜）、
+  `qq_set_member_remark`（`remark` 短名 ≤20 字、`note` 说明 ≤200 字，只传一个则另一个保留原值）、
+  `qq_remove_member_remark`。
+- **默认不注入提示词**：备注不占 token，AI 想认人时自己来查（`qq_get_prompt` 的 `enabledTools` 里能看到工具名）。
+- 独立于 `social-v2.json`：`/reset`、切模式、清会话状态都不会丢备注。
+- 控制台「二代仿真 → 轻量记忆」面板里能看/改/删，方便管理员自己维护。
+
+另外提供 `qq_set_member_card`（真·QQ 群名片，走 `set_group_card`）：**默认关闭**，
+必须 `socialV2.tools.setMemberCard=true` 才会注册，且同一人 15 秒冷却。它适合「正名」，不该拿来当记忆。
+控制台的「全部开启」按钮**不会**顺手打开它——这类默认关闭的高危工具只能一个个手动开。
 
 ---
 
@@ -348,6 +383,10 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `scripts/test-console-views.mjs` | 控制台前端结构自检（分区契约 / import / #id / 配置分区开关） |
 | `scripts/test-console-router.mjs` | 分区路由回归（重复 hashchange、挂载竞态、未保存离开守卫） |
 | `scripts/test-mcp-safe.mjs` | MCP 安全工具自检 |
+| `scripts/test-member-remarks.mjs` | 群成员备注自检（纯函数 + 隔离实例真发 `set_group_card` 到假 OneBot） |
+| `scripts/test-card-parse.mjs` | 卡片消息解析自检（真实卡片 payload + json/xml/share/合并转发） |
+| `scripts/test-html-text.mjs` | web_fetch 的正文抽取 / SPA 识别自检（含误报防护） |
+| `scripts/test-browser-render.mjs` | web_render 自检（过滤代理 SSRF 边界 + 本地假 SPA 渲染） |
 | `scripts/test-mcp-host.mjs` | MCP 进程管理自检 |
 | `scripts/test-mcp-web-search.mjs` | Web Search / Fetch MCP 自检（含内网拦截） |
 | `scripts/test-onebot-connection.mjs` | OneBot 连接自检 |
@@ -426,6 +465,171 @@ restart.bat
   `preview: true` 会把候选图直接返回给视觉模型看一眼再决定。
 - 想让本地池更好用，跑 `node scripts/fetch-style-stickers.mjs`（按风格关键词抓图入库，
   sha256 去重、幂等可重复跑；换新关键词才有新图）。
+
+### Q：AI 说「图片站点不在白名单里」，存不了我或群友发的表情包？
+
+这是 AI 用错工具 + 旧白名单太窄共同造成的，已经修好：
+
+- 聊天里别人发的图/表情，正确工具是 `qq_collect_sticker(messageId=那条消息)`：
+  它让网关用 `get_image` 重新取字节，**不受 `socialV2.image.refererAllow` 限制，也不怕 `rkey` 过期**。
+- AI 手里只有 `media.url` 时，那张图通常挂在腾讯自家 CDN（`multimedia.nt.qq.com.cn` 等）上。
+  现在这些域名已进默认 `refererAllow`，`qq_save_sticker` 也走得通了（兜底）。
+- 顺带修了一个老问题：原来「命中白名单就无脑发 `imageReferer`」，会把 B 站的 Referer
+  发给腾讯图床、可能被判盗链；现在只有 `socialV2.image.refererHosts`（默认 `hdslb.com`/`bilibili.com`）
+  里的图床才带 Referer。
+- 被拒时的报错会直接告诉你/告诉 AI 该改用哪个工具，不再是干巴巴一句「不在白名单内」。
+- 判定逻辑在 `src/image-allow.js`，离线单测见 `scripts/test-stickers.mjs`（`## 图片来源白名单`）。
+
+### Q：AI 说「我点进去了，但正文抓不到」（前端渲染的分享页）？
+
+这不是桥接抓取失败，是页面本身**纯前端渲染**。实测小黑盒分享链接：
+302 之后拿到的 HTML 只有 2698 字节，`<body>` 里就一个 `<div id="app"></div>`，
+没有 og: description、没有 SSR 文本 —— 去掉脚本后可见文本只有「小黑盒 - 玩家高能聚集地」11 个字。
+纯 HTTP 抓取（`web_fetch`）**不可能**拿到正文，只有真浏览器执行 JS 才行。
+
+能做和已经做的：
+
+- **把失败变得可读**：`web_fetch` 现在返回 `text`（已剥离脚本/标签的正文候选）、
+  `meta`（title/description/og:description）、`jsonLd`，以及 `renderHint`。
+  识别到空壳页面时会明确写「疑似前端渲染（SPA）：剥离脚本后可见正文只有 N 字」，
+  并直接给出三条出路：① 用 `web_search` 搜标题拿摘要；② 试站点开放 API（分享接口常返回 JSON）；
+  ③ 请对方截图或复制正文。**别反复重试同一个 URL**。
+- **判定宁可漏报不误报**：光看「正文短」会把短公告误判成 SPA，所以要求**同时**满足
+  「可见正文 < 80 字」和「有前端渲染特征（空 SPA 挂载点 / ≥2 个 script）」。
+- **JSON-LD 兜底**：SPA 页面常带 `application/ld+json`，里面的 headline/description/articleBody
+  往往能救一命，会一起抽出来并附在 `renderHint` 里。
+- 纯函数在 `src/html-text.js`，单测 `npm run test:html-text`。
+
+**彻底解决：`web_render`（无头浏览器渲染）**
+
+真正需要执行 JS 才能拿正文的页面（小黑盒、部分小红书/抖音分享页）现在可以读了：
+
+```
+web_render(url, settleMs?) → { rendered, text, meta, jsonLd?, renderHint?, elapsedMs }
+```
+
+实测小黑盒那条分享链接：**7.2 秒**渲染完成，正文、评论区、相关推荐全部拿到。
+`web_fetch` 的 `renderHint` 在检测到 SPA 时会**首推** `web_render`。
+
+因为本机内存只有 1.6G（embedding 模型常驻 186MB），这个功能是按「内存优先」设计的：
+
+| 措施 | 说明 |
+|---|---|
+| 懒启动 + 空闲关闭 | 渲染完 **60 秒**没人用就关掉浏览器；实测净增约 135MB，关闭后完全释放 |
+| 同一时刻只渲染一个页面 | 并发两个 SPA = 两个 renderer 进程，直接串行化 |
+| 可用内存闸门 | 低于 **220MB** 直接拒绝渲染（明确报错），宁可这次失败也不拖垮桥接 |
+| 禁图/禁字体/禁媒体 | 只要正文；`--blink-settings=imagesEnabled=false` |
+| 限制 renderer/堆 | `--renderer-process-limit=1`、`--js-flags=--max-old-space-size=128` |
+| **出网走过滤代理** | 见下 |
+
+**安全边界（重要）**：桥接控制台（`:3100`）、DSH（`:3080`）、OneBot（`:3000`）都在本机，
+把任意外部页面的 JS 放进真浏览器里跑，不管住网络就是 SSRF。所以 `web_render` 的
+Chromium 带 `--proxy-server` 指向 `src/safe-proxy.js` 起的本地过滤代理：
+
+- 所有出网流量（含子资源、重定向、**WebSocket**）都过代理；
+- 代理对每个目标 `resolveSafeHost` 解析并校验，命中内网/本机/云元数据地址直接拒；
+- **连的是校验通过的 IP 而不是域名**，堵掉 DNS rebinding 的窗口。
+
+用 `puppeteer` 的 request 拦截做不到这一点：`page.on('request')` 管不到 WebSocket 握手，
+而且应用层拦截漏一条路径就是漏洞。
+
+依赖说明：`puppeteer` 放在 `optionalDependencies`（含 ~150MB Chromium），装不上时
+`web_render` 不注册、`renderHint` 自动退回「搜标题 / 请对方截图」的建议，主程序不受影响。
+单测：`npm run test:browser-render`（含代理 SSRF 边界 + 本地假 SPA 渲染）。
+
+### Q：AI 能刷贴吧吗？（贴吧按 IP 风控）
+
+**能刷一部分，另一部分刷不了**，这是百度按 IP 风控的结果，不是桥接的问题。实测（2026-09，本机 IP）：
+
+| 贴吧路径 | 结果 |
+|---|---|
+| `/hottopic/browse/topicList?res_type=1`（热议榜） | ✅ 200，30 条热榜话题 + 讨论量 + 摘要 |
+| `/hottopic/browse/hottopic?topic_id=<id>`（话题详情） | ✅ 200，该话题下相关帖的**标题/摘要/作者/回复数/来自哪个吧** |
+| `/f?kw=xxx`（吧列表） | ❌ 403 + 百度安全验证滑块 |
+| `/p/xxx`（帖子详情） | ❌ 403 + 百度安全验证滑块 |
+| 吧内搜索 / 全吧搜索 | ❌ 403 + 百度安全验证滑块 |
+
+几个试过但**没用**的路子，别再重复踩：
+
+- **`web_render` 无头浏览器**：同样被滑块拦住（`web_render` 拿回来的是「请向右滑动完成拼图」）；
+- **先访问 baidu.com 暖 cookie（BAIDUID）**：仍然 403，说明拦的是 IP 而不是缺 cookie；
+- **`site:tieba.baidu.com` 搜索**：cn.bing.com 基本忽略 `site:`，返回的都是官网；
+- **第三方渲染/抓取代理**（r.jina.ai、rsshub.app）：本机网络不可达（超时）。
+
+所以现在做了两件事：
+
+1. **把「被拦」变得可读**：`web_fetch` / `web_render` 识别到验证页会返回 `accessHint`，
+   明确说是「反爬/安全验证拦截」、**换 web_render 也没用**，并给出**能用的入口**
+   （热榜 + 话题详情两条 URL，直接可复制使用），而不是把「百度安全验证」当成正文喂给模型。
+2. **工具描述里写清可用路径**，AI 不用再靠猜。
+
+**要读具体某个吧的帖子列表 / 帖子详情**（`/f?kw=`、`/p/`），只有配登录态一条路：
+给桥接加贴吧 cookie（`BDUSS`），像现有的 B 站 `SESSDATA` 那样注入请求。目前**未实现**——
+需要管理员提供 BDUSS（属于账号凭据，要自己权衡）。
+
+单测：`npm run test:html-text`（`## 反爬 / 安全验证页识别`）。
+
+### Q：AI 突然不回话了，日志里一直是「会话繁忙，暂存唤醒原因」？
+
+这是**残留忙标记**造成的，已修（2026-09 线上实际踩过）。桥接判断「会话是否忙」靠几个内存标记
+（`v2TurnStartAt` / `collectors` / `promptQueues` / `pendingWakeKeys` / `pendingWakeTimer`）。
+如果桥接**在回合中途被重启**、或 DSH 侧回合异常结束导致 `turn/end` 丢失，这些标记会永久残留：
+之后每条消息都只换来一句「会话繁忙」，AI 再也不说话 —— 直到 8 分钟看门狗兜底才自愈。
+
+修法：
+
+1. **诊断可读**：`isConversationBusyV2` 拆成 `busyMarkersV2()`，日志直接写出阻塞标记
+   （`turn(1523s)+collector` 这种），不用再翻代码猜；`forceClearBusyV2` 也会打印「清掉了什么」。
+2. **即时自愈**：唤醒被挡下时先判一次卡死 —— 若阻塞标记只有 turn/collector、
+   且 turn 已经跑了超过 `busyRecoveryMs`（默认 8 分钟）、且该会话**不在** `qq_wait_for_messages`
+   长轮询里（长轮询是合法的忙，不能打断），就立刻清标记并投递本次唤醒，
+   不再干等看门狗下一次 tick。
+3. 看门狗仍是最后兜底；回归用例见 `test-audit-bridge.mjs`
+   的「stale turn marker is detected as stuck busy and cleared」。
+
+> 运维提示：如果只是想让某个会话立刻醒过来，控制台可用 `POST /api/socialV2/wake {key, reason}`；
+> 把桥接重启一次也能清掉全部内存忙标记（代价是内存里还没投递的 `pendingWakeReasons` 会丢，
+> 但未读消息是持久化的，AI 醒来看未读照样能接上）。
+
+### Q：AI 说「你发的是张卡片，我这边读不到里面写了啥」？
+
+已修。卡片消息（分享链接、小程序、音乐、群邀请、打卡…）在 OneBot 里是
+`json` / `xml` / `share` 三种消息段，桥接原来在 `segmentsToText` 里把它们硬编码成
+`[卡片消息]`（`xml` 更是直接掉进 `default` → `[xml]`），标题/摘要/链接全丢。
+
+现在统一走 `src/card-parse.js`，渲染成一句话，例如真实收到的小黑盒分享卡片：
+
+```
+[卡片·小黑盒] 姿态975万余额曝光后背景被挖，蓝天幼儿园毕业，小时候上..…；链接：https://api.xiaoheihe.cn/v3/bbs/app/api/web/share?h_camp=link&h_session_id=UKyWyJ6FrOvbQsM9&h_src=YXBwX3NoYXJl&link_id=260c727ab720&new_post_share_style_v2=0；下载小黑盒查看更多精彩内容
+```
+
+要点：
+
+- **一个入口全打通**：`segmentsToText` 同时服务二代唤醒上下文、一代 prompt、引用消息解析
+  和 `qq_get_message_detail`，所以正文、引用、「@某人 + 卡片」都跟着好了；
+- **合并转发也修了**：`forward.js` 复用同一个解析器，聊天记录里的卡片同样可读；
+- **链接必须完整（重要）**：摘要把**完整 URL 的优先级放在摘要文字之前**
+  （标题+完整链接 → 标题+截断链接 → 只要标题），总长 ≤320 字；
+  含卡片的消息在存储时用更大的 text/plain 上限（`CARD_SUMMARY_MAX + 80`），
+  普通消息仍是 200 字。原因：把链接截成 `...?h_camp…` 对 AI 等于没有 ——
+  它会直接回「链接被截断了，我打不开，你把完整链接发我」；
+- **结构化 `card` 字段**：消息对象上另有 `card: { kind, source, title, desc, url, preview }`，
+  其中 `url` / `preview` **不做摘要级截断**（上限 1200，足够任何真实链接）。
+  即使摘要里实在放不下而截断了，AI 也能从 `card.url` 拿到逐字完整的链接。
+  `qq_get_unread_messages` / `qq_get_recent_messages` / `qq_get_message_detail` /
+  `qq_get_forward_msg` 都会返回这个字段；
+- **对方可控内容**：卡片文本会压掉 C0/C1 控制字符、零宽字符与 U+2028/2029 行分隔符，
+  单行输出；解析失败会明确写「json 解析失败」，不会假装读到了内容；
+- **只提取不执行**：卡片里的 URL 仅作为文本进上下文，桥接不抓取、不跳转；
+  AI 想细看可以自己用 `mcp__web-search-safe__web_fetch`（现在链接是完整的，能直接抓）。
+- 常见形态：`com.tencent.structmsg`（分享/新闻/视频）、`com.tencent.miniapp_01`（小程序，
+  取 `meta.detail_1` + `qqdocurl`）、`com.tencent.music.lua`（音乐）、`com.tencent.tuwen.lua`（图文分享）。
+- 单测：`npm run test:card-parse`（含真实卡片 payload 固定样本）。
+- **已知限制**：卡片里的预览图（`preview`）目前只提取 URL、不自动下载，
+  所以「图为主、文字很少的卡片」AI 只能读到标题；要看得见图需要再扩一条
+  「卡片预览图 → 视觉上下文」的通道。
+
+
 
 ---
 

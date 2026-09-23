@@ -276,12 +276,15 @@ function requestOnce(url, ip, limit, binary = false, extraHeaders = {}) {
   });
 }
 
-export async function safeFetch(urlString, maxChars = 50000) {
+export async function safeFetch(urlString, maxChars = 50000, options = {}) {
   validateLimit(maxChars, 'maxChars');
+  // 自定义头只在第一跳生效，重定向后回到默认（防止把凭据带去别的主机）。
+  // 典型用途：很多站点（如 Bing）对裸 "Mozilla/5.0" 返回降级页，必须给完整浏览器 UA。
+  const extraHeaders = sanitizeImageHeaders(options.headers);
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxChars);
+    const result = await requestOnce(url, ip, maxChars, false, i === 0 ? extraHeaders : {});
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

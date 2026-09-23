@@ -16,6 +16,9 @@ import * as slang from '../src/slang-learner.js';
 import * as sticker from '../src/sticker-lib.js';
 import * as slangIndex from '../src/slang-index.js';
 import * as stickerPicker from '../src/sticker-picker.js';
+import * as memberRemarks from '../src/member-remarks.js';
+import * as imageAllow from '../src/image-allow.js';
+import * as cardParse from '../src/card-parse.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -68,6 +71,8 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
   return {
     ensureSession, ensureSlangLearnerSession, resolvePresetName, deliverPrompt, drainPromptQueue,
     sendToQQ, sendStickerV2, handleIncoming, startConsoleServer, cfg, state, api, promptQueues,
+    // 「会话繁忙」判定：给审计用例用，验证残留忙标记能被识别成卡死（AI 无响应的那类事故）。
+    busyMarkersV2, staleTurnMarkerV2, forceClearBusyV2, v2TurnStartAt, activeWaits, socialV2,
     setMode(value) { currentMode = value; },
     setReady(value) { dshReady = value; },
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
@@ -105,7 +110,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...imageAllow, ...cardParse,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);

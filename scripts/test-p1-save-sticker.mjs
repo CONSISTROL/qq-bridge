@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const KEY = process.argv[2] || 'private:1472298635';
+const KEY = process.argv[2] || 'private:10001';
 const BASE = 'http://127.0.0.1:3100';
 const CONSOLE_TOKEN = fs.readFileSync(path.join(ROOT, 'state', 'console-token'), 'utf8').trim();
 
@@ -89,6 +89,15 @@ try {
   await consoleApi('/api/socialV2/config', { image: { allowRemoteUrl: true } });
   const ssrf = await saveSticker('http://127.0.0.1:3100/');
   check('开启远程后仍拒绝内网地址', ssrf.json?.ok === false, errText(ssrf));
+
+  // 7b) 回归：AI 拿聊天消息里的腾讯 CDN 链接来存图，不该再被 refererAllow 拦掉。
+  //     用一个必然 404 的路径，只验证「过了白名单这一关」（不会真的存下东西）。
+  const qqCdn = await saveSticker('https://multimedia.nt.qq.com.cn/download?appid=1406&fileid=probe-404&spec=0&rkey=probe', { source: 'url' });
+  check('腾讯 CDN 通过白名单（不再是白名单错误）', !/不在 refererAllow 白名单内/.test(errText(qqCdn)), errText(qqCdn));
+
+  // 7c) 未列出的站点仍被拒，且提示要加白名单
+  const stranger = await saveSticker('https://example.com/not-allowed.png', { source: 'url' });
+  check('未列出的站点仍被拒', stranger.json?.ok === false && /不在 refererAllow 白名单内/.test(errText(stranger)), errText(stranger));
   await consoleApi('/api/socialV2/config', { image: { allowRemoteUrl: false } });
 
   // 8) 限流：把每分钟上限压到 1，再存第二张应当 429

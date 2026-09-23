@@ -7,6 +7,8 @@
 // - forward id 只允许安全字符，长度受限，避免把任意内容当参数传给 OneBot/日志
 // - 只格式化，不访问网络；调用方负责“id 必须来自当前会话已见消息”的校验
 
+import { cardSegmentToText, extractCardFromSegments } from './card-parse.js';
+
 export function sanitizeForwardId(value) {
   const s = String(value ?? '').trim();
   if (!s || s.length > 256) return '';
@@ -46,7 +48,11 @@ function segmentText(seg) {
     case 'file': return `[文件${d.name ?? ''}]`;
     case 'reply': return '[引用]';
     case 'forward': return '[转发]';
-    case 'json': return '[卡片消息]';
+    case 'json':
+    case 'xml':
+    case 'share':
+      // 合并转发里的卡片消息同样要能读（原来只有一句 [卡片消息]）。
+      return cardSegmentToText(seg);
     default: return `[${seg.type ?? '未知'}]`;
   }
 }
@@ -193,6 +199,8 @@ export function formatForwardResponse(data, options = {}) {
       messageId: nodeMessageId(node),
       messageSeq: nodeMessageSeq(node),
       text,
+      // 卡片的结构化内容：text 里的摘要可能被截断，card.url 才是完整链接。
+      card: extractCardFromSegments(content),
       media: meta.media,
       nestedForwardIds: meta.nestedForwardIds
     };

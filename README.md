@@ -181,6 +181,15 @@ npm start          # 或双击 start.bat（守护模式：崩溃自动重启，�
 npm run test:audit
 ```
 
+单模块自测（隔离实例 + 假 OneBot，不碰真实 QQ）：
+
+```bash
+npm run test:member-remarks
+npm run test:card-parse
+npm run test:html-text
+npm run test:browser-render   # 需要 Chromium（optionalDependency），没装则自动跳过
+```
+
 本轮审查与修复明细见 [docs/AUDIT_REPORT_2026-09-18.md](docs/AUDIT_REPORT_2026-09-18.md)。升级后会为没有权限元数据的历史映射重建一次 QQ 会话；模式或 preset 变化也会自动重建，避免保留旧权限。旧历史仍在 DSH 中。
 
 验证 DSH 侧链路是否打通（会创建一个独立测试会话，不影响现有会话）：
@@ -216,6 +225,8 @@ qq-bridge/
 - 图片及部分表情可以通过安全下载接入多模态模型；语音/视频以及无法取得图片字节的消息仍使用占位文本
 - agent 的 Markdown 回复会转成纯文本（链接保留 `文字 (url)` 形式）
 - `@snowluma/sdk` 的 npm 发布版存在 ESM 扩展名 bug，本仓库通过 postinstall 补丁修复（见 `scripts/patch-snowluma-sdk.mjs`）
+- 网关没有「群成员本地备注」接口：AI 的成员备注由桥接自己存在 `state/member-remarks.json`（只在 AI 视角生效）；真·群名片 `qq_set_member_card` 默认关闭，且需要机器人是管理员/群主
+- 前端渲染（SPA）的分享页（小黑盒/小红书等）用 `web_fetch` 拿不到正文，需要 `web_render`（无头浏览器，`puppeteer` 在 optionalDependencies，约 150MB Chromium）。它按内存优先设计：空闲 60 秒自动关闭、同一时刻只渲染一个页面、可用内存低于 220MB 直接拒绝；页面内 JS 的出网流量全部经过本地过滤代理（`src/safe-proxy.js`），碰不到本机控制台/DSH/OneBot
 
 ## 合规提醒
 

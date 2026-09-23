@@ -32,6 +32,7 @@ QQ messages ──► SnowLuma (OneBot v11 WS) ──► qq-bridge ──► DSH
 - Slang/network-expression learning with human confirmation.
 - Lightweight memory system for active topics, pending thoughts and member impressions.
 - Sticker library integration with AI-friendly sticker usage.
+- AI-owned member remarks (local, `state/member-remarks.json`): the bot can note who is who per conversation keyed by QQ number — the gateway has no per-member local remark action — plus an opt-in `qq_set_member_card` tool (default off; requires the bot to be a group admin).
 
 ## Requirements
 

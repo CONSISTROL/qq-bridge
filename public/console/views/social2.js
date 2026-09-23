@@ -18,6 +18,10 @@ export const icon = '🤖';
 export const group = '仿真';
 export const order = 2;
 
+// 默认关闭的工具开关：只有 config.tools[flag] === true 才算开启（与 bridge/mcp 侧一致），
+// 也意味着「全部开启」不会顺手打开它们。目前只有真·QQ 写操作属于这一类。
+const OPT_IN_TOOLS = new Set(['setMemberCard']);
+
 // ── 主配置表单：字段表 ───────────────────────────────────────────────
 // type: bool | list | text | select | number（默认）
 // unit: µ显示单位换算（load 除以它、save 乘以它），仅 number 有
@@ -141,7 +145,11 @@ function fillForm(view, config) {
     el.value = String(Math.round(value * 1000) / 1000);
   }
   for (const el of $$('[data-v2-tool]', view)) {
-    el.checked = !(config?.tools && config.tools[el.dataset.v2Tool] === false);
+    // 默认开启的工具：只有显式 false 才算关；默认关闭的工具（OPT_IN_TOOLS）：只有显式 true 才算开。
+    // 两边语义必须和 bridge / mcp 保持一致，否则控制台显示「已开启」但工具其实没注册。
+    el.checked = OPT_IN_TOOLS.has(el.dataset.v2Tool)
+      ? config?.tools?.[el.dataset.v2Tool] === true
+      : !(config?.tools && config.tools[el.dataset.v2Tool] === false);
   }
 }
 
@@ -300,6 +308,17 @@ function renderMemory(view, data) {
     const im = impressions[name] || {};
     const traits = Array.isArray(im.traits) ? im.traits : [];
     html += `<div style="margin:4px 0">👤 ${esc(name)}：${traits.length ? esc(traits.join('、')) : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次） <button class="small" data-action="edit" data-cat="memberImpression" data-target="${esc(name)}" data-traits="${esc(traits.join(', '))}">编辑</button> <button class="small" data-action="remove" data-cat="memberImpression" data-target="${esc(name)}">删除</button></div>`;
+  }
+  html += '</div>';
+  // 成员备注存在 state/member-remarks.json（不属于 social-v2 状态），单独列一段。
+  const remarks = Array.isArray(data.memberRemarks) ? data.memberRemarks : [];
+  html += '<div class="memory-section"><b>成员备注（本地记忆，不动 QQ）</b>';
+  if (!remarks.length) html += '<div class="meta">（空）</div>';
+  for (const r of remarks) {
+    const who = r?.remark ? esc(String(r.remark)) : '（未命名）';
+    const nick = r?.nick && r.nick !== r.remark ? `，昵称：${esc(String(r.nick))}` : '';
+    const note = r?.note ? `｜${esc(String(r.note))}` : '';
+    html += `<div style="margin:4px 0">🏷️ ${who}（QQ ${esc(String(r?.qq || ''))}${nick}）${note} <button class="small" data-action="remark-edit" data-user="${esc(String(r?.qq || ''))}" data-remark="${esc(String(r?.remark || ''))}" data-note="${esc(String(r?.note || ''))}">编辑</button> <button class="small" data-action="remark-remove" data-user="${esc(String(r?.qq || ''))}">删除</button></div>`;
   }
   html += '</div></div>';
   box.innerHTML = html;
@@ -635,8 +654,12 @@ export async function mount(root) {
 
   const setAllTools = async (enabled) => {
     const tools = {};
-    for (const el of $$('[data-v2-tool]', view)) tools[el.dataset.v2Tool] = enabled;
     const boxes = $$('[data-v2-tool]', view);
+    for (const el of boxes) {
+      // 「全部开启」不该顺手打开默认关闭的高危工具（真·QQ 写操作）：这类只能一个个手动开。
+      if (enabled && OPT_IN_TOOLS.has(el.dataset.v2Tool)) continue;
+      tools[el.dataset.v2Tool] = enabled;
+    }
     for (const el of boxes) el.classList.add('saving');
     const r = await api('/api/socialV2/config', 'POST', { tools }).catch((e) => ({ ok: false, error: e.message }));
     for (const el of boxes) el.classList.remove('saving');
@@ -809,7 +832,19 @@ export async function mount(root) {
     if (!key) { setMsg(msg, '请输入会话 key', false); return; }
     const cat = btn.dataset.cat;
     let r;
-    if (btn.dataset.action === 'clear') {
+    if (btn.dataset.action === 'remark-edit') {
+      // 短名|说明 两段式：说明里可以有 '|'，所以只按第一个分隔符切。
+      const cur = [btn.dataset.remark || '', btn.dataset.note || ''].join('|');
+      const input = prompt(`编辑 QQ ${btn.dataset.user} 的成员备注（短名|说明，说明可留空）：`, cur);
+      if (input === null) return;
+      const idx = input.indexOf('|');
+      const remark = (idx >= 0 ? input.slice(0, idx) : input).trim();
+      const note = idx >= 0 ? input.slice(idx + 1).trim() : '';
+      r = await api('/api/socialV2/member-remark', 'POST', { key, userId: btn.dataset.user, remark, note });
+    } else if (btn.dataset.action === 'remark-remove') {
+      if (!confirmDanger(`确定删除 QQ ${btn.dataset.user} 的成员备注？`)) return;
+      r = await api('/api/socialV2/member-remark-remove', 'POST', { key, userId: btn.dataset.user });
+    } else if (btn.dataset.action === 'clear') {
       r = await api('/api/socialV2/memory-clear', 'POST', { key, category: cat });
     } else if (btn.dataset.action === 'edit') {
       const label = cat === 'memberImpression' ? `编辑对 ${btn.dataset.target} 的印象特质（逗号分隔）：` : `编辑${cat === 'activeTopic' ? '话题' : '想法'}内容：`;

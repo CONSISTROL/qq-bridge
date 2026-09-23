@@ -84,7 +84,7 @@ let bridgeLog = '';
 bridge.stdout.on('data', (d) => { bridgeLog += d.toString(); });
 bridge.stderr.on('data', (d) => { bridgeLog += d.toString(); });
 
-const KEY = 'private:1472298635';
+const KEY = 'private:10001';
 async function api(pathname, body) {
   const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}${pathname}`, {
     method: 'POST',
@@ -135,7 +135,7 @@ try {
   const imgSeg = segs.find((s) => s.type === 'image');
   ok('消息里带 image 段（base64）', Boolean(imgSeg) && String(imgSeg.data?.file || '').startsWith('base64://'), JSON.stringify(segs).slice(0, 200));
   ok('base64 是非空真图片', String(imgSeg?.data?.file || '').length > 1000);
-  ok('目标 QQ 正确', String(msg?.body?.user_id) === '1472298635', String(msg?.body?.user_id));
+  ok('目标 QQ 正确', String(msg?.body?.user_id) === '10001', String(msg?.body?.user_id));
 
   console.log('\n[4] 同一轮不能再发一张（每轮上限）');
   const again = await api('/api/socialV2/pick-sticker', { key: KEY, context: '哈哈哈哈', send: { id: top?.id } });

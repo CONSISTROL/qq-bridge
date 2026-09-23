@@ -136,4 +136,40 @@ await test('malformed HTTP request targets return 400 without hanging', async (h
   } catch (error) { failures++; console.error('FAIL safe sticker sending:', error.message); }
   finally { await h.close(); }
 }
+// 「AI 没反应」事故的回归：残留的忙标记必须能被识别成卡死并即时清掉。
+// 背景：桥接在回合中途重启、或 DSH 侧回合异常结束而 turn/end 丢失时，
+// 内存里的 turn/collector 标记会永久残留 → 每次唤醒只回一句「会话繁忙」，
+// AI 再也不说话（线上实测发生过：用户消息被连着暂存，要等 8 分钟看门狗才自愈）。
+await test('stale turn marker is detected as stuck busy and cleared', async (h) => {
+  const key = 'private:123';
+  const st = h.socialV2.conversations.get(key) ?? { wakeConfig: {}, recentMessages: [], unread: [], wakeTimes: [], sendTimes: [] };
+  h.socialV2.conversations.set(key, st);
+  const sid = 'session-stale';
+  h.state.sessions[key] = sid;
+
+  // 没有忙标记 → 不忙
+  // 注意：harness 跑在 vm 里，跨 realm 的数组过不了 deepStrictEqual，只能比长度/内容。
+  assert.equal(h.busyMarkersV2(key, st).length, 0, '初始不应有忙标记');
+  assert.equal(h.staleTurnMarkerV2(key, []), '', '无标记时不该判成卡死');
+
+  // 刚开始的 turn → 忙，但不算卡死（可能正在思考/长轮询）
+  h.v2TurnStartAt.set(sid, Date.now());
+  const fresh = h.busyMarkersV2(key, st);
+  assert.ok(fresh.some((m) => m.startsWith('turn(')), '应报告 turn 标记：' + fresh.join('+'));
+  assert.equal(h.staleTurnMarkerV2(key, fresh), '', '刚开始的 turn 不能被误判为卡死');
+
+  // 正在 qq_wait_for_messages 长轮询 → 合法的忙，不能打断
+  h.activeWaits.add(key);
+  h.v2TurnStartAt.set(sid, Date.now() - 60 * 60 * 1000);
+  assert.equal(h.staleTurnMarkerV2(key, h.busyMarkersV2(key, st)), '', '长轮询中的会话不能被强制清标记');
+  h.activeWaits.delete(key);
+
+  // 超过 busyRecoveryMs 且不在长轮询 → 判定卡死，并能被清空
+  const stale = h.busyMarkersV2(key, st);
+  assert.ok(h.staleTurnMarkerV2(key, stale), '过期 turn 标记应判为卡死：' + stale.join('+'));
+  h.forceClearBusyV2(key, 'audit');
+  assert.equal(h.busyMarkersV2(key, st).length, 0, 'forceClearBusyV2 之后不应再有忙标记');
+  assert.equal(h.staleTurnMarkerV2(key, []), '', '清空后不再判卡死');
+});
+
 if (failures) process.exitCode = 1;

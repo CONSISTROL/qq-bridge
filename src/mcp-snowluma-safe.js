@@ -402,7 +402,7 @@ defineTool(
 
 defineTool(
   'qq_get_unread_messages',
-  '查看指定会话的未读消息（只读，不自动标记已读）。',
+  '查看指定会话的未读消息（只读，不自动标记已读）。消息对象里若有 `card` 字段，那是卡片消息（分享/小程序/音乐等）的结构化内容：**`card.url` 是完整链接，要用就用它**——`text` 里的摘要在极长时会用 `…` 截断。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'), limit: z.number().optional().describe('最多返回条数，默认 30，最大 100') },
   async ({ key, token, limit }) => {
     try {
@@ -416,7 +416,7 @@ defineTool(
 
 defineTool(
   'qq_get_recent_messages',
-  '查看指定会话的最近消息（只读），支持 offset 扩大范围。',
+  '查看指定会话的最近消息（只读），支持 offset 扩大范围。消息对象里若有 `card` 字段，那是卡片消息（分享/小程序/音乐等）的结构化内容：**`card.url` 是完整链接，要用就用它**——`text` 里的摘要在极长时会用 `…` 截断。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -676,7 +676,7 @@ defineTool(
 
 defineTool(
   'qq_get_message_detail',
-  '按 message_id 查看单条消息的完整内容、发送者、引用信息（只读）。',
+  '按 message_id 查看单条消息的完整内容、发送者、引用信息（只读）。消息对象里若有 `card` 字段，那是卡片消息（分享/小程序/音乐等）的结构化内容：**`card.url` 是完整链接，要用就用它**——`text` 里的摘要在极长时会用 `…` 截断。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -805,6 +805,109 @@ defineTool(
     }
   }
 );
+
+// ── 群成员备注（本地私有记忆，不改 QQ） ────────────────────────────────────
+// 网关没有「群成员本地备注」接口，所以「谁是谁」只能由桥接自己记。
+// 这三个工具读写的是 state/member-remarks.json，只影响 AI 视角；真·群名片
+// 是另一个默认关闭的工具（qq_set_member_card）。
+if (cfg.socialV2?.tools?.memberRemark !== false) {
+  defineTool(
+    'qq_get_member_remarks',
+    '查看你给本会话群友记的备注（本地私有记忆：只有你自己能看到，不会修改对方 QQ 资料）。想认人、想不起「谁是谁」时先查这里；也可以传 q 按 QQ 号/备注/昵称/说明模糊搜。备注不会自动出现在唤醒提示里，需要你自己来查。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      q: z.string().optional().describe('可选搜索词：QQ 号 / 你起的备注 / 群昵称 / 说明文字'),
+      limit: z.number().optional().describe('最多返回几条，默认 100，最大 300')
+    },
+    async ({ key, token, q, limit }) => {
+      try {
+        const params = new URLSearchParams({ key });
+        if (q) params.set('q', String(q));
+        if (limit) params.set('limit', String(limit));
+        const data = await agentApi(`/api/socialV2/member-remarks?${params.toString()}`, { headers: { 'x-agent-token': token } });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `读取成员备注失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+
+  defineTool(
+    'qq_set_member_remark',
+    '给某个群友写/改备注，方便你以后记住他是谁。这是你自己的本地记忆（不动对方 QQ 资料、别人看不到）。remark=你给他起的短名（最多 20 字，如「老王」），note=补充说明（最多 200 字，如「写代码的，爱发猫图」）；只传一个也可以，另一个会保留原值。QQ 号可以用 qq_get_active_members 或 qq_get_recent_messages 查到。remark 和 note 都传空字符串等于删除这条备注。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      userId: z.string().describe('要记备注的群友 QQ 号'),
+      remark: z.string().optional().describe('你给他起的短名，最多 20 字；空字符串表示清空短名'),
+      note: z.string().optional().describe('补充说明，最多 200 字；空字符串表示清空说明')
+    },
+    async ({ key, token, userId, remark, note }) => {
+      try {
+        const payload = { key, userId: String(userId) };
+        if (remark !== undefined) payload.remark = String(remark);
+        if (note !== undefined) payload.note = String(note);
+        const data = await agentApi('/api/socialV2/member-remark', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: { 'x-agent-token': token }
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `记录成员备注失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+
+  defineTool(
+    'qq_remove_member_remark',
+    '删掉某个群友的本地备注（只删你自己的记忆，不影响 QQ）。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      userId: z.string().describe('要删掉备注的群友 QQ 号')
+    },
+    async ({ key, token, userId }) => {
+      try {
+        const data = await agentApi('/api/socialV2/member-remark-remove', {
+          method: 'POST',
+          body: JSON.stringify({ key, userId: String(userId) }),
+          headers: { 'x-agent-token': token }
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `删除成员备注失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+// 真·QQ 群名片：默认关闭。需要机器人是管理员/群主，且全群可见——是「正名」而不是「记忆」。
+if (cfg.socialV2?.tools?.setMemberCard === true) {
+  defineTool(
+    'qq_set_member_card',
+    '修改 QQ 群里的真实群名片（set_group_card）。注意：这是公开写操作，全群都能看到，而且机器人必须是管理员/群主；当记忆用请改用 qq_set_member_remark。默认关闭，只有管理员显式打开 socialV2.tools.setMemberCard 才可用。card 传空字符串表示清除群名片。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      userId: z.string().describe('要改群名片的群友 QQ 号'),
+      card: z.string().describe('新的群名片，最多 60 字；空字符串表示清除')
+    },
+    async ({ key, token, userId, card }) => {
+      try {
+        const data = await agentApi('/api/socialV2/set-member-card', {
+          method: 'POST',
+          body: JSON.stringify({ key, userId: String(userId), card: String(card ?? '') }),
+          headers: { 'x-agent-token': token }
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `修改群名片失败：${error?.message ?? error}（机器人需要是管理员/群主）` }], isError: true };
+      }
+    }
+  );
+}
 
 defineTool(
   'qq_slang_query',
@@ -975,7 +1078,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.sendSticker
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectSticker !== false) {
   defineTool(
     'qq_collect_sticker',
-    '收藏当前会话里别人发的一张表情/图片到你的 QQ 收藏表情，并可写一句简短备注（如“好图偷了，兄弟”）。messageId 用 qq_get_unread_messages / qq_get_recent_messages 返回的 messageId 或 seq。注意：不要频繁收藏，只在真的觉得有意思/好用/戳中你时才偷图；收藏后你可以在 qq_list_stickers 里看到并继续使用。',
+    '收藏当前会话里别人（群友/好友）发的一张表情/图片到你的 QQ 收藏表情，并可写一句简短备注（如“好图偷了，兄弟”）。**这是收藏聊天里图片的首选工具**：它由网关直接取图片字节，不受图床白名单限制、也不怕临时链接过期，所以聊天里看到的图就用它，不要拿 media.url 去调 qq_save_sticker。messageId 用 qq_get_unread_messages / qq_get_recent_messages 返回的 messageId 或 seq。注意：不要频繁收藏，只在真的觉得有意思/好用/戳中你时才偷图；收藏后你可以在 qq_list_stickers 里看到并继续使用。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1001,7 +1104,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.saveSticker !== false) {
   defineTool(
     'qq_save_sticker',
-    '把一张图片保存进你的 QQ 收藏表情库（保存后就能用 qq_send_sticker 发送）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链，B 站图床会自动带 Referer）。适合：看到一张好图/梗图想收进表情库以后用。remark 写一句最多 20 字的备注帮你以后认出来。不要频繁保存，先看图确认内容。',
+    '把一张**外部**图片保存进你的 QQ 收藏表情库（保存后就能用 qq_send_sticker 发送）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链，但目标站点必须命中 socialV2.image.refererAllow 白名单）。**注意：聊天里别人发的图片/表情不要用这个工具**——那种图请用 qq_collect_sticker(messageId=那条消息)，它走网关取字节，不受白名单限制也不怕链接过期；只有图库图片、base64、或白名单图床（B 站等）上的外部图才用本工具。remark 写一句最多 20 字的备注帮你以后认出来。不要频繁保存，先看图确认内容。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1334,7 +1437,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.setStickerR
 if (cfg.socialV2?.tools?.getForwardMsg !== false) {
   defineTool(
     'qq_get_forward_msg',
-    '查看当前会话中出现的合并转发消息/聊天记录内容（只读）。当消息文本里出现 `[转发消息 id=...]`，或 `qq_get_unread_messages` / `qq_get_recent_messages` / `qq_get_message_detail` 返回的某条消息带 `forwardIds` / `hasForward: true` 时调用。只能查看当前会话确实收到过的转发消息 id，不能任意读取。返回内容会包含每条消息的 text、media（图片/表情元数据）与 nestedForwardIds；如果合并转发里有图片，工具会直接把最多 5 张图片以图像内容返回给视觉模型；如果里面有嵌套合并转发，会附带嵌套转发 id 和前几条预览，必要时可继续用本工具查看嵌套 id。',
+    '查看当前会话中出现的合并转发消息/聊天记录内容（只读）。当消息文本里出现 `[转发消息 id=...]`，或 `qq_get_unread_messages` / `qq_get_recent_messages` / `qq_get_message_detail` 返回的某条消息带 `forwardIds` / `hasForward: true` 时调用。只能查看当前会话确实收到过的转发消息 id，不能任意读取。返回内容会包含每条消息的 text、media（图片/表情元数据）、card（卡片消息，`card.url` 是完整链接）与 nestedForwardIds；如果合并转发里有图片，工具会直接把最多 5 张图片以图像内容返回给视觉模型；如果里面有嵌套合并转发，会附带嵌套转发 id 和前几条预览，必要时可继续用本工具查看嵌套 id。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
