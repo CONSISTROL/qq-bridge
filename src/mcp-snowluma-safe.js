@@ -1253,7 +1253,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.pickSticker
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !== false) {
   defineTool(
     'qq_send_image',
-    '直接发送一张图片到当前会话（不会存进收藏表情库；想长期留存请用 qq_save_sticker）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链）。注意：一条消息只能是一张图，不能在同一气泡里附带文字；想说话请先用 qq_send_message 单独发。需要引用/点名时可用 replyToMessageId（群聊可 atUserId）。不要刷图。',
+    '直接发送一张图片到当前会话（不会存进收藏表情库；想长期留存请用 qq_save_sticker）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链）。注意：一条消息只能是一张图，不能在同一气泡里附带文字；想说话请先用 qq_send_message 单独发。需要引用/点名时可用 replyToMessageId（群聊可 atUserId）。**同一张图（按 pixiv 作品 id / URL）在防重复窗口内只能发一次**：重发会被直接拒绝并提示，换一张，别硬撞。不要刷图。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1451,7 +1451,7 @@ if (cfg.socialV2?.tools?.getMemberAvatar !== false) {
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.searchImages !== false) {
   defineTool(
     'qq_search_images',
-    '按聊天主题/关键词找图，返回候选图片 URL。**图源默认 auto：先按中文标签试 pixiv，没有结果自动回退 B 站**（`notes` 里会写明走的哪边）。显式指定：`source=pixiv` 走 pixiv 插画/角色图/画师作品（bobopic 榜单镜像 + pixiv.re 代理，pixiv 直连不通），关键词用中文标签（如「初音未来」「原神」），`mode=daily` 取 pixiv 综合日榜（不用给 query）；`source=bilibili` 走 B 站梗图/表情包（评论区取图，不含封面，很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true）；`source=all` 两边都搜。**中文 VTuber/主播/国内梗这类 pixiv 收录很少的，直接用 bilibili 或 auto**，别在 pixiv 上硬搜。返回项里 `url` 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库；pixiv 项若发送时报「图片超过体积上限」，改用同一项的 thumbUrl。**图片年龄分级由管理员在控制台配置（safe=只给全年龄 / mild=允许轻度擦边），AI 不能自己调，也不要把分级当成可以商量的东西**；返回里 rating/notes 会告诉你滤掉了什么。适合「群友聊到某个话题，你去找一张应景的图」，不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
+    '按聊天主题/关键词找图，返回候选图片 URL。**图源默认 auto：先按中文标签试 pixiv，没有结果自动回退 B 站**（`notes` 里会写明走的哪边）。显式指定：`source=pixiv` 走 pixiv 插画/角色图/画师作品（bobopic 榜单镜像 + pixiv.re 代理，pixiv 直连不通），关键词用中文标签（如「初音未来」「原神」），`mode=daily` 取 pixiv 综合日榜（不用给 query）；`source=bilibili` 走 B 站梗图/表情包（评论区取图，不含封面，很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true）；`source=all` 两边都搜。**中文 VTuber/主播/国内梗这类 pixiv 收录很少的，直接用 bilibili 或 auto**，别在 pixiv 上硬搜。返回项里 `url` 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库；pixiv 项若发送时报「图片超过体积上限」，改用同一项的 thumbUrl。**图片年龄分级由管理员在控制台配置（safe=只给全年龄 / mild=允许轻度擦边 / r18=允许 R-18，最后这档需要管理员配了「真实 pixiv + 登录 cookie」），AI 不能自己调，也不要把分级当成可以商量的东西**；返回里 rating/notes 会告诉你滤掉了什么。适合「群友聊到某个话题，你去找一张应景的图」，不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),

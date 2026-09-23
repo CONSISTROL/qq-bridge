@@ -9,6 +9,7 @@ import dns from 'node:dns';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
+import tls from 'node:tls';
 import { StringDecoder } from 'node:string_decoder';
 
 const dnsLookup = dns.promises.lookup;
@@ -148,6 +149,16 @@ export async function validateFetchUrl(raw) {
 }
 
 const REQUEST_TIMEOUT_MS = 20000;
+
+/**
+ * 单次请求总时限（含 TCP/TLS、响应头、响应体）。
+ * 默认 20s；调用方可传 `options.timeoutMs`（正安全整数，上限 5 分钟）。
+ * 非法的值一律退回默认 —— 这个参数会直接决定连接存活多久，不能让它变成负数/Infinity。
+ */
+function requestTimeout(options) {
+  const value = Number(options?.timeoutMs);
+  return Number.isSafeInteger(value) && value > 0 && value <= 300000 ? value : REQUEST_TIMEOUT_MS;
+}
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function validateLimit(value, name) {
@@ -157,11 +168,14 @@ function validateLimit(value, name) {
 // 使用已校验的 IP 发起请求，保留原始 Host/SNI，禁止重新解析 DNS。
 // 总时限包含 TCP/TLS、响应头和响应体；仅 socket idle timeout 无法阻止慢速滴流。
 /**
- * 图片抓取允许携带的自定义请求头白名单。
- * 只放行 Referer / User-Agent（B 站等图床有防盗链），且拒绝 CRLF 注入。
+ * 允许携带的自定义请求头白名单。
+ * 只放行 Referer / User-Agent / Cookie，且拒绝 CRLF 注入。
+ * - Referer：B 站、pixiv（i.pximg.net 防盗链）必需。
+ * - Cookie：pixiv 的 R-18 搜索必须带登录会话；值来自本机 config.json（管理员填的），
+ *   不是 AI/群友可控的输入。仍然只在**第一跳**发送，重定向后不带（避免泄漏给第三方域名）。
  * 绝不接受任意 header —— 避免这个安全下载器被当成可定制的 HTTP 代理。
  */
-const ALLOWED_IMAGE_HEADERS = new Set(['referer', 'user-agent']);
+const ALLOWED_IMAGE_HEADERS = new Set(['referer', 'user-agent', 'cookie']);
 
 export function sanitizeImageHeaders(headers) {
   const out = {};
@@ -177,7 +191,64 @@ export function sanitizeImageHeaders(headers) {
   return out;
 }
 
-function requestOnce(url, ip, limit, binary = false, extraHeaders = {}) {
+/**
+ * 解析代理配置。只接受 http:// 代理（Clash 的 mixed-port / 大多数本地代理都是这种）；
+ * https:// 代理要先给代理本身做一层 TLS，本项目没这个需求，直接拒绝而不是悄悄降级。
+ * @returns {{host:string, port:number}|null} null 表示没配代理（走直连）
+ */
+export function parseProxy(proxyUrl) {
+  const raw = String(proxyUrl ?? '').trim();
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw); } catch { throw new Error(`代理地址无效：${raw}`); }
+  if (url.protocol !== 'http:') throw new Error(`只支持 http:// 代理，收到 ${url.protocol}//`);
+  if (!url.hostname) throw new Error('代理地址缺少主机名');
+  return { host: url.hostname, port: Number(url.port) || 80 };
+}
+
+/**
+ * 通过 HTTP 代理向目标建一条 TCP/TLS 隧道（CONNECT）。
+ *
+ * 只在调用方显式传 `options.proxy` 时才会走到这里——目标站点选不选代理由调用方决定
+ * （桥接只对 pixiv 系域名开代理，bobopic/B站 继续直连）。
+ * `tls.connect(..., { servername })` 仍然校验证书，隧道本身不影响证书验证。
+ */
+function connectViaProxy(proxy, targetHost, targetPort, secure, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (error, socket) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(socket);
+    };
+    const timer = setTimeout(() => done(new Error(`代理连接超时：${proxy.host}:${proxy.port}`)), timeoutMs);
+    timer.unref?.();
+    const req = http.request({
+      host: proxy.host,
+      port: proxy.port,
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: { host: `${targetHost}:${targetPort}` },
+      timeout: timeoutMs
+    });
+    req.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        done(new Error(`代理拒绝 CONNECT（HTTP ${res.statusCode}）：${targetHost}:${targetPort}`));
+        return;
+      }
+      if (!secure) { done(null, socket); return; }
+      const tlsSocket = tls.connect({ socket, servername: targetHost }, () => done(null, tlsSocket));
+      tlsSocket.on('error', (error) => done(error));
+    });
+    req.on('timeout', () => { req.destroy(new Error(`代理连接超时：${proxy.host}:${proxy.port}`)); });
+    req.on('error', (error) => done(error));
+    req.end();
+  });
+}
+
+function requestOnce(url, ip, limit, binary = false, extraHeaders = {}, timeoutMs = REQUEST_TIMEOUT_MS, proxy = null) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let req;
@@ -194,84 +265,98 @@ function requestOnce(url, ip, limit, binary = false, extraHeaders = {}) {
       finish(error);
       req?.destroy(error);
       response?.destroy();
-    }, REQUEST_TIMEOUT_MS);
+    }, timeoutMs);
     const mod = url.protocol === 'https:' ? https : http;
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
-    try {
-      req = mod.request({
-        hostname: ip,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'GET',
-        headers: {
-          host: url.host,
-          'user-agent': 'Mozilla/5.0',
-          accept: binary ? 'image/*,*/*;q=0.8' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'accept-language': 'zh-CN,zh;q=0.9',
-          ...extraHeaders,
-        },
-        servername: url.protocol === 'https:' && !net.isIP(hostname) ? hostname : undefined,
-        rejectUnauthorized: url.protocol === 'https:',
-        timeout: REQUEST_TIMEOUT_MS,
-      }, (res) => {
-        response = res;
-        res.on('error', (error) => finish(error));
-        res.on('aborted', () => finish(new Error('响应体读取中断')));
-        res.on('close', () => {
-          if (!res.complete) finish(new Error('响应体读取中断'));
-        });
-        if (settled) { res.destroy(); return; }
-        const statusCode = res.statusCode || 0;
-        if (REDIRECT_STATUSES.has(statusCode)) {
-          finish(null, { statusCode, redirect: String(res.headers.location || '') });
-          // 不下载重定向正文：攻击者可以发送无限正文消耗连接和带宽。
-          res.destroy();
-          return;
-        }
-        const chunks = [];
-        const decoder = binary ? null : new StringDecoder('utf8');
-        let size = 0;
-        const appendText = (text) => {
-          const points = Array.from(text);
-          const remaining = limit - size;
-          chunks.push(points.slice(0, remaining).join(''));
-          size += Math.min(points.length, remaining);
-          if (size >= limit) {
-            finish(null, { statusCode, body: chunks.join(''), truncated: true });
-            res.destroy();
-          }
-        };
-        res.on('data', (chunk) => {
-          if (settled) return;
-          if (!binary) { appendText(decoder.write(chunk)); return; }
-          size += chunk.length;
-          if (size > limit) {
-            finish(new Error(`图片超过大小限制（${limit} 字节）`));
+    const port = url.port || (url.protocol === 'https:' ? 443 : 80);
+    // 代理模式下由代理侧解析目标域名（本机仍先跑一遍 resolveSafeHost 做内网拦截），
+    // 因此 hostname 用回真实域名、并挂上单次隧道 socket；直连模式仍钉死已校验的 IP。
+    const start = (tunnelSocket) => {
+      if (settled) { tunnelSocket?.destroy(); return; }
+      try {
+        req = mod.request({
+          hostname: tunnelSocket ? hostname : ip,
+          port,
+          path: url.pathname + url.search,
+          method: 'GET',
+          headers: {
+            host: url.host,
+            'user-agent': 'Mozilla/5.0',
+            accept: binary ? 'image/*,*/*;q=0.8' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-language': 'zh-CN,zh;q=0.9',
+            ...extraHeaders,
+          },
+          ...(tunnelSocket ? { createConnection: () => tunnelSocket } : {}),
+          servername: url.protocol === 'https:' && !net.isIP(hostname) ? hostname : undefined,
+          rejectUnauthorized: url.protocol === 'https:',
+          timeout: timeoutMs,
+        }, (res) => {
+          response = res;
+          res.on('error', (error) => finish(error));
+          res.on('aborted', () => finish(new Error('响应体读取中断')));
+          res.on('close', () => {
+            if (!res.complete) finish(new Error('响应体读取中断'));
+          });
+          if (settled) { res.destroy(); return; }
+          const statusCode = res.statusCode || 0;
+          if (REDIRECT_STATUSES.has(statusCode)) {
+            finish(null, { statusCode, redirect: String(res.headers.location || '') });
+            // 不下载重定向正文：攻击者可以发送无限正文消耗连接和带宽。
             res.destroy();
             return;
           }
-          chunks.push(chunk);
+          const chunks = [];
+          const decoder = binary ? null : new StringDecoder('utf8');
+          let size = 0;
+          const appendText = (text) => {
+            const points = Array.from(text);
+            const remaining = limit - size;
+            chunks.push(points.slice(0, remaining).join(''));
+            size += Math.min(points.length, remaining);
+            if (size >= limit) {
+              finish(null, { statusCode, body: chunks.join(''), truncated: true });
+              res.destroy();
+            }
+          };
+          res.on('data', (chunk) => {
+            if (settled) return;
+            if (!binary) { appendText(decoder.write(chunk)); return; }
+            size += chunk.length;
+            if (size > limit) {
+              finish(new Error(`图片超过大小限制（${limit} 字节）`));
+              res.destroy();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          res.on('end', () => {
+            if (settled) return;
+            if (binary) finish(null, { statusCode, buffer: Buffer.concat(chunks) });
+            else {
+              appendText(decoder.end());
+              finish(null, { statusCode, body: chunks.join(''), truncated: false });
+            }
+          });
         });
-        res.on('end', () => {
-          if (settled) return;
-          if (binary) finish(null, { statusCode, buffer: Buffer.concat(chunks) });
-          else {
-            appendText(decoder.end());
-            finish(null, { statusCode, body: chunks.join(''), truncated: false });
-          }
+        req.on('timeout', () => {
+          const error = new Error(`请求超时：${url.hostname}`);
+          finish(error);
+          req.destroy(error);
+          response?.destroy();
         });
-      });
-      req.on('timeout', () => {
-        const error = new Error(`请求超时：${url.hostname}`);
+        req.on('error', (error) => finish(error));
+        req.end();
+      } catch (error) {
         finish(error);
-        req.destroy(error);
-        response?.destroy();
-      });
-      req.on('error', (error) => finish(error));
-      req.end();
-    } catch (error) {
-      finish(error);
-      req?.destroy();
+        req?.destroy();
+      }
+    };
+    if (proxy) {
+      connectViaProxy(proxy, hostname, Number(port), url.protocol === 'https:', timeoutMs)
+        .then((socket) => start(socket))
+        .catch((error) => finish(error));
+    } else {
+      start(null);
     }
   });
 }
@@ -281,10 +366,12 @@ export async function safeFetch(urlString, maxChars = 50000, options = {}) {
   // 自定义头只在第一跳生效，重定向后回到默认（防止把凭据带去别的主机）。
   // 典型用途：很多站点（如 Bing）对裸 "Mozilla/5.0" 返回降级页，必须给完整浏览器 UA。
   const extraHeaders = sanitizeImageHeaders(options.headers);
+  const timeoutMs = requestTimeout(options);
+  const proxy = parseProxy(options.proxy);
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxChars, false, i === 0 ? extraHeaders : {});
+    const result = await requestOnce(url, ip, maxChars, false, i === 0 ? extraHeaders : {}, timeoutMs, proxy);
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
@@ -318,10 +405,12 @@ export function looksLikeImageBuffer(buf) {
 export async function safeFetchBuffer(urlString, maxBytes = 4 * 1024 * 1024, options = {}) {
   validateLimit(maxBytes, 'maxBytes');
   const extraHeaders = sanitizeImageHeaders(options.headers);
+  const timeoutMs = requestTimeout(options);
+  const proxy = parseProxy(options.proxy);
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxBytes, true, i === 0 ? extraHeaders : {});
+    const result = await requestOnce(url, ip, maxBytes, true, i === 0 ? extraHeaders : {}, timeoutMs, proxy);
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

@@ -20,6 +20,11 @@ import * as memberRemarks from '../src/member-remarks.js';
 import * as knowledgeStore from '../src/knowledge-store.js';
 import * as imageAllow from '../src/image-allow.js';
 import * as cardParse from '../src/card-parse.js';
+// bridge.js 的 loadConfig / 搜图接线会调用这些模块：漏掉任意一个，审计会在
+// 「DEFAULT_MILD_TAGS is not defined」这类 ReferenceError 上直接崩，跑不到用例。
+import * as imageRating from '../src/image-rating.js';
+import * as pixivSearch from '../src/pixiv-search.js';
+import * as presetStamp from '../src/preset-stamp.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -74,6 +79,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     sendToQQ, sendStickerV2, handleIncoming, startConsoleServer, cfg, state, api, promptQueues,
     // 「会话繁忙」判定：给审计用例用，验证残留忙标记能被识别成卡死（AI 无响应的那类事故）。
     busyMarkersV2, staleTurnMarkerV2, forceClearBusyV2, v2TurnStartAt, activeWaits, socialV2,
+    getSocialV2State, takeBootstrapV2, resolveImageBuffer, sendImageV2, imageIdentityKey, recentSentImageKeys,
     setMode(value) { currentMode = value; },
     setReady(value) { dshReady = value; },
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
@@ -111,7 +117,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);

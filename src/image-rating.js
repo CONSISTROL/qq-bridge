@@ -1,31 +1,39 @@
 // 图片年龄分级：把「AI 能不能返回这张图」变成一个可配置的档位，而不是散落在各处的 if。
 //
 // 设计边界（重要，别当成 bug）：
-// - 只有两档：`safe`（全年龄，默认）和 `mild`（允许轻度擦边：水着/黑丝/大腿/巨乳这类标签）。
-// - **没有 r18/explicit 档位**。明确色情的内容在任何档位都会被剔除：
-//   EXPLICIT 判定是硬编码的，不是配置项，改 rating 也放不开。
+// - 三档：`safe`（全年龄，默认）、`mild`（允许轻度擦边：水着/黑丝/大腿/巨乳这类标签）、
+//   `r18`（允许 R-18，只有真实 pixiv 源能给出这一档）。档位是阈值：mild 也放行 safe，
+//   r18 放行 safe+mild。
 // - 词表可配：`socialV2.image.ratingWords`（控制台「图片 / 表情来源（含搜图分级）」里改）
 //   · mild       —— 算擦边、safe 档滤掉的词（可增删）
 //   · tolerated  —— 明确划为全年龄的词，优先于 mild（可增删）
-//   · explicitExtra —— 限制级词
+//   · explicitExtra —— 限制级词（可增删）
 // - 判定依据是图源给的标签/标题（bobopic 的 alt 文本），属于启发式：
 //   宁可多滤（safe 档会误杀一些正常图），也不放过；没有标签的来源只能按来源兜底。
-//   2026-09 按实际误杀情况放宽过一次：把一批构图/场景/玩梗标签移到 TOLERATED_TAGS
-//   （见下），它们不再算擦边；EXPLICIT 那层没动。
+//   2026-09 按实际误杀情况放宽过一次：把一批构图/场景/玩梗标签移到 TOLERATED_TAGS（见下），
+//   它们不再算擦边。
 //
-// 术语：itemRating = 这张图被判定的档位（'safe' | 'mild' | 'explicit'）；
-//       configured = 管理员在 config.json 里设的档位（'safe' | 'mild'）。
+// 术语：itemRating = 这张图被判定的档位（'safe' | 'mild' | 'r18' | 'explicit'）；
+//       configured = 管理员在 config.json 里设的档位（'safe' | 'mild' | 'r18'）。
+// 'r18' 只由**真实 pixiv 源**给出（xRestrict=1），bobopic 那条链路给不出来。
 
 /** 可配置的档位（值越大越宽松）。explicit 不在其中，它永远被拒。 */
-export const IMAGE_RATINGS = Object.freeze(['safe', 'mild']);
+export const IMAGE_RATINGS = Object.freeze(['safe', 'mild', 'r18']);
 export const DEFAULT_IMAGE_RATING = 'safe';
 
-/** 归一化管理员配置：只认 'mild'，其他一律退回 'safe'（配置写错时收紧而不是放宽）。 */
+/** 各档位的宽松度排序（判「这张图能不能过」用）。 */
+const RATING_RANK = Object.freeze({ safe: 0, mild: 1, r18: 2 });
+
+/** 归一化管理员配置：只认 'mild' / 'r18'，其他一律退回 'safe'（配置写错时收紧而不是放宽）。 */
 export function normalizeImageRating(value) {
-  return String(value ?? '').trim().toLowerCase() === 'mild' ? 'mild' : DEFAULT_IMAGE_RATING;
+  const v = String(value ?? '').trim().toLowerCase();
+  return v === 'mild' || v === 'r18' ? v : DEFAULT_IMAGE_RATING;
 }
 
-/** 限制级标签。用整标签精确匹配（避免子串误伤）。 */
+/**
+ * 内置的标签级限制级词表。**当前是有意为空的**（2026-09 策略）：标签级 explicit 拦截
+ * 完全由管理员的 `ratingWords.explicitExtra` 决定，写进 tolerated/mild 也删不掉它。
+ */
 export const EXPLICIT_TAGS = Object.freeze([]);
 
 /**
@@ -87,8 +95,13 @@ export function normalizeRatingWords(raw) {
 /** 默认词表（未配置时使用）。 */
 export const DEFAULT_RATING_WORDS = Object.freeze(normalizeRatingWords(null));
 
-/** 标题里的明确色情特征（标签缺失时的兜底，不可配置）。 */
-const EXPLICIT_TITLE_RE = /(r-?18|18禁|成人向|エロ|えっち|エッチ|全裸|ヌード|性行為|セックス|中出|おっぱい|裸|露出|痴女)/i;
+/**
+ * 标题里的明确色情特征。**2026-09-24 起有意为空字符串**：不做标题兜底，
+ * explicit 只认 `explicitExtra`（标签级）。用 `''` 而不是空正则——`new RegExp('')` 会匹配一切。
+ * 想恢复标题兜底，把下面这行换成历史正则即可：
+ *   /(r-?18|18禁|成人向|エロ|えっち|エッチ|全裸|ヌード|性行為|セックス|中出|おっぱい|裸|露出|痴女)/i
+ */
+export const EXPLICIT_TITLE_RE = '';
 
 /** 把标签串（逗号分隔）切成小写 token 数组。 */
 export function splitTags(tags) {
@@ -105,13 +118,13 @@ export function splitTags(tags) {
 export function classifyImageItem({ tags = [], title = '', source = 'tag' } = {}, words) {
   const lists = words ?? DEFAULT_RATING_WORDS;
   const tokens = splitTags(tags);
-  // 限制级 = 内置词表 ∪ 管理员补充词。
+  // 限制级 = 内置词表（当前为空）∪ 管理员补充词；tolerated / mild 都删不掉它们。
   const explicitSet = new Set([...EXPLICIT_TAGS.map((t) => t.toLowerCase()), ...(lists.explicitExtra ?? [])]);
   const toleratedSet = new Set(lists.tolerated ?? []);
   const mildSet = new Set(lists.mild ?? []);
   const hit = tokens.find((t) => explicitSet.has(t));
   if (hit) return { rating: 'explicit', reason: `标签命中限制级：${hit}` };
-  if (EXPLICIT_TITLE_RE.test(String(title))) return { rating: 'explicit', reason: '标题命中限制级特征' };
+  if (EXPLICIT_TITLE_RE && EXPLICIT_TITLE_RE.test(String(title))) return { rating: 'explicit', reason: '标题命中限制级特征' };
   // tolerated 优先于 mild：两个词表写重了也不会因为写歪而放行/收紧。
   const mildHit = tokens.find((t) => mildSet.has(t) && !toleratedSet.has(t));
   if (mildHit) return { rating: 'mild', reason: `标签命中擦边：${mildHit}` };
@@ -120,12 +133,30 @@ export function classifyImageItem({ tags = [], title = '', source = 'tag' } = {}
   return { rating: 'safe', reason: source === 'daily' ? '无标签，按榜单来源视为全年龄' : '未命中任何敏感标签' };
 }
 
-/** 这张图在指定档位下能不能返回。 */
+/**
+ * 标签级限制级是**硬底线**：只要标签命中 explicitExtra（或内置表），这张图直接判 explicit、
+ * 任何档位都不返回。
+ *
+ * 为什么需要单独一个函数：图源自己给的 rating（真实 pixiv 的 `xRestrict=1` → 'r18'）在
+ * `filterByRating` 里会**短路掉词表判定**。结果是「管理员加了限制级词」对真实 pixiv 结果完全
+ * 不生效——实测 `ナヒーダ` 的 R-18 结果里 `ロリ` 系作品照样能发出去。这里把词表判定提到
+ * 「信源自带 rating」之前，保证底线不依赖图源自觉打标。
+ *
+ * @returns {{rating:'explicit',reason:string}|null} 命中返回 explicit，未命中返回 null
+ */
+export function explicitTagVerdict(item, words) {
+  const lists = words ?? DEFAULT_RATING_WORDS;
+  const explicitSet = new Set([...EXPLICIT_TAGS.map((t) => t.toLowerCase()), ...(lists.explicitExtra ?? [])]);
+  const hit = splitTags(item?.tags).find((t) => explicitSet.has(t));
+  return hit ? { rating: 'explicit', reason: `标签命中限制级：${hit}` } : null;
+}
+
+/** 这张图在指定档位下能不能返回（档位是阈值：safe ⊂ mild ⊂ r18）。 */
 export function imageRatingAllowed(itemRating, configured) {
   if (itemRating === 'explicit') return false; // 任何档位都不放行
-  const level = normalizeImageRating(configured);
-  if (level === 'mild') return true;
-  return itemRating === 'safe';
+  const level = RATING_RANK[normalizeImageRating(configured)] ?? 0;
+  const item = RATING_RANK[itemRating] ?? 0; // 未知/缺省按 safe 处理
+  return item <= level;
 }
 
 /** 批量过滤，并给出统计（便于日志/回执里说明"滤掉了什么"）。 */
@@ -134,9 +165,12 @@ export function filterByRating(items, configured, words) {
   const kept = [];
   const dropped = { explicit: 0, byRating: 0 };
   for (const item of list) {
-    const verdict = item?.rating
-      ? { rating: item.rating, reason: item.ratingReason || '' }
-      : classifyImageItem(item, words);
+    // 标签级底线优先于「图源自带的 rating」：xRestrict=1 只说明是 R-18，
+    // 不代表它没踩 explicitExtra（ロリ 之类）。这一步保证词表对真实 pixiv 也生效。
+    const verdict = explicitTagVerdict(item, words)
+      ?? (item?.rating
+        ? { rating: item.rating, reason: item.ratingReason || '' }
+        : classifyImageItem(item, words));
     const enriched = { ...item, rating: verdict.rating, ratingReason: verdict.reason };
     if (verdict.rating === 'explicit') { dropped.explicit += 1; continue; }
     if (!imageRatingAllowed(verdict.rating, configured)) { dropped.byRating += 1; continue; }

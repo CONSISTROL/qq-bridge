@@ -93,6 +93,7 @@
     "autoReplyCheckMs": 30000,
     "agentPreset": "qq-chat-v2",
     "provideRecommendations": true,
+    "presetRefresh": true,
     "tools": {
       "getPrompt": true,
       "getUnread": true,
@@ -211,6 +212,7 @@
       "maxBytes": 5242880,
       "maxPerMinute": 5,
       "maxPerHour": 30,
+      "repeatGuardMs": 21600000,
       "rating": "safe",
       "ratingWords": {
         "mild": [
@@ -238,13 +240,19 @@
         "https://tianquan.gtimg.cn",
         "https://pixiv.re",
         "https://i.pixiv.re",
-        "https://img.pixivdaily.com"
+        "https://img.pixivdaily.com",
+        "https://i.pximg.net"
       ],
       "refererHosts": [
         "hdslb.com",
         "bilibili.com"
       ],
-      "imageReferer": "https://www.bilibili.com"
+      "imageReferer": "https://www.bilibili.com",
+      "pixiv": {
+        "enabled": false,
+        "proxy": "",
+        "cookie": ""
+      }
     },
     "proactive": {
       "enabled": true,

@@ -149,20 +149,33 @@ node scripts/setup-dsh.mjs
    npm start          # 前台运行（崩溃不自动重启）
    ```
    看到 `SnowLuma 已连接` 即成功；然后 QQ 上给机器人账号发条消息测试。
-   Windows 想要「崩溃自动重启」请改用 `start.bat`（见下节）。
+   想要「崩溃自动重启」请用守护脚本：Windows `start.bat`，Linux/macOS `./start.sh`（见下节）。
 
 ## 运行与运维
 
 ```bash
-npm start          # 或双击 start.bat（守护模式：崩溃自动重启，关闭窗口即停止）
+npm start          # 前台运行，崩溃不自动重启（等价于 node src/bridge.js）
+
+# Windows
+start.bat          # 守护模式：崩溃 5 秒后自动拉起；窗口别关
+restart.bat        # 杀旧实例 → 清锁 → 重开守护窗口
+
+# Linux / macOS（与上面两个 .bat 语义一致）
+./start.sh         # 守护模式（前台；Ctrl+C 退出）。后台跑：nohup ./start.sh >state/bridge-run.log 2>&1 &
+./restart.sh       # 停旧守护+桥接 → 清锁 → nohup 后台拉守护（./restart.sh --fg 则前台）
+./stop.sh          # 停止守护与桥接、清理单实例锁
+./status.sh        # 看守护/桥接 PID、锁、控制台端口、最近日志
+# 也可以走 npm：npm run start:guard / npm run restart / npm run stop / npm run status
 ```
 
 **⚠️ 重要**：
 - **桥接只能运行一个实例**（有单实例锁，重复启动会被拒绝并提示"已有实例在运行"）
-- **用 start.bat 启动**（守护模式），窗口别关——桥接崩溃会在 5 秒后自动拉起
-- 桥接异常/消息无反应时：双击 `restart.bat`（自动杀旧实例 → 清理锁 → 重新启动守护）
+- **想让它崩了自动回来，就用守护脚本**：Windows `start.bat` / Linux `start.sh`（都设 `QQ_BRIDGE_GUARDED=1`）。直接 `node src/bridge.js` 或 `npm start` 都是前台单进程，崩了不会自己回来。
+- 桥接异常/消息无反应时：Windows 双击 `restart.bat`；Linux/macOS 跑 `./restart.sh`（都是「杀旧实例 → 清锁 → 重开守护」）。
+- **控制台的「重启桥接」按钮在三种情形下都可用**：守护模式（`start.bat` / `start.sh` 设了 `QQ_BRIDGE_GUARDED=1`）只让进程退出、由守护 5 秒后拉起；手动 `node src/bridge.js` / `npm start` 没有守护，桥接会自己 detached 拉一个新进程（约 1 秒）再退出——以前这种情况按一下按钮就永久下线。
 - **重启 DSH 通常不需要动桥接**：每 5 秒探活，DSH 不可用期间收到的 QQ 消息在桥接进程内排队（最多 50 条/会话，满后丢最旧项），恢复后尝试补投。桥接进程退出会丢失内存队列；断线期间已经结束的回复暂不保证补发。
 - 修改 `config.json` / `roles/` / `state/current-role.json` 后重启桥接生效；修改 `~/.dsh/.agent-presets/qq-chat*/` 或 MCP 配置后重启 DSH 生效
+- **改了 preset 文本（`dsh/agent-presets/qq-chat*/agent.cordis.yml`）后**：先 `node scripts/setup-dsh.mjs` 装到 `~/.dsh/.agent-presets/`，再**重启桥接**。DSH 只在建会话时读一次 preset（`agent-preset/locked`），桥接会比对每个会话的 preset 组成戳，发现文件变过就让该会话退役、下条消息按新 preset 重建（`socialV2.presetRefresh: false` 可关掉，改为保留旧上下文）。所以不必为了改预设重启 DSH，也不会再出现「改了预设、群里照旧」。
 
 日志示例：
 

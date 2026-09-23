@@ -9,6 +9,10 @@
   },
   "scripts": {
     "start": "node src/bridge.js",
+    "start:guard": "bash start.sh",
+    "stop": "bash stop.sh",
+    "restart": "bash restart.sh",
+    "status": "bash status.sh",
     "test:audit": "node scripts/test-audit.mjs",
     "self-test": "node src/self-test.js",
     "test-md": "node scripts/test-md-to-plain.mjs",

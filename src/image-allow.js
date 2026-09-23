@@ -15,6 +15,9 @@ export const DEFAULT_REFERER_ALLOW = Object.freeze([
   'https://i0.hdslb.com',
   'https://i1.hdslb.com',
   'https://i2.hdslb.com',
+  // pixiv 原图 CDN：必须带 Referer: https://www.pixiv.net/（见 bridge 的 resolveImageBuffer），
+  // 且本机直连不通，要走 socialV2.image.pixiv.proxy。
+  'https://i.pximg.net',
   'https://multimedia.nt.qq.com.cn',
   'https://multimedia.qpic.cn',
   'https://gchat.qpic.cn',

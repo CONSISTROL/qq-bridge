@@ -23,7 +23,7 @@ export async function mount(root) {
   });
 
   $('#restartBtn', view).addEventListener('click', async () => {
-    if (!confirmDanger('确定重启桥接？')) return;
+    if (!confirmDanger('确定重启桥接？\n\n• 守护模式（start.bat）→ 退出后由守护窗口 5 秒拉起\n• 手动 node src/bridge.js → 桥接自己拉一个新进程（约 1 秒）\n\n重启期间 QQ 消息不会入队，会丢失约 5~10 秒窗口内的消息。')) return;
     const r = await api('/api/restart', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#restartMsg', view), r.message || r.error || '正在重启…', r.ok !== false);
   });
