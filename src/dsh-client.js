@@ -31,8 +31,11 @@ export function discoverDshLaunchToken() {
     for (const { name } of files) {
       try {
         const text = fs.readFileSync(path.join(logsDir, name), 'utf8');
-        const match = text.match(/[?&]token=([A-Za-z0-9_-]+)/);
-        if (match) return match[1];
+        // 必须取**最后**一个：guard 日志是追加写、跨多次 DSH 重启（本机实测 6 次启动
+        // 都在同一个文件里）。取第一个匹配等于永远用最早那次启动的 token —— DSH 一重启
+        // 就永久 401，而且 invalidateAuth() 重新发现拿到的还是它，自愈逻辑等于失效。
+        const matches = [...text.matchAll(/[?&]token=([A-Za-z0-9_-]+)/g)];
+        if (matches.length) return matches[matches.length - 1][1];
       } catch {
         // 单个日志文件可能正被 DSH 占用/轮转，跳过继续看更早的日志。
       }

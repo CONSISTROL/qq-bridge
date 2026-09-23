@@ -15,6 +15,7 @@ import * as forward from '../src/forward.js';
 import * as slang from '../src/slang-learner.js';
 import * as sticker from '../src/sticker-lib.js';
 import * as slangIndex from '../src/slang-index.js';
+import * as stickerPicker from '../src/sticker-picker.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -76,7 +77,15 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
   const timers = new Set();
   const context = vm.createContext({
     fs, path, http, crypto, fileURLToPath, URL, Buffer, AbortSignal, console: { log() {}, error() {} },
-    process: { pid: process.pid, platform: process.platform, kill: process.kill, exit: (code) => { throw new Error('unexpected exit ' + code); } },
+    // env 必须是空对象而不是传真实的 process.env：bridge.js 支持 QQ_BRIDGE_CONFIG /
+    // QQ_BRIDGE_STATE_DIR 做隔离测试，泄漏真实环境变量会让审计读到生产配置/状态目录。
+    process: {
+      pid: process.pid,
+      platform: process.platform,
+      kill: process.kill,
+      exit: (code) => { throw new Error('unexpected exit ' + code); },
+      env: {}
+    },
     setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); return timer; },
     clearTimeout, setInterval: () => ({ unref() {} }), clearInterval: () => {},
     NodeApiClient: class { constructor() { return api; } },
@@ -96,7 +105,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);
