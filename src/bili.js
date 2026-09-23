@@ -225,5 +225,15 @@ export function createBiliClient({ cookie = '', timeoutMs = 20000 } = {}) {
     return { word: kw, videos, comments: comments.sort((a, b) => b.like - a.like).slice(0, commentCount) };
   }
 
-  return { api, searchImages, searchVideos, lookupKnowledge, commentTexts, get cookie() { return jar; } };
+  /**
+   * 下载二进制（图片/雪碧图）。B站 CDN 有防盗链，必须带 referer。
+   * 走 safeFetchBuffer（SSRF 白名单 + 大小上限），不自己拼 http 请求。
+   */
+  async function fetchBuffer(url, maxBytes = 8 * 1024 * 1024) {
+    const abs = String(url).startsWith('//') ? `https:${url}` : String(url);
+    const { buffer } = await safeFetchBuffer(abs, maxBytes, { headers: { referer: 'https://www.bilibili.com' } });
+    return buffer;
+  }
+
+  return { api, searchImages, searchVideos, lookupKnowledge, commentTexts, fetchBuffer, get cookie() { return jar; } };
 }

@@ -17,6 +17,7 @@ import * as sticker from '../src/sticker-lib.js';
 import * as slangIndex from '../src/slang-index.js';
 import * as stickerPicker from '../src/sticker-picker.js';
 import * as memberRemarks from '../src/member-remarks.js';
+import * as knowledgeStore from '../src/knowledge-store.js';
 import * as imageAllow from '../src/image-allow.js';
 import * as cardParse from '../src/card-parse.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
@@ -110,7 +111,7 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...imageAllow, ...cardParse,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);

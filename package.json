@@ -38,9 +38,13 @@
     "eval:rag": "node scripts/eval-slang-retrieval.mjs",
     "test:rag": "node scripts/test-rag-retrieval.mjs",
     "test:member-remarks": "node scripts/test-member-remarks.mjs",
+    "test-knowledge": "node scripts/test-knowledge-store.mjs",
+    "test-knowledge-e2e": "node scripts/test-knowledge-e2e.mjs",
     "test:card-parse": "node scripts/test-card-parse.mjs",
     "test:html-text": "node scripts/test-html-text.mjs",
-    "test:browser-render": "node scripts/test-browser-render.mjs"
+    "test:browser-render": "node scripts/test-browser-render.mjs",
+    "test:video": "node scripts/test-bili-video.mjs",
+    "test-console-dirty": "node scripts/test-console-dirty.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
@@ -49,7 +53,8 @@
     "@snowluma/mcp": "^1.14.10",
     "@snowluma/sdk": "^1.14.0",
     "js-yaml": "^4.3.2",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "sharp": "^0.33.5"
   },
   "optionalDependencies": {
     "@xenova/transformers": "^2.17.2",

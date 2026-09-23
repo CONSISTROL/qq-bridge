@@ -38,6 +38,7 @@
 | 内核 | `src/mcp-snowluma-safe.js` | 给 DSH agent 用的安全 QQ 工具（只读 + 白名单发送） |
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
 | 内核 | `src/slang-learner.js` | 群聊黑话/网络用语学习：存储、候选提取、研究调度、注入 |
+| 内核 | `src/knowledge-store.js` | 群知识库（问题→答案）：指纹去重、命中计数、注入渲染、落盘 |
 | 内核 | `src/mcp-web-search-safe.js` | 给 DSH agent 用的只读 Web Search MCP（查网络用语/梗） |
 | 外核 | `public/console/` | 本地控制台（左侧导航 + hash 路由分区）：外壳 `index.html` + `style.css` + `core/`（api / dom / router / poll / status / fragments / theme）+ `views/*.js|html`（每分区一对，markup 与逻辑同处）；**默认浅色，左下角可切深色**（`scripts/test-console-theme.mjs` 守护） |
 | 外核 | `config.json` | 运行配置（白名单、QQ/DSH 地址、社交参数）；**不入库** |
@@ -59,6 +60,7 @@ qq-bridge/
 │   ├── mcp-host-server.js      # MCP（SnowLuma 进程管理，默认禁用启停）
 │   ├── mcp-web-search-safe.js  # 安全 MCP（只读 Web Search/Fetch）
 │   ├── slang-learner.js        # 黑话/网络用语学习模块
+│   ├── knowledge-store.js      # 群知识库（问题→答案，复用黑话的向量检索链路）
 │   ├── member-remarks.js       # 群成员备注库（AI 私有记忆，纯函数）
 │   ├── image-allow.js          # 图片来源白名单 / Referer 判定（纯函数）
 │   ├── card-parse.js           # QQ 卡片消息（json/xml/share）解析（纯函数）
@@ -79,6 +81,7 @@ qq-bridge/
 │           ├── social1.*       # 06 一代仿真模式
 │           ├── social2.*       # 07 二代仿真模式（含工具级配置弹窗）
 │           ├── slang.*         # 08 黑话库 + 08b 本地向量检索
+│           ├── knowledge.*     # 09 群知识库（问题→答案）+ 检索调试
 │           ├── persona.*       # 05 人格 + 11 静默开关
 │           ├── security.*      # 10 白名单 + 12 安全通知 + 12b 控制台令牌
 │           ├── ops.*           # 13 测试发送 + 14 桥接控制
@@ -239,7 +242,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 - 状态/消息：`qq_get_prompt`、`qq_get_unread_messages`、`qq_get_recent_messages`、`qq_get_message_detail`、`qq_get_active_members`、`qq_social_state`
 - 发送/互动：`qq_send_message`、`qq_send_burst`、`qq_send_poke`、`qq_send_sticker`
 - 等待/收尾：`qq_wait_for_messages`、`qq_mark_read`、`qq_set_wake_config`
-- 记忆/黑话/表情：`qq_memory_*`、`qq_slang_query`、`qq_slang_submit`、`qq_list_stickers`、`qq_get_sticker_image`、`qq_sticker_note`、`qq_collect_sticker`
+- 记忆/黑话/知识库/表情：`qq_memory_*`、`qq_slang_query`、`qq_slang_submit`、`qq_knowledge_query`、`qq_knowledge_submit`、`qq_list_stickers`、`qq_get_sticker_image`、`qq_sticker_note`、`qq_collect_sticker`
 - 群成员备注：`qq_get_member_remarks`、`qq_set_member_remark`、`qq_remove_member_remark`（本地私有记忆，见 §5.5）
 - 形象：`qq_get_self_image`
 
@@ -335,7 +338,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
-- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
+- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 群知识库 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
 - 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
 
 ### 控制台前端结构（改 UI 前先读）
@@ -361,6 +364,12 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | 成组参数（数值/概率/文本/多选） | 输入框 | 改完点「保存…」 | `core/dirty.js` 的 `trackDirty()`：显示「有 N 项未保存」、点亮保存按钮、切分区/关页面时拦一下 |
 | 列表选择（黑话批量操作） | 普通勾选框 | 只影响选择状态 | 不写配置，`data-*` + 事件委托 |
 
+`trackDirty()` 只把**用户动过**的改动算成未保存：基线重建后，用户还没碰过那块区域
+（`pointerdown`/`keydown`/`focusin`，弹窗要传 `interactionScope: '#v2CfgBody'`）时凭空出现的值
+一律并进基线。因为浏览器密码管理器会在弹窗打开时自动填充密码框——那不是用户的改动，
+否则「点开 qq_video 的 ⚙ 再点取消」也会弹出「还有 1 项没保存」。新增密码框时记得
+`autocomplete = 'new-password'`（`scripts/test-console-views.mjs` 会守住这条）。
+
 服务端的配置接口（`/api/socialV2/config`、`/api/social`、`/api/slang/config`、`/api/security`）
 都是**字段级/子分区深合并**，所以「只提交一个开关」不会碰其它字段——这是开关能即改即存的前提。
 
@@ -382,6 +391,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `scripts/test-console-theme.mjs` | 控制台主题回归（浅色默认 / 深色持久化 / 变量一致性） |
 | `scripts/test-console-views.mjs` | 控制台前端结构自检（分区契约 / import / #id / 配置分区开关） |
 | `scripts/test-console-router.mjs` | 分区路由回归（重复 hashchange、挂载竞态、未保存离开守卫） |
+| `scripts/test-console-dirty.mjs` | 未保存追踪回归（自动填充/程序写入不算改动、用户操作才算、离开守卫） |
 | `scripts/test-mcp-safe.mjs` | MCP 安全工具自检 |
 | `scripts/test-member-remarks.mjs` | 群成员备注自检（纯函数 + 隔离实例真发 `set_group_card` 到假 OneBot） |
 | `scripts/test-card-parse.mjs` | 卡片消息解析自检（真实卡片 payload + json/xml/share/合并转发） |

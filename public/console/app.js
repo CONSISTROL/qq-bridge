@@ -12,12 +12,13 @@ import * as overview from './views/overview.js';
 import * as social1 from './views/social1.js';
 import * as social2 from './views/social2.js';
 import * as slang from './views/slang.js';
+import * as knowledge from './views/knowledge.js';
 import * as persona from './views/persona.js';
 import * as security from './views/security.js';
 import * as ops from './views/ops.js';
 import * as tools from './views/tools.js';
 
-const VIEWS = [overview, social1, social2, slang, persona, security, ops, tools];
+const VIEWS = [overview, social1, social2, slang, knowledge, persona, security, ops, tools];
 const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '系统'];
 const GROUP_FALLBACK = '系统';
 

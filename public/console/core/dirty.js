@@ -45,9 +45,12 @@ function controlValue(el) {
  * @param {string} opts.selector 参与统计的控件选择器（只放参数类控件，别把开关/搜索框算进去）
  * @param {(count:number)=>void} opts.onChange 数量变化时回调（画提示、点亮保存按钮）
  * @param {string} [opts.label] 离开确认里的名字，如「社交参数」
+ * @param {string} [opts.interactionScope] 判定「用户碰过这块区域」的范围选择器（默认整块 root）。
+ *   工具配置弹窗必须传 '#v2CfgBody'：打开弹窗的 ⚙ 按钮在 root 里但在弹窗之外，
+ *   若按 root 判定，点一下 ⚙ 就算「用户碰过」，紧接着的浏览器自动填充又会被算成改动。
  * @returns {{count:()=>number, markClean:()=>void, dispose:()=>void}}
  */
-export function trackDirty(root, { selector, onChange, label = '当前页面' }) {
+export function trackDirty(root, { selector, onChange, label = '当前页面', interactionScope = null }) {
   const controls = () => $$(selector, root).filter((el) => controlKey(el));
 
   const snapshot = () => {
@@ -59,6 +62,7 @@ export function trackDirty(root, { selector, onChange, label = '当前页面' })
   let baseline = snapshot();
   let dirty = false;
   let unloadArmed = false;
+  let interacted = false;
 
   const count = () => {
     let n = 0;
@@ -85,7 +89,27 @@ export function trackDirty(root, { selector, onChange, label = '当前页面' })
     if (typeof onChange === 'function') onChange(n);
   };
 
-  const onInput = () => sync();
+  // 「用户真的动过这块区域」：点进来、敲键盘、或把焦点放进某个控件。
+  // 自动填充（浏览器密码管理器、扩展）既不点击也不聚焦，只会凭空把值写进去。
+  const inScope = (target) => {
+    if (!interactionScope) return true;
+    return target instanceof Element && Boolean(target.closest(interactionScope));
+  };
+  const onGesture = (e) => { if (e.isTrusted !== false && inScope(e.target)) interacted = true; };
+
+  const onInput = (e) => {
+    const el = e.target;
+    // 基线重建（也就是打开/保存后的那一刻）之后、用户还没碰过这块区域时冒出来的值，
+    // 只可能是自动填充/程序写入 —— 不是用户的改动，直接并进基线。
+    // 否则「打开工具配置再点取消」会凭空弹出「还有 1 项没保存」。
+    if (!interacted && el && el !== document.activeElement && controls().includes(el)) {
+      baseline.set(controlKey(el), controlValue(el));
+    }
+    sync();
+  };
+  root.addEventListener('pointerdown', onGesture, true);
+  root.addEventListener('keydown', onGesture, true);
+  root.addEventListener('focusin', onGesture, true);
   root.addEventListener('input', onInput);
   root.addEventListener('change', onInput);
 
@@ -100,8 +124,11 @@ export function trackDirty(root, { selector, onChange, label = '当前页面' })
   return {
     count,
     /** 保存成功（并把表单按服务端返回值重新填充）之后调用，重建基线 */
-    markClean() { baseline = snapshot(); sync(); },
+    markClean() { baseline = snapshot(); interacted = false; sync(); },
     dispose() {
+      root.removeEventListener('pointerdown', onGesture, true);
+      root.removeEventListener('keydown', onGesture, true);
+      root.removeEventListener('focusin', onGesture, true);
       root.removeEventListener('input', onInput);
       root.removeEventListener('change', onInput);
       if (unloadArmed) { window.removeEventListener('beforeunload', onBeforeUnload); unloadArmed = false; }

@@ -236,6 +236,16 @@ check('参数行的排版结构没被破坏', () => {
   return `${rows} 行参数`;
 });
 
+// ── 6d. 密码框必须关掉自动填充 ───────────────────────────────────────
+// 真实踩到的坑：Chrome 密码管理器会在弹窗一打开时把保存过的密码填回 sessdata，
+// 而「未保存」追踪只看值变没变，于是点开 qq_video 的 ⚙ 再取消也会说「还有 1 项没保存」。
+check('工具配置弹窗的密码框禁用了浏览器自动填充', () => {
+  const code = viewMeta.get('social2').code;
+  assert(/f\.type === 'password'/.test(code), 'social2.js 里已经没有密码类型的字段了？');
+  assert(/f\.type === 'password'\) el\.autocomplete = 'new-password'/.test(code),
+    '密码框缺少 autocomplete=new-password：自动填充会被算成「未保存」');
+});
+
 // ── 7. 每个分区片段都被 shell 的样式/路由体系覆盖 ────────────────────
 check('每个片段都至少有内容（不是空文件）', () => {
   const empty = [...viewMeta.values()].filter((m) => read(m.html).trim().length < 100).map((m) => rel(m.html));

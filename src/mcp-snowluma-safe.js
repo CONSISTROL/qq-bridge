@@ -951,6 +951,76 @@ defineTool(
   }
 );
 
+// ── 群知识库：问题→答案 的沉淀与复用 ───────────────────────────────────────
+// 与黑话库的分工：黑话管「这个词什么意思」，知识库管「这个问题的答案是什么」。
+// 唤醒提示里已按话题自动注入相关答案，这里是 AI 主动查 / 主动写的入口。
+if (cfg.knowledge?.enabled !== false) {
+  defineTool(
+    'qq_knowledge_query',
+    '查群知识库里已经沉淀好的答案（只读）。碰到「XX 是什么/什么时候/怎么弄/谁是」这类群友以前可能问过的问题，先查这里：命中就直接用那条答案，别重新联网考据一遍；但**命中不等于答案不能改**——如果你这次知道得更多、或发现那条已经过时/不对，就照常回答，并用 qq_knowledge_submit 把更准的答案更新上去。没命中说明是新问题，正常回答就好，答完用 qq_knowledge_submit 存一条。返回里还会带 repeats（被反复问过、该把答案弄准的条目）与 conflicts（答案互相矛盾、待管理员裁定的条目）。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().min(1).describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      question: z.string().optional().describe('可选：要查的问题原文（如「DeepSeek 什么时候开源的」）。不传则列出命中次数最高的若干条。'),
+      kind: z.enum(['fact', 'rule', 'person', 'howto']).optional().describe('可选：按类型过滤。fact=客观事实，rule=群规，person=人物/称呼，howto=操作步骤'),
+      limit: z.number().optional().describe('可选：最多返回几条，默认 40（传了 question 时默认更大，便于精确匹配）')
+    },
+    async ({ key, token, question, kind, limit }) => {
+      try {
+        const qs = new URLSearchParams({ key });
+        if (question) qs.set('q', String(question));
+        if (kind) qs.set('kind', String(kind));
+        if (limit !== undefined && limit !== null) qs.set('limit', String(limit));
+        const data = await agentApi(`/api/socialV2/knowledge/query?${qs.toString()}`, { headers: { 'x-agent-token': token } });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `查询知识库失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+
+  defineTool(
+    'qq_knowledge_submit',
+    '把一条知识沉淀进群知识库，之后有人问到会直接命中（默认全自动生效，管理员可随时删改）。**判断可以宽松一点**：只要是一条以后可能还用得上的知识就存——客观事实、版本时间、价格、原理、操作步骤、群规、称呼指代、群友的固定偏好都算。去重是自动的：同一个问题换着说法问会合并到同一条并累计次数，所以不用怕重复。**同一条被反复问到时，答案会持续更新**（新版本号、新价格、更准的结论都该覆盖旧的），所以再遇到已经存在的问题，如果这次你知道得更多、或发现旧答案不对，就用同样的 question 提交一次，它会把那条更新掉（旧答案被完整替换，修订次数 +1）。只有这些别存：闲聊玩梗、时效性极强的一次性信息（如「今天几点开播」）、你自己都不确定的猜测。若某个已有条目的答案与事实不符，用 conflictOf 传那条 id 标记冲突，管理员会在控制台裁定。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().min(1).describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      question: z.string().describe('问题原话（规范一点，如「DeepSeek 什么时候开源的」，最多 200 字）'),
+      answer: z.string().describe('答案：简明、可直接照读，带上关键数字/时间/前提，最多 2000 字'),
+      kind: z.enum(['fact', 'rule', 'person', 'howto']).optional().describe('类型，默认 fact。rule=群规，person=人物/称呼指代，howto=操作步骤'),
+      tags: z.array(z.string()).optional().describe('可选标签，如 ["电竞","股票"]'),
+      aliases: z.array(z.string()).optional().describe('可选：同一问题的其他问法（有助于合并命中）'),
+      sources: z.array(z.string()).optional().describe('可选：来源 URL（只收 http/https），便于以后核对'),
+      asker: z.string().optional().describe('可选：这次是谁问的（群名片或昵称），用于统计「几个人问过」'),
+      evidence: z.string().optional().describe('可选：提问时的原话片段，最多 200 字'),
+      conflictOf: z.string().optional().describe('可选：要标记冲突的已有条目 id（答案与事实不符时用）')
+    },
+    async ({ key, token, question, answer, kind, tags, aliases, sources, asker, evidence, conflictOf }) => {
+      try {
+        const data = await agentApi('/api/socialV2/knowledge/submit', {
+          method: 'POST',
+          body: JSON.stringify({
+            key,
+            question,
+            answer,
+            kind: kind || '',
+            tags: tags || [],
+            aliases: aliases || [],
+            sources: sources || [],
+            asker: asker || '',
+            evidence: evidence || '',
+            conflictOf: conflictOf || ''
+          }),
+          headers: { 'x-agent-token': token }
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `沉淀知识失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
 // ── 图片/表情查看工具（一代/二代仿真共用） ─────────────────────────────────
 if (cfg.socialV2?.tools?.getImages !== false) {
   defineTool(
@@ -1208,6 +1278,90 @@ if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !==
   );
 }
 
+// ── B站视频理解：搜视频 → 读字幕 → 按需取画面 ─────────────────────────────
+// 这三件套合起来等于「看懂 B站视频」，且不需要任何额外凭据。
+// 实测：字幕可得 5/8 视频、画面可得 8/8，两者互补；49 分钟复盘字幕约 4700 token。
+if (cfg.socialV2?.tools?.video !== false) {
+  defineTool(
+    'qq_video',
+    'B站视频：给 word 就**搜视频**，给 bvid 就**读它的字幕文字稿**。\n'
+    + '· 搜视频：中文的时事、赛事、影视、游戏、梗、热点**优先用这个而不是 web_search**——B站的标题本身就是结论摘要（如「深度复盘BLG不敌HLE痛失冠军」），比抓网页搜索准得多。返回 bvid 列表。\n'
+    + '· 读字幕：返回该视频里实际说的话（B站 AI 字幕）+ 元数据 + 字数/token 估算。不用下载视频、不用语音识别。长视频用 offset/limit 分段读，避免一次塞太多。\n'
+    + '⚠️ AI 字幕有识别错误，**人名/英雄名/专有名词经常不对**（例如「安蓓萨」被写成「安萨」）：总结观点可以，引用具体名词要存疑。没有字幕时会返回 available:false，那就改用 qq_video_frames 看画面。\n'
+    + '想看画面用 qq_video_frames（按时间点取帧）。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      word: z.string().optional().describe('搜索词，例如「BLG HLE MSI 决赛 复盘」。给了它就搜视频（返回 bvid 列表）'),
+      bvid: z.string().optional().describe('视频 bvid，例如 BV1Uh3e6uETs。给了它就读这个视频的字幕'),
+      offset: z.number().optional().describe('读字幕时从第几段开始（默认 0）'),
+      limit: z.number().optional().describe('读字幕时读多少段（默认全部，最大 600）。只是想先看看讲了什么，可以传 60 左右'),
+      searchLimit: z.number().optional().describe('搜视频时返回几条，默认 8，最大 20')
+    },
+    async ({ key, token, word, bvid, offset, limit, searchLimit }) => {
+      const hasWord = String(word ?? '').trim().length > 0;
+      const hasBvid = String(bvid ?? '').trim().length > 0;
+      if (hasWord === hasBvid) {
+        return {
+          content: [{ type: 'text', text: '请二选一：给 word 搜视频，或给 bvid 读字幕（两个都传或都不传都无法判断意图）。' }],
+          isError: true
+        };
+      }
+      try {
+        const body = hasWord
+          ? { key, token, op: 'search', word: String(word), limit: searchLimit }
+          : { key, token, op: 'subtitle', bvid: String(bvid), offset, limit };
+        const data = await agentApi('/api/socialV2/bili-video', {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'x-agent-token': token },
+          timeoutMs: hasWord ? 30000 : 60000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `${hasWord ? '搜 B站' : '读字幕'}失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.tools?.videoFrames !== false) {
+  defineTool(
+    'qq_video_frames',
+    '取 B站视频**某个时间点的画面**（若干帧，直接以图像返回给你看）。来源是 B站进度条预览图，约每 5 秒一帧、480×270，所以：能看清比分板/阵容/大致场面，看不清小字和瞬时操作，也可能正好错过团战那几秒。**不要盲目扫全片**（600 帧≈60 万 token），正确用法是先读字幕定位到关键时间点，再取那附近几帧确认画面。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      bvid: z.string().describe('视频 bvid'),
+      atSeconds: z.number().describe('要看的时刻（秒），通常来自 qq_video（传 bvid 读字幕）返回的时间点'),
+      count: z.number().optional().describe('取几帧，默认 4，最大 12（越多越费上下文）'),
+      spreadSeconds: z.number().optional().describe('以该时刻为中心向两侧摊开的秒数，默认 0（只取最近几帧）；想观察一段过程可设 20~60')
+    },
+    async ({ key, token, bvid, atSeconds, count, spreadSeconds }) => {
+      try {
+        const data = await agentApi('/api/socialV2/bili-frames', {
+          method: 'POST',
+          body: JSON.stringify({ key, token, bvid: String(bvid), atSeconds, count, spreadSeconds }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 60000
+        });
+        const images = Array.isArray(data?.images) ? data.images : [];
+        if (!images.length) {
+          return { content: [{ type: 'text', text: `没取到画面：${data?.error || data?.failures?.map((f) => f.error).join('; ') || '该视频可能没有预览图'}` }] };
+        }
+        const content = [{
+          type: 'text',
+          text: `《${data.title}》共 ${Math.round((data.duration || 0) / 60)} 分钟，以下是 ${images.map((i) => `${i.at}s`).join('、')} 处的画面（480×270 预览帧）：`
+        }];
+        for (const im of images) content.push({ type: 'image', mimeType: im.mimeType, data: im.data });
+        return { content };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `取画面失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
 if (cfg.slang?.enabled !== false && cfg.socialV2?.tools?.lookupMeme !== false) {
   defineTool(
     'qq_lookup_meme',
@@ -1297,20 +1451,30 @@ if (cfg.socialV2?.tools?.getMemberAvatar !== false) {
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.searchImages !== false) {
   defineTool(
     'qq_search_images',
-    '按聊天主题/关键词去 B 站找图，返回候选图片 URL。默认从**相关视频的评论区**取图（comment，最接近梗图/表情包），不够时再补专栏配图（article）。**不含视频封面**。注意 B 站很多 .gif 其实是**单帧静态图**（不会动），需要真动图时传 `animatedOnly: true`。想发图时：把返回项里的 url 直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库长期复用。适合「群友聊到某个话题，你去找一张应景的图/梗图」这种场景；不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
+    '按聊天主题/关键词找图，返回候选图片 URL。**图源默认 auto：先按中文标签试 pixiv，没有结果自动回退 B 站**（`notes` 里会写明走的哪边）。显式指定：`source=pixiv` 走 pixiv 插画/角色图/画师作品（bobopic 榜单镜像 + pixiv.re 代理，pixiv 直连不通），关键词用中文标签（如「初音未来」「原神」），`mode=daily` 取 pixiv 综合日榜（不用给 query）；`source=bilibili` 走 B 站梗图/表情包（评论区取图，不含封面，很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true）；`source=all` 两边都搜。**中文 VTuber/主播/国内梗这类 pixiv 收录很少的，直接用 bilibili 或 auto**，别在 pixiv 上硬搜。返回项里 `url` 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库；pixiv 项若发送时报「图片超过体积上限」，改用同一项的 thumbUrl。**图片年龄分级由管理员在控制台配置（safe=只给全年龄 / mild=允许轻度擦边），AI 不能自己调，也不要把分级当成可以商量的东西**；返回里 rating/notes 会告诉你滤掉了什么。适合「群友聊到某个话题，你去找一张应景的图」，不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
-      query: z.string().describe('搜索关键词，用聊天主题/话题词，例如「猫咪 搞笑」「程序员 梗图」'),
+      query: z.string().optional().describe('搜索关键词：bilibili 用话题词（如「猫咪 搞笑」）；pixiv 用中文标签（如「初音未来」「原神」）；source=pixiv 且 mode=daily 时可以不给'),
       count: z.number().optional().describe('最多返回几张，默认 6，最大 12'),
-      sources: z.array(z.enum(['article', 'comment'])).optional().describe('图片来源，默认 [comment, article]（评论优先）；可只传 comment 或只传 article'),
-      animatedOnly: z.boolean().optional().describe('只返回真动图（会逐张下载探测帧数；B 站很多 .gif 其实是单帧静态图，要动图/表情包时建议开启）')
+      source: z.enum(['auto', 'bilibili', 'pixiv', 'all']).optional().describe('图源：auto=先试 pixiv、没结果自动回退 B 站（默认，拿不准就用它）；bilibili=梗图/表情包；pixiv=二次元插画/角色图（中文标签）;all=两边都搜'),
+      mode: z.enum(['tag', 'daily']).optional().describe('pixiv 专用：tag=按关键词搜标签页（默认）；daily=pixiv 综合日榜（query 可省）'),
+      sources: z.array(z.enum(['article', 'comment'])).optional().describe('bilibili 专用：图片来源，默认 [comment, article]（评论优先）'),
+      animatedOnly: z.boolean().optional().describe('bilibili 专用：只返回真动图（会逐张下载探测帧数）')
     },
-    async ({ key, token, query, count, sources, animatedOnly }) => {
+    async ({ key, token, query, count, source, mode, sources, animatedOnly }) => {
       try {
         const data = await agentApi('/api/socialV2/search-images', {
           method: 'POST',
-          body: JSON.stringify({ key, query: String(query), count: count ?? 6, sources: sources && sources.length ? sources : ['comment', 'article'], animatedOnly: animatedOnly === true }),
+          body: JSON.stringify({
+            key,
+            query: String(query ?? ''),
+            count: count ?? 6,
+            source: source ?? 'auto',
+            mode: mode === 'daily' ? 'daily' : 'tag',
+            sources: sources && sources.length ? sources : ['comment', 'article'],
+            animatedOnly: animatedOnly === true
+          }),
           headers: { 'x-agent-token': token },
           timeoutMs: 120000
         });

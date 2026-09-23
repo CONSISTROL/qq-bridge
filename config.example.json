@@ -124,7 +124,9 @@
       "collectSticker": true,
       "getSelfImage": true,
       "memberRemark": true,
-      "setMemberCard": false
+      "setMemberCard": false,
+      "video": true,
+      "videoFrames": true
     },
     "wake": {
       "defaultMode": "diving",
@@ -209,6 +211,20 @@
       "maxBytes": 5242880,
       "maxPerMinute": 5,
       "maxPerHour": 30,
+      "rating": "safe",
+      "ratingWords": {
+        "mild": [
+          "巨乳", "爆乳", "美乳", "微乳", "貧乳", "水着", "競泳水着", "ビキニ", "泳装", "比基尼",
+          "下着", "ランジェリー", "ブラジャー", "パンツ", "ぱんつ", "内衣", "黑丝", "白丝", "ストッキング",
+          "ニーソ", "ニーソックス", "大腿", "太もも", "ふともも", "腿", "お尻", "尻", "谷間", "胸",
+          "セクシー", "性感", "魅惑", "魅魔", "サキュバス", "誘惑", "見せパン", "絶対領域", "露背",
+          "チラリ", "チラ見せ", "黑丝袜", "白丝袜", "网袜", "丝袜", "乳", "乳摇", "抖胸"
+        ],
+        "tolerated": [
+          "水泳", "お風呂", "風呂", "寝", "趴", "俯视", "lsp", "福利", "素足", "裸足", "紧身", "むね"
+        ],
+        "explicitExtra": []
+      },
       "refererAllow": [
         "https://i0.hdslb.com",
         "https://i1.hdslb.com",
@@ -219,7 +235,10 @@
         "https://c2cpicdw.qpic.cn",
         "https://p.qpic.cn",
         "https://q1.qlogo.cn",
-        "https://tianquan.gtimg.cn"
+        "https://tianquan.gtimg.cn",
+        "https://pixiv.re",
+        "https://i.pixiv.re",
+        "https://img.pixivdaily.com"
       ],
       "refererHosts": [
         "hdslb.com",
@@ -242,6 +261,18 @@
       "recentLimit": 100,
       "unreadLimit": 30,
       "contextWindow": 20
+    },
+    "knowledge": {
+      "enabled": true,
+      "injectMax": 6,
+      "autoWrite": true,
+      "remindHitCount": 3,
+      "remindMinAskers": 2,
+      "similarityThreshold": 0.62,
+      "conflictMinCosine": 0.8
     }
+  },
+  "bili": {
+    "videoCacheMB": 200
   }
 }

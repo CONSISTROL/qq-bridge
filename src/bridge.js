@@ -19,6 +19,7 @@ import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
+import { createVideoTools } from './bili-video.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import {
   normalizeImageLimits,
@@ -27,6 +28,8 @@ import {
   hostnameOf,
   imageAllowRejectHint
 } from './image-allow.js';
+import { normalizeImageRating, normalizeRatingWords, DEFAULT_MILD_TAGS, DEFAULT_TOLERATED_TAGS, EXPLICIT_TAGS } from './image-rating.js';
+import { searchPixivByTag, pixivDailyRanking } from './pixiv-search.js';
 import { cardSegmentToText, extractCardFromSegments, CARD_SUMMARY_MAX } from './card-parse.js';
 
 /** 含卡片的消息允许的 text/plain 截断上限：要放得下 CARD_SUMMARY_MAX + 前缀。 */
@@ -70,6 +73,26 @@ import {
   SLANG_STATUS
 } from './slang-learner.js';
 import {
+  loadKnowledge,
+  saveKnowledge,
+  normalizeKnowledgeEntry,
+  createKnowledgeEntry,
+  findKnowledgeMatch,
+  questionFingerprint,
+  recordHit,
+  shouldRemindRepeat,
+  formatKnowledgeTable,
+  buildKnowledgeContext,
+  asIndexEntry,
+  KNOWLEDGE_STATUS,
+  KNOWLEDGE_STATUSES,
+  isActiveStatus,
+  KNOWLEDGE_KINDS,
+  DEFAULT_KINDS,
+  QUESTION_MAX,
+  ANSWER_MAX
+} from './knowledge-store.js';
+import {
   loadStickerStore,
   saveStickerStore,
   mergeStickerLibrary,
@@ -101,6 +124,8 @@ const ROLE_STATE_FILE = path.join(STATE_DIR, 'current-role.json');
 const SLANG_FILE = path.join(STATE_DIR, 'slang.json');
 const SLANG_SESSION_FILE = path.join(STATE_DIR, 'slang-session.json');
 const SOCIAL_V2_FILE = path.join(STATE_DIR, 'social-v2.json');
+const KNOWLEDGE_FILE = path.join(STATE_DIR, 'knowledge.json');
+const KNOWLEDGE_VECTOR_FILE = path.join(STATE_DIR, 'knowledge-vectors.json');
 const STICKER_FILE = path.join(STATE_DIR, 'stickers.json');
 const MEMBER_REMARKS_FILE = path.join(STATE_DIR, 'member-remarks.json');
 const FEEDBACK_FILE = path.join(STATE_DIR, 'feedback.json');
@@ -331,6 +356,24 @@ function loadConfig() {
       autoConfirmResearched: false,
       ...(file.slang ?? {})
     },
+    // 群知识库：群友反复问到的客观事实与群内约定/人物，答案沉淀下来避免每次重查重编。
+    // 与黑话库分开存储与检索（问题语义空间和词义不同，混在一起会互相挤占注入坑位）。
+    knowledge: {
+      enabled: true,
+      injectMax: 6,           // 每次注入最多几条（比黑话少：答案是长文本，占 context）
+      autoWrite: true,        // AI 提交即入库生效（false 时只落候选，等控制台确认）
+      remindHitCount: 3,      // 命中次数达到多少时在提示里提醒「这问题已被问过 N 次」
+      remindMinAskers: 2,     // 且至少这么多个不同的人问过才算群级 FAQ
+      similarityThreshold: 0.62, // 字面近重复合并门槛（越低越容易并成一条）
+      conflictMinCosine: 0.8,    // 语义冲突检测门槛：答新旧案差异大且问题相近时标记待裁定
+      ...(file.knowledge ?? {})
+    },
+    // B站能力（黑话研究、图片检索、视频理解都走这里）
+    bili: {
+      enabled: true,
+      videoCacheMB: 200,   // 雪碧图磁盘缓存上限；超了按最久未用淘汰
+      ...(file.bili ?? {})
+    },
     // 本地向量检索（RAG）。缺依赖/模型时自动降级为按出现次数选词，不影响主流程。
     rag: {
       enabled: true,
@@ -408,6 +451,7 @@ function loadConfig() {
         setWakeConfig: true,
         markRead: true,
         memory: true,
+      knowledge: true,
         getImages: true,
         getForwardMsg: true,
         sendPoke: true,
@@ -421,6 +465,8 @@ function loadConfig() {
         sendImage: true,
         listImageLibrary: true,
         searchImages: true,
+      video: true,             // B站视频：搜视频 / 读字幕（一个工具两个用法）
+      videoFrames: true,       // 按时间点取画面（进度条预览帧）
         getSelfImage: true
       },
       // 从外部来源保存表情（qq_save_sticker）。默认只允许本地图库/base64，
@@ -432,6 +478,18 @@ function loadConfig() {
         maxBytes: 5 * 1024 * 1024,
         maxPerMinute: 5,
         maxPerHour: 30,
+        // 图片年龄分级：safe=只给全年龄（默认）；mild=允许轻度擦边（水着/黑丝/大腿等标签）。
+        // 明确色情内容在任何档位都不会返回——内置判定写死在 src/image-rating.js，配置删不掉。
+        rating: 'safe',
+        // 分级词表（控制台「图片 / 表情来源（含搜图分级）」可改）：
+        //   mild          判为擦边、safe 档会滤掉的词
+        //   tolerated     明确划为全年龄的词，优先于 mild
+        //   explicitExtra 额外的限制级词，只增不减（叠加在内置词表上）
+        ratingWords: {
+          mild: [...DEFAULT_MILD_TAGS],
+          tolerated: [...DEFAULT_TOLERATED_TAGS],
+          explicitExtra: []
+        },
         // 允许抓取的目标站点 origin；imageReferer 只发给 refererHosts 里的图床
         // （B 站图床有防盗链；QQ/腾讯图床带了 Referer 反而可能被拒）。
         refererAllow: [
@@ -439,7 +497,10 @@ function loadConfig() {
           // QQ 聊天里收到的图片/表情就挂在腾讯自家 CDN 上，AI 拿到的 media.url 通常是这些域名。
           'https://multimedia.nt.qq.com.cn', 'https://multimedia.qpic.cn',
           'https://gchat.qpic.cn', 'https://c2cpicdw.qpic.cn', 'https://p.qpic.cn',
-          'https://q1.qlogo.cn', 'https://tianquan.gtimg.cn'
+          'https://q1.qlogo.cn', 'https://tianquan.gtimg.cn',
+          // pixiv 系：pixiv.re 按作品 id 取原图；img.pixivdaily.com 是榜单镜像的缩略图
+          // （原图超 maxBytes 时用它兜底，一张几十 KB）。
+          'https://pixiv.re', 'https://i.pixiv.re', 'https://img.pixivdaily.com'
         ],
         refererHosts: ['hdslb.com', 'bilibili.com'],
         imageReferer: 'https://www.bilibili.com'
@@ -811,6 +872,26 @@ function allowed(kind, id, cfg) {
 }
 
 // 二代会话 key 规范化：只接受 group:正整数 / private:正整数，并去掉前导零，避免同一会话出现多个别名。
+/**
+ * 用字丰富度：不同字符的个数。
+ * 与 dominantCharRatio 一起识别「复读凑长」的占位答案（"xxxx…"、"哈哈哈哈哈"）。
+ * 注意：这个值高是**好**答案的特征，不要拿它当垃圾信号（早先版本正好判反了）。
+ */
+function distinctChars(text) {
+  return new Set(String(text ?? '')).size;
+}
+
+/** 出现最多的那个字符占全长的比例。>0.5 基本就是复读串。 */
+function dominantCharRatio(text) {
+  const s = String(text ?? '');
+  if (!s.length) return 0;
+  const counts = new Map();
+  for (const ch of s) counts.set(ch, (counts.get(ch) || 0) + 1);
+  let max = 0;
+  for (const n of counts.values()) if (n > max) max = n;
+  return max / s.length;
+}
+
 function canonicalV2Key(key) {
   const m = /^(group|private):(\d+)$/.exec(String(key ?? '').trim());
   if (!m) return null;
@@ -841,6 +922,21 @@ async function main() {
   const learnerWaiters = new Map();     // sessionId -> [{resolve,reject,timer}]
   let slangLearnerSessionId = null;
   let slangTaskChain = Promise.resolve();
+
+  // ── B站视频理解运行时（元数据/字幕/画面）─────────────────────────────
+  // 懒建：只有真的用到才创建 bili client，避免启动时多一次网络请求
+  let videoTools = null;
+  function videoToolsOf() {
+    if (!videoTools) {
+      videoTools = createVideoTools({
+        root: ROOT,
+        client: createBiliClient({ cookie: readBiliCookie(ROOT) }),
+        cacheMB: Number(cfg.bili?.videoCacheMB) || 200,
+        log: (m) => log(m)
+      });
+    }
+    return videoTools;
+  }
 
   // ── 本地向量检索（RAG）运行时 ────────────────────────────────────────
   // 全程「尽力而为」：模型缺失、子进程崩了、编码超时，都只是退回按频次选词，
@@ -925,6 +1021,298 @@ async function main() {
       embedder: embedder.info,
       stats: embedder.stats
     };
+  }
+
+  // ── 群知识库（二代仿真）：群友反复问到的答案沉淀 ────────────────────────
+  // 与黑话库分开存储、分开索引：问题语义空间与词义不同，共用一套会互相挤占注入坑位。
+  // 但复用同一套向量索引实现（asIndexEntry 把 question/answer 映射成 content/meaning）。
+  let knowledgeEntries = loadKnowledge(KNOWLEDGE_FILE);
+  let knowledgeVectorStore = loadVectorStore(KNOWLEDGE_VECTOR_FILE);
+  let knowledgeDirty = true;
+  let knowledgeRebuild = null;   // 与黑话重建串行，避免两个 embedder 任务抢内存
+  let knowledgeLastError = '';
+
+  const knowledgeEnabled = () => cfg.knowledge?.enabled !== false;
+  const knowledgeReady = () => knowledgeEnabled() && cfg.rag?.enabled !== false && embedder.ready;
+  const knowledgeRemindThreshold = () => Math.max(1, Number(cfg.knowledge?.remindHitCount) || 3);
+  const knowledgeRemindMinAskers = () => Math.max(1, Number(cfg.knowledge?.remindMinAskers) || 2);
+  function knowledgeOptions() {
+    return { remindThreshold: knowledgeRemindThreshold() };
+  }
+
+  function saveKnowledgeStore() {
+    try { saveKnowledge(KNOWLEDGE_FILE, knowledgeEntries); } catch (error) { log('保存知识库失败:', error?.message ?? error); }
+  }
+
+  /** 对外暴露的单条结构（裁掉内部字段，抹掉已知 token）。 */
+  function publicKnowledgeEntry(e) {
+    if (!e || typeof e !== 'object') return null;
+    return {
+      id: e.id,
+      question: redactKnownTokensOnly(String(e.question || '')),
+      answer: redactKnownTokensOnly(String(e.answer || '')),
+      kind: e.kind,
+      tags: Array.isArray(e.tags) ? e.tags.slice(0, 8) : [],
+      aliases: Array.isArray(e.aliases) ? e.aliases.slice(0, 12) : [],
+      sources: Array.isArray(e.sources) ? e.sources.slice(-5) : [],
+      status: e.status,
+      source: e.source,
+      hitCount: Number(e.hitCount) || 0,
+      askerCount: Array.isArray(e.askers) ? e.askers.length : 0,
+      revision: Number(e.revision) || 0,
+      conflict: e.conflict || null,
+      updatedAt: e.updatedAt || '',
+    };
+  }
+
+  function confirmedKnowledgeList(limit) {
+    const fallback = Math.max(1, Math.min(30, Number(cfg.knowledge?.injectMax) || 6));
+    const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : fallback;
+    return knowledgeEntries
+      .filter((e) => isActiveStatus(e.status) && e.question && e.answer)
+      .sort((a, b) => (Number(b.hitCount) || 0) - (Number(a.hitCount) || 0))
+      .slice(0, max)
+      .map(publicKnowledgeEntry);
+  }
+
+  /** 指向某个已确认条目的待裁定冲突（控制台优先显示）。 */
+  function listKnowledgeConflicts() {
+    return knowledgeEntries
+      .filter((e) => e.conflict && typeof e.conflict === 'object')
+      .map((e) => ({ id: e.id, question: e.question, answer: e.answer, conflict: e.conflict }));
+  }
+
+  function markKnowledgeDirty(reason) {
+    knowledgeDirty = true;
+    if (cfg.rag?.autoRebuild !== false) scheduleKnowledgeRebuild();
+    if (reason) log(`[kb] 知识库变更：${reason}`);
+  }
+
+  /** 后台补知识库向量：与黑话重建共用一条串行链，避免同时起两个 embedder 任务。 */
+  function scheduleKnowledgeRebuild(delayMs = 1500) {
+    // 这里**不能**用 knowledgeReady()（它要求 embedder 已就绪）当作提前返回条件：
+    // 嵌入模型是懒加载的，首条消息到达时 embedder 往往还没起来，于是「标记脏 → 调度」
+    // 这一步会被直接丢掉，之后再没有任何东西来触发补索引（线上表现就是 stale 一直是全量）。
+    // 正确做法是看「这个能力要不要开」，然后让 embedder.start() 在任务内部等它就绪。
+    if (!(knowledgeEnabled() && cfg.rag?.enabled !== false)) return knowledgeRebuild;
+    if (knowledgeRebuild) return knowledgeRebuild;
+    knowledgeRebuild = (async () => {
+      try {
+        await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref?.(); });
+        // 等黑话那边先做完，共享 embedder 但避免内存峰值叠加
+        if (ragRebuild) { try { await ragRebuild; } catch { /* 黑话失败不影响知识库 */ } }
+        await embedder.start();
+        const res = await buildIndex({
+          entries: kbIndexEntries(), client: embedder, store: knowledgeVectorStore, batch: 8,
+          onProgress: (d, t) => { if (d === t) log(`[kb] 向量索引已补齐 ${d}/${t}`); }
+        });
+        if (res.embedded || res.orphans) {
+          saveVectorStore(KNOWLEDGE_VECTOR_FILE, knowledgeVectorStore);
+          log(`[kb] 索引更新：新编码 ${res.embedded} 条，清理 ${res.orphans} 条，库内 ${res.total} 条`);
+        }
+        knowledgeDirty = false;
+        knowledgeLastError = '';
+      } catch (error) {
+        knowledgeLastError = String(error?.message ?? error);
+        log(`[kb] 向量索引更新失败（已降级为按命中次数选条目）：${knowledgeLastError}`);
+      } finally {
+        knowledgeRebuild = null;
+      }
+      return null;
+    })();
+    return knowledgeRebuild;
+  }
+
+  /** 启动预热用：等 embedder 就绪后补齐知识库索引（超时也继续，不阻塞启动）。 */
+  async function warmKnowledgeIndex(timeoutMs = 15000) {
+    if (!(knowledgeEnabled() && cfg.rag?.enabled !== false)) return null;
+    try {
+      await Promise.race([
+        embedder.start(),
+        new Promise((_, reject) => { const t = setTimeout(() => reject(new Error('embedder 启动超时')), timeoutMs); t.unref?.(); })
+      ]);
+    } catch (error) {
+      knowledgeLastError = String(error?.message ?? error);
+      log(`[kb] 索引预热跳过：${knowledgeLastError}`);
+      return null;
+    }
+    return scheduleKnowledgeRebuild(0);
+  }
+
+  function kbIndexEntries() {
+    return knowledgeEntries
+      .filter((e) => isActiveStatus(e.status) && e.question && String(e.answer || '').trim())
+      .map(asIndexEntry);
+  }
+
+  /** 由 asIndexEntry 得到的实例反查原始条目（id 一一对应）。 */
+  function kbEntryById(id) {
+    return knowledgeEntries.find((e) => e.id === id) || null;
+  }
+
+  async function rebuildKnowledgeIndex({ force = false } = {}) {
+    await embedder.start();
+    if (force) knowledgeVectorStore = { model: VECTOR_MODEL, dim: 0, builtAt: '', vectors: {} };
+    const t0 = Date.now();
+    const res = await buildIndex({ entries: kbIndexEntries(), client: embedder, store: knowledgeVectorStore, batch: 8 });
+    saveVectorStore(KNOWLEDGE_VECTOR_FILE, knowledgeVectorStore);
+    knowledgeDirty = false;
+    knowledgeLastError = '';
+    return { ...res, ms: Date.now() - t0, dim: knowledgeVectorStore.dim };
+  }
+
+  /**
+   * 选本次注入哪些知识条目。
+   * 向量可用 → 语义相关优先（叠加「被问过多少次」的全局权重与时间衰减）；
+   * 否则/超时/报错 → 退回按命中次数取 top-N。
+   * 与黑话的关键差别：**答案必须成对出现**，宁可少注入也不能只给问题不给答案。
+   */
+  async function knowledgeBlockFor(promptText, key) {
+    const max = Math.max(1, Math.min(30, Number(cfg.knowledge?.injectMax) || 6));
+    if (!knowledgeEnabled()) return '';
+    if (!knowledgeReady()) return buildKnowledgeContext(knowledgeEntries, max, knowledgeOptions());
+    try {
+      if (knowledgeDirty && cfg.rag?.autoRebuild !== false) scheduleKnowledgeRebuild();
+      const query = String(promptText || '').slice(0, 1000);
+      if (!query.trim()) return buildKnowledgeContext(knowledgeEntries, max, knowledgeOptions());
+      const [qv] = await embedder.embed([query]);
+      if (!qv || !qv.length) return buildKnowledgeContext(knowledgeEntries, max, knowledgeOptions());
+      const pool = knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && String(e.answer || '').trim());
+      const { picked } = selectForInjection({
+        queryVec: qv,
+        entries: pool.map(asIndexEntry),
+        store: knowledgeVectorStore,
+        key,
+        max: Math.min(max, Number(cfg.rag?.topK) || max),
+        // 知识库的 minFill 取 0：没有语义相关条目时就**一条都不注入**。
+        // 黑话表补频次是合理的（常用词看看无妨），但答案补频次会让 AI 拿到无关问题的答案，
+        // 比"看不到"危险得多——所以这里刻意不做频次兜底。
+        minFill: 0,
+        minCosine: Number(cfg.rag?.minCosine ?? 0.5),
+        relativeMargin: Number(cfg.rag?.relativeMargin ?? 0.08),
+        weights: cfg.rag?.weights
+      });
+      if (!picked.length) return '';
+      const rows = picked.map((p) => kbEntryById(p.entry.id)).filter(Boolean);
+      if (!rows.length) return '';
+      return formatKnowledgeTable(rows, knowledgeOptions());
+    } catch (error) {
+      knowledgeLastError = String(error?.message ?? error);
+      log(`[kb] 选条目失败，本次退回按命中次数（${knowledgeLastError}）`);
+      return buildKnowledgeContext(knowledgeEntries, max, knowledgeOptions());
+    }
+  }
+
+  /**
+   * 写入/合并一条知识。全自动模式下 AI 提交即生效（status=confirmed）。
+   * @returns {{entry:object, created:boolean, match:string|null, conflict:boolean}}
+   */
+  function upsertKnowledge({ question, answer, kind, tags, aliases, sources, asker, key, evidence, conflictOf, confidence }) {
+    const q = redactKnownTokensOnly(String(question ?? '')).trim().slice(0, QUESTION_MAX);
+    const a = redactKnownTokensOnly(String(answer ?? '')).trim().slice(0, ANSWER_MAX);
+    if (!q || !a) return { entry: null, created: false, match: null, conflict: false };
+    const autoWrite = cfg.knowledge?.autoWrite !== false;
+    const threshold = Number(cfg.knowledge?.similarityThreshold) || 0.62;
+    const hit = findKnowledgeMatch(knowledgeEntries, q, { similarityThreshold: threshold });
+    const evidenceItem = (key || evidence)
+      ? { key: String(key || ''), sender: 'AI提交', text: String(evidence || '').slice(0, 200), time: Date.now() }
+      : null;
+
+    if (hit) {
+      const target = hit.entry;
+      let answerReplaced = false;
+      const answerChanged = String(target.answer || '').trim() !== a;
+      // 逐字段写入（不整体 Object.assign + normalize）：
+      // normalize 会读 count/content 这类别名，整体覆盖容易把无关字段一起搬过来。
+      //
+      // 答案的取舍：这条被反复问到时，答案本来就该被不断更新（新版本号、新价格、更准的结论），
+      // 所以默认**接受更新**，只挡两种明显更差的情况：
+      //   1) 占位/复读串（"xxxxxxxx"、"哈哈哈哈哈"）：**用字极少却在凑长**。注意别把
+      //      「用字更丰富」当垃圾信号——那恰恰是好答案的特征（早先版本就是栽在这上面）；
+      //   2) 大幅缩短（不足旧答案一半、且至少少了 15 字）：那多半是「随口一句」而不是「更新」。
+      // 换句话说：允许渐进增补和小幅精简，只拒绝「复读凑长」和「信息量骤降」。
+      if (answerChanged) {
+        const prev = String(target.answer || '').trim();
+        const nextChars = distinctChars(a);
+        const junk = a.length > 12 && (nextChars <= 6 || dominantCharRatio(a) > 0.5);
+        const shrink = a.length < prev.length * 0.5 && prev.length - a.length >= 15;
+        if (!junk && !shrink) {
+          target.answer = a;
+          target.revision = (Number(target.revision) || 0) + 1;
+          answerReplaced = true;
+        }
+      }
+      if (kind && DEFAULT_KINDS.includes(kind)) target.kind = kind;
+      // 候选条目被再次提交，仍然只是「补证据」：保留候选态，把修订次数 +1 当作「又被提了一次」，
+      // 绝不能因为 autoWrite 开着就悄悄转正——那等于绕过人工确认这道闸门。
+      // 答案已经替换过就不再重复加分（否则一次提交涨两次）。
+      if (target.status === KNOWLEDGE_STATUS.CANDIDATE && !answerReplaced) {
+        target.revision = (Number(target.revision) || 0) + 1;
+      }
+      if (target.status === KNOWLEDGE_STATUS.CANDIDATE && target.conflict) {
+        target.conflict = { ...target.conflict, at: Date.now(), by: key || target.conflict.by || '' };
+      }
+      target.aliases = [...new Set([...(target.aliases || []), ...(Array.isArray(aliases) ? aliases : [])])].slice(0, 12);
+      target.tags = [...new Set([target.kind, ...(target.tags || []), ...(Array.isArray(tags) ? tags : [])])].slice(0, 8);
+      target.sources = [...new Set([...(target.sources || []), ...(Array.isArray(sources) ? sources : [])])].slice(-10);
+      recordHit(target, { key, asker, text: evidence });
+      // 冲突判定：AI 看过检索结果、明确报了一个更高相似的条目，且它和命中条目不是同一条
+      let conflict = false;
+      if (conflictOf && String(conflictOf) !== target.id) {
+        const other = kbEntryById(String(conflictOf));
+        if (other) {
+          target.conflict = {
+            withId: other.id,
+            withAnswer: String(other.answer || '').slice(0, ANSWER_MAX),
+            reason: answerChanged ? '答案不一致' : '重复条目',
+            at: Date.now(),
+            by: key || '',
+          };
+          // 存疑的条目必须回到候选，人工确认过才允许继续注入。
+          // 这一步曾经只写在「新建条目」分支里，于是「已生效条目被报冲突」时
+          // 只打了冲突标记、状态没变，存疑答案照样被注入出去（测试抓到的真 bug）。
+          target.status = KNOWLEDGE_STATUS.CANDIDATE;
+          conflict = true;
+        }
+      }
+      saveKnowledgeStore();
+      markKnowledgeDirty(`命中已有条目「${q.slice(0, 30)}」（${hit.match}，累计 ${target.hitCount} 次）`);
+      return { entry: target, created: false, match: hit.match, conflict };
+    }
+
+    const entry = createKnowledgeEntry({
+      question: q,
+      answer: a,
+      kind: kind && DEFAULT_KINDS.includes(kind) ? kind : undefined,
+      tags: Array.isArray(tags) ? tags : [],
+      aliases: Array.isArray(aliases) ? aliases : [],
+      sources: Array.isArray(sources) ? sources : [],
+      asker,
+      confidence,
+      source: 'ai',
+      // 关掉 autoWrite 就落候选，等人工在控制台确认——与黑话库同一条链路。
+      status: autoWrite ? KNOWLEDGE_STATUS.CONFIRMED : KNOWLEDGE_STATUS.CANDIDATE,
+      evidence: evidenceItem ? [evidenceItem] : [],
+    });
+    if (conflictOf) {
+      const other = kbEntryById(String(conflictOf));
+      if (other) {
+        entry.conflict = {
+          withId: other.id,
+          withAnswer: String(other.answer || '').slice(0, ANSWER_MAX),
+          reason: '答案不一致',
+          at: Date.now(),
+          by: key || '',
+        };
+        // AI 主动报了冲突 = 这条答案存疑：必须人工确认过才允许生效，
+        // 不能因为是全自动模式就把存疑答案直接注入出去。
+        entry.status = KNOWLEDGE_STATUS.CANDIDATE;
+      }
+    }
+    knowledgeEntries.push(entry);
+    saveKnowledgeStore();
+    markKnowledgeDirty(`新增「${q.slice(0, 30)}」`);
+    return { entry, created: true, match: null, conflict: Boolean(entry.conflict) };
   }
 
   // ── 表情包体系（二代仿真）本地知识库 ────────────────────────────────────
@@ -1599,6 +1987,9 @@ async function main() {
     const img = cfg.socialV2?.image ?? {};
     return {
       ...normalizeImageLimits(img),
+      // 年龄分级只影响「搜图返回什么」，不影响发送/收藏本身。
+      rating: normalizeImageRating(img.rating),
+      ratingWords: normalizeRatingWords(img.ratingWords),
       libraryDir: path.resolve(ROOT, String(img.libraryDir || 'assets/stickers'))
     };
   }
@@ -2013,6 +2404,24 @@ async function main() {
     return true;
   }
 
+  // 知识库写入限频。比黑话宽松一档（黑话 2/分、10/时）：知识条目是成对的长文本，
+  // 一轮正经问答里 AI 可能一次沉淀多条，卡太死反而逼它跳过沉淀。
+  const knowledgeSubmitTimes = new Map();
+  function allowKnowledgeSubmit(key) {
+    const now = Date.now();
+    const arr = (knowledgeSubmitTimes.get(key) ?? []).filter((t) => now - t < 60 * 60 * 1000);
+    const recentMinute = arr.filter((t) => now - t < 60 * 1000).length;
+    // 比黑话宽松得多（黑话 2/分、10/时）：一轮正经问答里 AI 可能连续沉淀好几条结论，
+    // 卡太死会让它直接放弃沉淀（线上表现为 429「知识提交过于频繁」后不再补写）。
+    // 分钟额度只防「瞬间刷库」，真正的护栏是小时额度。
+    const MAX_PER_MINUTE = 15;
+    const MAX_PER_HOUR = 60;
+    if (recentMinute >= MAX_PER_MINUTE || arr.length >= MAX_PER_HOUR) return false;
+    arr.push(now);
+    knowledgeSubmitTimes.set(key, arr);
+    return true;
+  }
+
   // 返回给 AI/控制台的“公开黑话条目”（只含安全展示字段，不泄露内部字段）。
   function publicSlangEntry(e) {
     return {
@@ -2117,6 +2526,12 @@ async function main() {
         ].join(''));
       }
     }
+    // 群知识库：与话题相关的「已有确定答案」优先注入，避免同一个问题被不同人问到时重新考据。
+    // 独立于黑话开关（黑话关了知识库照样该用），失败静默降级，不影响回复。
+    if (knowledgeEnabled()) {
+      const kbBlock = await knowledgeBlockFor(promptText, key);
+      if (kbBlock) parts.push(kbBlock);
+    }
     return parts.join('\n\n') + '\n\n' + promptText;
   }
 
@@ -2212,6 +2627,16 @@ async function main() {
 
   // 从 DSH settings 读取桥接模式；命名空间未注册时回退本地 state/mode.json
   const VALID_MODES = ['chat', 'closed-agent', 'reserved', 'reserved2'];
+  /** 只读本地 state/mode.json（同步）——DSH 不可达时的兜底，也是启动时的初始值。 */
+  function applyLocalMode() {
+    const local = readJsonSafe(path.join(STATE_DIR, 'mode.json'), null);
+    if (local?.mode && VALID_MODES.includes(local.mode)) currentMode = local.mode;
+    if (typeof local?.closedAgentPreset === 'string' && local.closedAgentPreset) {
+      closedAgentPreset = local.closedAgentPreset;
+    }
+    return currentMode;
+  }
+
   async function refreshMode() {
     try {
       const s = unwrap(await api.settings.describe({}), 'settings.describe');
@@ -2241,11 +2666,7 @@ async function main() {
         return;
       }
     } catch {}
-    const local = readJsonSafe(path.join(STATE_DIR, 'mode.json'), null);
-    if (local?.mode && VALID_MODES.includes(local.mode)) currentMode = local.mode;
-    if (typeof local?.closedAgentPreset === 'string' && local.closedAgentPreset) {
-      closedAgentPreset = local.closedAgentPreset;
-    }
+    applyLocalMode();
   }
 
   /** 拉取 DSH 当前可用的 agent preset 清单（供控制台下拉与 closed-agent 兜底使用）。 */
@@ -3198,6 +3619,192 @@ async function main() {
           sendJson({ ok: true, config: cfg.slang });
           return;
         }
+        // ── 群知识库管理 ────────────────────────────────────────────────────
+        if (req.method === 'GET' && url.pathname === '/api/knowledge') {
+          const status = String(url.searchParams.get('status') ?? '').trim();
+          const kind = String(url.searchParams.get('kind') ?? '').trim();
+          let list = status ? knowledgeEntries.filter((e) => e.status === status) : knowledgeEntries;
+          if (kind) list = list.filter((e) => e.kind === kind);
+          const confirmed = knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && e.answer);
+          const { toEmbed, orphans } = planRebuild(confirmed.map(asIndexEntry), knowledgeVectorStore);
+          sendJson({
+            entries: list,
+            config: cfg.knowledge,
+            kinds: DEFAULT_KINDS,
+            statuses: KNOWLEDGE_STATUSES,
+            stats: {
+              total: knowledgeEntries.length,
+              confirmed: confirmed.length,
+              // 候选数是控制台最该显眼的数字：积压的待确认条目没人处理，知识库就慢慢停更
+              candidates: knowledgeEntries.filter((e) => e.status === KNOWLEDGE_STATUS.CANDIDATE).length,
+              archived: knowledgeEntries.filter((e) => e.status === KNOWLEDGE_STATUS.ARCHIVED).length,
+              conflicts: listKnowledgeConflicts().length,
+              repeats: confirmed.filter((e) => shouldRemindRepeat(e, knowledgeRemindThreshold(), knowledgeRemindMinAskers())).length,
+              totalHits: confirmed.reduce((sum, e) => sum + (Number(e.hitCount) || 0), 0),
+            },
+            conflicts: listKnowledgeConflicts(),
+            rag: {
+              enabled: knowledgeEnabled() && cfg.rag?.enabled !== false,
+              ready: knowledgeReady(),
+              model: VECTOR_MODEL,
+              dim: knowledgeVectorStore.dim,
+              builtAt: knowledgeVectorStore.builtAt,
+              indexed: Object.keys(knowledgeVectorStore.vectors || {}).length,
+              stale: toEmbed.length,
+              orphans: orphans.length,
+              dirty: knowledgeDirty,
+              lastError: knowledgeLastError
+            }
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/knowledge') {
+          const body = await readBody();
+          const question = String(body.question ?? '').trim();
+          const answer = String(body.answer ?? '').trim();
+          if (!question) { sendJson({ ok: false, error: '问题不能为空' }, 400); return; }
+          if (!answer) { sendJson({ ok: false, error: '答案不能为空' }, 400); return; }
+          const kind = DEFAULT_KINDS.includes(String(body.kind ?? '')) ? String(body.kind) : KNOWLEDGE_KINDS.FACT;
+          const entry = createKnowledgeEntry({
+            question,
+            answer,
+            kind,
+            tags: Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : [],
+            aliases: Array.isArray(body.aliases) ? body.aliases.map(String).filter(Boolean) : [],
+            sources: Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean) : [],
+            status: KNOWLEDGE_STATUSES.includes(String(body.status)) ? String(body.status) : KNOWLEDGE_STATUS.CONFIRMED,
+            source: 'manual'
+          });
+          knowledgeEntries.push(entry);
+          saveKnowledgeStore();
+          markKnowledgeDirty(`控制台新增「${question.slice(0, 30)}」`);
+          log(`控制台：新增知识「${question.slice(0, 40)}」`);
+          sendJson({ ok: true, entry: publicKnowledgeEntry(entry) });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/knowledge/update') {
+          const body = await readBody();
+          const id = String(body.id ?? '').trim();
+          const entry = kbEntryById(id);
+          if (!entry) { sendJson({ ok: false, error: '知识条目不存在' }, 404); return; }
+          if (body.question !== undefined) {
+            const q = String(body.question ?? '').trim();
+            if (!q) { sendJson({ ok: false, error: '问题不能为空' }, 400); return; }
+            entry.question = q.slice(0, QUESTION_MAX);
+          }
+          if (body.answer !== undefined) {
+            const a = String(body.answer ?? '').trim();
+            if (!a) { sendJson({ ok: false, error: '答案不能为空' }, 400); return; }
+            entry.answer = a.slice(0, ANSWER_MAX);
+          }
+          if (body.kind !== undefined && DEFAULT_KINDS.includes(String(body.kind))) entry.kind = String(body.kind);
+          const statusBefore = entry.status;
+          if (body.status !== undefined && KNOWLEDGE_STATUSES.includes(String(body.status))) entry.status = String(body.status);
+          // 数组字段是「整体替换」语义（控制台编辑框就是全量提交），不做合并
+          if (body.tags !== undefined) entry.tags = [...new Set([entry.kind, ...(Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : [])])].slice(0, 8);
+          if (body.aliases !== undefined) entry.aliases = (Array.isArray(body.aliases) ? body.aliases.map(String).filter(Boolean) : []).slice(0, 12);
+          if (body.sources !== undefined) entry.sources = (Array.isArray(body.sources) ? body.sources.map(String).filter((s) => /^https?:\/\//i.test(s)) : []).slice(-10);
+          if (body.confidence !== undefined) entry.confidence = body.confidence === 'low' ? 'low' : 'normal';
+          // 人工改过答案即视为已裁定：清掉待处理冲突标记。
+          // 并且顺手把候选转正——控制台编辑一条候选项，意思就是「我确认过这条了」；
+          // 不转正的话你得再点一次「启用」，而大多数人不会想到还要再点。
+          if (body.resolveConflict === true || body.answer !== undefined) {
+            entry.conflict = null;
+            if (entry.status === KNOWLEDGE_STATUS.CANDIDATE && body.status === undefined) entry.status = KNOWLEDGE_STATUS.CONFIRMED;
+          }
+          // 手工把候选改成其他状态时，也当作已裁定
+          if (statusBefore === KNOWLEDGE_STATUS.CANDIDATE && entry.status !== KNOWLEDGE_STATUS.CANDIDATE) entry.conflict = null;
+          entry.tags = [...new Set([entry.kind, ...(entry.tags || [])])].slice(0, 8);
+          entry.updatedAt = new Date().toISOString();
+          saveKnowledgeStore();
+          markKnowledgeDirty(`控制台修改「${entry.question.slice(0, 30)}」`);
+          log(`控制台：修改知识「${entry.question.slice(0, 40)}」`);
+          sendJson({ ok: true, entry: publicKnowledgeEntry(entry) });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/knowledge/delete') {
+          const body = await readBody();
+          const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
+          const id = String(body.id ?? '').trim();
+          if (id) ids.push(id);
+          if (!ids.length) { sendJson({ ok: false, error: '请提供要删除的 id 或 ids' }, 400); return; }
+          const idSet = new Set(ids);
+          const before = knowledgeEntries.length;
+          knowledgeEntries = knowledgeEntries.filter((e) => !idSet.has(e.id));
+          const removedCount = before - knowledgeEntries.length;
+          if (!removedCount) { sendJson({ ok: false, error: '没有匹配到要删除的知识条目' }, 404); return; }
+          saveKnowledgeStore();
+          markKnowledgeDirty(`控制台删除 ${removedCount} 条`);
+          log(`控制台：删除知识 ${removedCount} 条`);
+          sendJson({ ok: true, removedCount });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/knowledge/rag-rebuild') {
+          if (!(knowledgeEnabled() && cfg.rag?.enabled !== false)) { sendJson({ ok: false, error: 'RAG 未启用（config.rag.enabled=false）' }, 400); return; }
+          const body = await readBody();
+          try {
+            const res = await rebuildKnowledgeIndex({ force: body.force === true });
+            log(`控制台：知识库向量索引重建完成（${res.embedded} 条，${res.ms}ms）`);
+            sendJson({ ok: true, ...res });
+          } catch (error) {
+            sendJson({ ok: false, error: `重建失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // 检索调试：给定问题，看知识库会注入哪几条（判断去重与检索是否按预期工作）。
+        if (req.method === 'POST' && url.pathname === '/api/knowledge/debug-search') {
+          const body = await readBody();
+          const query = String(body.query ?? '').trim();
+          const key = String(body.key ?? '').trim();
+          const max = Math.max(1, Math.min(30, Number(body.max) || Number(cfg.knowledge?.injectMax) || 6));
+          if (!query) { sendJson({ ok: false, error: 'query 不能为空' }, 400); return; }
+          const exact = findKnowledgeMatch(knowledgeEntries, query, { similarityThreshold: Number(cfg.knowledge?.similarityThreshold) || 0.62 });
+          let vector = null;
+          if (knowledgeReady()) {
+            try {
+              const [qv] = await embedder.embed([query]);
+              const pool = knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && String(e.answer || '').trim());
+              vector = scoreEntries({
+                queryVec: qv, entries: pool.map(asIndexEntry), store: knowledgeVectorStore, key,
+                minCosine: Number(cfg.rag?.minCosine ?? 0.5)
+              }).slice(0, max).map((r) => {
+                const full = kbEntryById(r.entry.id);
+                return full ? { question: full.question, hitCount: full.hitCount, similarity: +r.sem.toFixed(3) } : null;
+              }).filter(Boolean);
+            } catch { vector = null; }
+          }
+          sendJson({
+            ok: true,
+            query,
+            fingerprint: questionFingerprint(query),
+            exact: exact ? { match: exact.match, sim: exact.sim ?? null, entry: publicKnowledgeEntry(exact.entry) } : null,
+            vector,
+            block: formatKnowledgeTable(
+              (vector || []).map((v) => knowledgeEntries.find((e) => e.question === v.question)).filter(Boolean),
+              knowledgeOptions()
+            )
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/knowledge/config') {
+          const body = await readBody();
+          const configFile = path.join(ROOT, 'config.json');
+          const file = readJsonSafe(configFile, null, true);
+          const merged = { ...(file.knowledge ?? {}), ...body };
+          if (merged.enabled !== undefined) merged.enabled = merged.enabled === true || merged.enabled === 'true';
+          if (merged.autoWrite !== undefined) merged.autoWrite = merged.autoWrite === true || merged.autoWrite === 'true';
+          if (merged.injectMax !== undefined) merged.injectMax = Math.min(30, Math.max(1, Math.round(Number(merged.injectMax) || 6)));
+          if (merged.remindHitCount !== undefined) merged.remindHitCount = Math.max(1, Math.round(Number(merged.remindHitCount) || 3));
+          if (merged.remindMinAskers !== undefined) merged.remindMinAskers = Math.max(1, Math.round(Number(merged.remindMinAskers) || 2));
+          if (merged.similarityThreshold !== undefined) merged.similarityThreshold = Math.min(0.95, Math.max(0.3, Number(merged.similarityThreshold) || 0.62));
+          if (merged.conflictMinCosine !== undefined) merged.conflictMinCosine = Math.min(0.99, Math.max(0.5, Number(merged.conflictMinCosine) || 0.8));
+          file.knowledge = merged;
+          atomicWriteJson(configFile, file);
+          cfg.knowledge = { ...cfg.knowledge, ...merged };
+          log('控制台：知识库配置已更新');
+          sendJson({ ok: true, config: cfg.knowledge });
+          return;
+        }
         // ── 会话查看 ──────────────────────────────────────────────────────────
         if (req.method === 'GET' && url.pathname === '/api/sessions') {
           const list = [];
@@ -3503,7 +4110,9 @@ async function main() {
         }
         // ── 二代仿真模式（reserved2）内部 Agent API ─────────────────────────
         if (req.method === 'GET' && url.pathname === '/api/socialV2/config') {
-          sendJson({ ok: true, config: cfg.socialV2 ?? {} });
+          // knowledge 一并返回：social2 的工具开关面板里带了它的齿轮配置弹窗，
+          // 那里的 CFG_SCHEMA 读 state.config[section]，少了这一段会渲染成空面板。
+          sendJson({ ok: true, config: { ...(cfg.socialV2 ?? {}), knowledge: cfg.knowledge ?? {} } });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/config') {
@@ -3523,7 +4132,7 @@ async function main() {
             merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
           }
           // tools：只接受布尔开关
-          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker', 'memberRemark'];
+          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker', 'memberRemark', 'video', 'videoFrames'];
           // 默认关闭的高危工具（真·QQ 写操作）：非布尔一律按「当前值 === true」兜底，不能用 !== false。
           const optInToolFlags = ['setMemberCard'];
           if (body.tools && typeof body.tools === 'object') {
@@ -3553,6 +4162,17 @@ async function main() {
               merged.image.refererAllow = Array.isArray(merged.image.refererAllow)
                 ? merged.image.refererAllow.map((v) => String(v ?? '').trim()).filter((v) => /^https?:\/\//i.test(v)).slice(0, 20)
                 : (cur.refererAllow ?? []);
+            }
+            // 年龄分级只有 safe/mild 两档，写别的值一律收紧回 safe（normalizeImageRating 兜底）。
+            if (merged.image.rating !== undefined) merged.image.rating = normalizeImageRating(merged.image.rating);
+            // 分级词表：数组才认；非数组的键沿用旧值（不会因为漏传某个键就把词表清空）。
+            // explicitExtra 只是补充，内置限制级词表仍然生效（见 image-rating.js）。
+            if (merged.image.ratingWords !== undefined) {
+              merged.image.ratingWords = normalizeRatingWords(
+                merged.image.ratingWords && typeof merged.image.ratingWords === 'object'
+                  ? merged.image.ratingWords
+                  : (cur.ratingWords ?? {})
+              );
             }
           }
           // wake：数值与字符串数组归一化
@@ -3777,6 +4397,9 @@ async function main() {
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('socialState')) { sendJson({ ok: false, error: '工具未启用：qq_social_state' }, 403); return; }
           const st = getSocialV2State(key);
+          // 首次访问会**铸造 agentToken**，必须立刻落盘：否则进程在后续任何一次
+          // saveSocialV2State 之前重启，这个 token 就随内存一起消失，而 AI 侧还拿着旧的。
+          saveSocialV2State();
           sendJson({
             ok: true,
             key,
@@ -3821,6 +4444,7 @@ async function main() {
             memory: 'qq_memory_append / qq_memory_query / qq_memory_remove / qq_memory_clear',
             slangQuery: 'qq_slang_query',
             slangSubmit: 'qq_slang_submit',
+            knowledge: 'qq_knowledge_query / qq_knowledge_submit',
             getImages: 'qq_get_message_images',
             getForwardMsg: 'qq_get_forward_msg',
             sendPoke: 'qq_send_poke',
@@ -3865,6 +4489,19 @@ async function main() {
             currentWakeConfig: st.wakeConfig,
             wakeSafety: computeWakeSafetyV2(st.wakeConfig),
             memory: formatMemoryV2(st),
+            knowledge: {
+              enabled: knowledgeEnabled(),
+              total: knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && e.answer).length,
+              injectMax: cfg.knowledge?.injectMax ?? 6,
+              autoWrite: cfg.knowledge?.autoWrite !== false,
+              remindHitCount: knowledgeRemindThreshold(),
+              repeats: knowledgeEntries
+                .filter((e) => isActiveStatus(e.status) && shouldRemindRepeat(e, knowledgeRemindThreshold(), knowledgeRemindMinAskers()))
+                .sort((a, b) => (Number(b.hitCount) || 0) - (Number(a.hitCount) || 0))
+                .slice(0, 10)
+                .map((e) => ({ id: e.id, question: e.question, hitCount: Number(e.hitCount) || 0, askerCount: (e.askers || []).length })),
+              conflicts: listKnowledgeConflicts().slice(0, 10)
+            },
             participation: formatParticipationV2(st),
             slang: {
               enabled: cfg.slang?.enabled !== false,
@@ -4959,7 +5596,18 @@ async function main() {
           const body = await readBody();
           const key = String(body.key ?? '').trim();
           const query = String(body.query ?? '').trim();
-          if (!key || !query) { sendJson({ ok: false, error: 'key 和 query 不能为空' }, 400); return; }
+          // source：auto（默认：先试 pixiv，没结果再回退 B 站）/ bilibili（梗图/表情包）/ pixiv（二次元插画）/ all（两边都要）
+          const source = (() => {
+            const s = String(body.source ?? '').trim().toLowerCase();
+            return s === 'pixiv' || s === 'all' || s === 'auto' ? s : 'bilibili';
+          })();
+          // pixiv 的 mode：tag=按关键词搜标签页（默认）；daily=综合日榜（可以不给 query）
+          const pixivMode = body.mode === 'daily' ? 'daily' : 'tag';
+          const needsQuery = !((source === 'pixiv' || source === 'auto') && pixivMode === 'daily');
+          if (!key || (needsQuery && !query)) {
+            sendJson({ ok: false, error: needsQuery ? 'key 和 query 不能为空' : 'key 不能为空' }, 400);
+            return;
+          }
           if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('searchImages')) { sendJson({ ok: false, error: '工具未启用：qq_search_images' }, 403); return; }
@@ -4979,23 +5627,90 @@ async function main() {
           st.imageSearchTimes.push(now);
           if (st.imageSearchTimes.length > 500) st.imageSearchTimes = st.imageSearchTimes.slice(-500);
           try {
-            const client = createBiliClient({ cookie: readBiliCookie(ROOT) });
-            const rawSources = Array.isArray(body.sources) ? body.sources : (body.sources ? [body.sources] : ['comment', 'article']);
-            const sources = rawSources.map(String).filter((x) => x === 'article' || x === 'comment');
-            const items = await client.searchImages(query, {
-              count: Math.min(12, Math.max(1, Number(body.count) || 6)),
-              sources: sources.length ? sources : ['comment', 'article'],
-              videoTop: Math.min(8, Math.max(1, Number(body.videoTop) || 5)),
-              commentPages: Math.min(3, Math.max(1, Number(body.commentPages) || 2)),
-              animatedOnly: body.animatedOnly === true
-            });
+            const imgLimits = resolveImageConfig();
+            const count = Math.min(12, Math.max(1, Number(body.count) || 6));
+            const notes = [];
+            let items = [];
+            let pixivMeta = null;
+            let pixivFailed = '';
+            const wantPixiv = source === 'pixiv' || source === 'all' || source === 'auto';
+            const wantBilibili = source === 'bilibili' || source === 'all';
+            if (wantPixiv) {
+              const opts = { limit: count, rating: imgLimits.rating, words: imgLimits.ratingWords };
+              try {
+                const result = pixivMode === 'daily' ? await pixivDailyRanking(opts) : await searchPixivByTag(query, opts);
+                pixivMeta = {
+                  mode: result.mode,
+                  pageUrl: result.pageUrl,
+                  date: result.date,
+                  rating: result.rating,
+                  total: result.total,
+                  kept: result.keptCount ?? result.items.length,
+                  returned: result.items.length,
+                  dropped: result.dropped
+                };
+                if (result.dropped.byRating > 0) notes.push(`年龄分级=${result.rating}，滤掉 ${result.dropped.byRating} 张擦边图`);
+                if (result.dropped.explicit > 0) notes.push(`滤掉 ${result.dropped.explicit} 张限制级图（任何分级都不返回）`);
+                items = items.concat(result.items);
+              } catch (error) {
+                // auto 才有资格回退；显式 source=pixiv 时把错误如实抛给调用方，别偷偷换源。
+                if (source !== 'auto') throw error;
+                pixivFailed = String(error?.message ?? error);
+              }
+            }
+            // auto：pixiv 报错、或者只捞到零星几张（少于 3 张，含 0 张）时，再用 B 站补/兜底。
+            // 只找到 1 张就当作"找到了"会让中文主播这类冷门标签只回一张不相干的图。
+            const pixivKept = pixivMeta?.kept ?? 0;
+            const needBiliFallback = source === 'auto' && pixivKept < Math.min(3, count);
+            if (wantBilibili || needBiliFallback) {
+              if (query) {
+                const client = createBiliClient({ cookie: readBiliCookie(ROOT) });
+                const rawSources = Array.isArray(body.sources) ? body.sources : (body.sources ? [body.sources] : ['comment', 'article']);
+                const sources = rawSources.map(String).filter((x) => x === 'article' || x === 'comment');
+                const biliItems = await client.searchImages(query, {
+                  count,
+                  sources: sources.length ? sources : ['comment', 'article'],
+                  videoTop: Math.min(8, Math.max(1, Number(body.videoTop) || 5)),
+                  commentPages: Math.min(3, Math.max(1, Number(body.commentPages) || 2)),
+                  animatedOnly: body.animatedOnly === true
+                });
+                const merged = biliItems.map((it) => ({ ...it, provider: 'bilibili' }));
+                if (needBiliFallback) {
+                  if (pixivFailed) notes.push(`pixiv 没搜到（${pixivFailed}），已自动回退 B 站`);
+                  else if (!pixivKept) notes.push('pixiv 没有可用结果（可能都被分级滤掉了），已自动回退 B 站');
+                  else notes.push(`pixiv 只有 ${pixivKept} 张，已补上 B 站结果`);
+                }
+                const seen = new Set(items.map((it) => String(it.url)));
+                for (const it of merged) {
+                  if (seen.has(String(it.url))) continue;
+                  seen.add(String(it.url));
+                  items.push(it);
+                }
+              } else if (source === 'bilibili') {
+                throw new Error('query 不能为空');
+              }
+            }
             saveSocialV2State();
-            appendActivity(`${key} [bili] 按主题搜图：${query}（${items.length} 张）`);
-            log(`[bili] 搜图 ${query} → ${items.length} 张`);
+            appendActivity(`${key} [${source}] 按主题搜图：${query || '(pixiv 日榜)'}（${items.length} 张）`);
+            log(`[${source}] 搜图 ${query || '(pixiv 日榜)'} → ${items.length} 张`);
+            const hintParts = [];
+            if (source !== 'pixiv') hintParts.push('B 站图默认取自相关视频评论区（不够再补专栏配图），不含视频封面；B 站很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true');
+            if (source !== 'bilibili') hintParts.push('pixiv 每项 url 是 pixiv.re 代理的原图直链；若发送时报「图片超过体积上限」，改用同一项的 thumbUrl（几十 KB 缩略图）；id 也可以留着下次直接复用');
+            if (source === 'auto') hintParts.push('source=auto 会先试 pixiv 标签，没结果自动回退 B 站（notes 里会写明走的是哪边）；中文主播/VTuber/梗图这种 pixiv 收录少的，本来就更依赖 B 站');
+            hintParts.push('每项 url 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker 存进收藏表情库；不要刷屏，一次挑 1~2 张合适的即可');
             sendJson({
-              ok: true, query, count: items.length, items,
+              ok: true,
+              query,
+              source,
+              pixivMode: source === 'bilibili' ? undefined : pixivMode,
+              count: items.length,
+              items,
+              rating: imgLimits.rating,
+              pixiv: pixivMeta,
+              pixivError: pixivFailed || undefined,
+              notes,
               animatedOnly: body.animatedOnly === true,
-              hint: '默认从相关视频的评论区取图（不够再补专栏配图），不含视频封面。每项 url 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker 存进收藏表情库。注意：B 站很多 .gif 是单帧静态图，要真动图请传 animatedOnly=true'
+              hint: hintParts.join('；')
             });
           } catch (error) {
             st.imageSearchTimes = st.imageSearchTimes.filter((t) => t !== now);
@@ -5065,6 +5780,88 @@ async function main() {
           return;
         }
         // 按需「学梗」：本地黑话库 → B 站（视频标题/简介 + 高赞评论）→ 存为候选词条
+        // ── B站视频理解：搜索 / 元数据 / 字幕（JSON） ──────────────────────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-video') {
+          if (cfg.bili?.enabled === false) { sendJson({ ok: false, error: 'B站能力已关闭（bili.enabled=false）' }, 403); return; }
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const token = String(body.token ?? '').trim();
+          const op = String(body.op ?? 'info').trim();
+          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (token && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          const needFlag = 'video';   // 搜索与读字幕已合并为一个工具
+          if (token && !v2ToolEnabled(needFlag)) { sendJson({ ok: false, error: `工具未启用：${needFlag}` }, 403); return; }
+          if (cfg.socialV2?.enabled === false || currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          try {
+            const v = videoToolsOf();
+            if (op === 'search') {
+              const word = String(body.word ?? '').trim().slice(0, 60);
+              if (!word) { sendJson({ ok: false, error: 'word 不能为空' }, 400); return; }
+              const list = await createBiliClient({ cookie: readBiliCookie(ROOT) }).searchVideos(word, { page: 1 });
+              const n = Math.max(1, Math.min(20, Number(body.limit) || 8));
+              sendJson({
+                ok: true, op, word,
+                items: list.slice(0, n).map((x) => ({ bvid: x.bvid, title: x.title, aid: x.aid })),
+                note: 'B站是中文时事/赛事/梗的最佳源。挑一个 bvid 传回 qq_video 就能读它的字幕文字稿；想看画面再用 qq_video_frames 按时间点取帧。'
+              });
+              return;
+            }
+            const bvid = String(body.bvid ?? '').trim();
+            if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) { sendJson({ ok: false, error: 'bvid 格式不对' }, 400); return; }
+            if (op === 'info') {
+              const m = await v.meta(bvid);
+              // 顺带报「有没有字幕/有没有画面」，让 AI 决定走哪条路
+              const [sub, sb] = await Promise.all([
+                v.subtitle(bvid).then((x) => ({ available: x.available, lan: x.lan, chars: x.chars, tokensEst: x.tokensEst, reason: x.reason })).catch((e) => ({ available: false, reason: String(e.message) })),
+                v.storyboard(bvid).then((x) => ({ available: x.available, frames: x.count, frameW: x.frameW, frameH: x.frameH })).catch((e) => ({ available: false, reason: String(e.message) }))
+              ]);
+              sendJson({ ok: true, op, video: m, subtitle: sub, frames: sb });
+              return;
+            }
+            if (op === 'subtitle') {
+              const r = await v.subtitle(bvid, {
+                offset: Math.max(0, Number(body.offset) || 0),
+                limit: Math.max(0, Math.min(600, Number(body.limit) || 0))
+              });
+              // segments 可能很长，默认只给文字；显式要才回时间轴
+              if (body.withSegments !== true) delete r.segments;
+              sendJson({ ok: true, op, ...r });
+              return;
+            }
+            sendJson({ ok: false, error: `未知 op：${op}（可选 search/info/subtitle）` }, 400);
+          } catch (error) {
+            sendJson({ ok: false, error: `B站视频请求失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // ── B站视频画面：按时间点取帧（返回图像，直接进模型上下文） ─────────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-frames') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const token = String(body.token ?? '').trim();
+          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (token && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (token && !v2ToolEnabled('videoFrames')) { sendJson({ ok: false, error: '工具未启用：videoFrames' }, 403); return; }
+          if (cfg.socialV2?.enabled === false || currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          const bvid = String(body.bvid ?? '').trim();
+          if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) { sendJson({ ok: false, error: 'bvid 格式不对' }, 400); return; }
+          try {
+            const r = await videoToolsOf().frames(bvid, {
+              atSeconds: Math.max(0, Number(body.atSeconds) || 0),
+              count: Math.max(1, Math.min(12, Number(body.count) || 4)),
+              spreadSeconds: Math.max(0, Math.min(300, Number(body.spreadSeconds) || 0))
+            });
+            sendJson({
+              ok: true, bvid, title: r.title, duration: r.duration,
+              requestedAt: r.requestedAt, pickedAt: r.pickedAt, failures: r.failures,
+              note: '这是 B站进度条预览图切出来的帧（480×270），格 ~5 秒一帧，可能错过瞬时画面。',
+              images: r.images.map((im) => ({ at: im.at, mimeType: im.mimeType, data: im.data }))
+            });
+          } catch (error) {
+            sendJson({ ok: false, error: `取帧失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/lookup-meme') {
           if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
           const body = await readBody();
@@ -6138,6 +6935,154 @@ async function main() {
           sendJson({ ok: true, entry: publicSlangEntry(entry) });
           return;
         }
+        // ── 群知识库：AI 查询已有答案 ────────────────────────────────────────
+        if (req.method === 'GET' && url.pathname === '/api/socialV2/knowledge/query') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const q = String(url.searchParams.get('q') ?? '').trim();
+          const kind = String(url.searchParams.get('kind') ?? '').trim().toLowerCase();
+          const limitParam = Number(url.searchParams.get('limit'));
+          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('knowledge')) { sendJson({ ok: false, error: '工具未启用：qq_knowledge_query' }, 403); return; }
+          const confirmedTotal = knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && e.answer).length;
+          const want = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(2000, Math.floor(limitParam)) : (q ? 2000 : 40);
+          const lower = q.toLowerCase();
+          let candidates = confirmedKnowledgeList(want);
+          if (kind) candidates = candidates.filter((e) => e.kind === kind);
+          // 字面匹配按「词元」而不是整串 includes：
+          // 中文问句换个语序或插个字（「DeepSeek 是什么时候开源的」vs「deepseek 什么时候开源」）
+          // 用整串 includes 永远匹配不上，而它俩显然是同一个问题。
+          // 这里按标点/空白切词元，命中覆盖率过半才算相关，再按覆盖率排序。
+          let list = candidates;
+          let matched = 0;
+          if (q) {
+            const tokens = String(lower).split(/[\s,，。？?！!、；;：:]+/).map((t) => t.trim()).filter(Boolean);
+            const scored = [];
+            for (const e of candidates) {
+              const hay = [
+                String(e.question || '').toLowerCase(),
+                String(e.answer || '').toLowerCase(),
+                (e.aliases || []).join(' ').toLowerCase(),
+                (e.tags || []).join(' ').toLowerCase()
+              ].join('\n');
+              let hits = 0;
+              for (const t of tokens) if (hay.includes(t)) hits += 1;
+              // 单字/整句 query 切不出词元时，退回整串 includes
+              const coverage = tokens.length ? hits / tokens.length : (hay.includes(lower) ? 1 : 0);
+              const wholeHit = tokens.length !== 1 && hay.includes(lower) ? 0.5 : 0;
+              if (coverage + wholeHit > 0) scored.push({ e, score: coverage + wholeHit });
+            }
+            scored.sort((a, b) => b.score - a.score);
+            list = scored.map((s) => s.e);
+            // 「命中」= 覆盖率过半：只有零星沾词的条目不算命中，
+            // 否则会把一批只沾一个词的条目当答案返回，比「没找到」更危险。
+            matched = scored.filter((s) => s.score >= 0.5).length;
+          }
+          // 字面没有一条够格时用向量兜底：找语义相近的问题（「ds啥时开源」→「DeepSeek 何时开源」）。
+          // 判定条件是 matched，不是 list.length：list 只是「取到的候选」，
+          // 用 list.length 判空会让「取到了候选但一条都不沾边」直接跳过兜底（这是修掉的真 bug）。
+          let semantic = null;
+          if (q && !matched && knowledgeReady()) {
+            try {
+              if (knowledgeDirty && cfg.rag?.autoRebuild !== false) scheduleKnowledgeRebuild();
+              const [qv] = await embedder.embed([q]);
+              if (qv && qv.length) {
+                const pool = knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && String(e.answer || '').trim());
+                const gate = Number(cfg.rag?.linkMinCosine ?? 0.5);
+                semantic = scoreEntries({
+                  queryVec: qv,
+                  entries: pool.map(asIndexEntry),
+                  store: knowledgeVectorStore,
+                  key,
+                  minCosine: gate
+                }).slice(0, 8)
+                  .map((r) => {
+                    const full = kbEntryById(r.entry.id);
+                    return full ? { ...publicKnowledgeEntry(full), similarity: +r.sem.toFixed(3), semantic: true } : null;
+                  })
+                  .filter(Boolean);
+                if (!semantic.length) semantic = null;
+              }
+            } catch { /* 向量不可用就照旧返回空结果 */ }
+          }
+          // 字面没沾边、但被向量捞回来的条目也要放进 entries，
+          // 否则调用方只看 entries 会以为「没有」，而 total 又不是 0（自相矛盾）。
+          if (q && !matched && semantic?.length) list = semantic;
+          // 需要提醒 AI 的重复问题：达到阈值但本次没被查（AI 没主动问），也要让它知道。
+          const repeats = list
+            .map((e) => kbEntryById(e.id))
+            .filter((e) => e && shouldRemindRepeat(e, knowledgeRemindThreshold(), knowledgeRemindMinAskers()))
+            .map((e) => ({ id: e.id, question: e.question, hitCount: e.hitCount, askerCount: e.askers.length }));
+          const total = list.length + (semantic?.length ?? 0);
+          sendJson({
+            ok: true,
+            key,
+            total,
+            confirmedTotal,
+            kind: kind || '',
+            entries: list,
+            semantic,
+            repeats,
+            conflicts: listKnowledgeConflicts().slice(0, 20),
+            note: total
+              ? ''
+              : (q
+                ? `没有匹配「${q}」的已沉淀答案，说明这是个新问题；按你查到的结果正常回答，答完用 qq_knowledge_submit 存一条。`
+                : `知识库现有 ${confirmedTotal} 条已确认答案。找具体问题请传 q。`),
+            block: buildKnowledgeContext(knowledgeEntries, cfg.knowledge?.injectMax ?? 6, knowledgeOptions())
+          });
+          return;
+        }
+        // ── 群知识库：AI 沉淀答案（全自动写入，可人工删改） ──────────────────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/knowledge/submit') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const question = String(body.question ?? '').trim();
+          const answer = String(body.answer ?? '').trim();
+          const asker = redactKnownTokensOnly(String(body.asker ?? '')).trim();
+          const evidence = redactKnownTokensOnly(String(body.evidence ?? '')).trim();
+          const conflictOf = String(body.conflictOf ?? '').trim();
+          const kind = String(body.kind ?? '').trim().toLowerCase();
+          const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t ?? '').trim()).filter(Boolean).slice(0, 8) : [];
+          const aliases = Array.isArray(body.aliases) ? body.aliases.map((a) => String(a ?? '').trim()).filter(Boolean).slice(0, 12) : [];
+          const sourcesRaw = Array.isArray(body.sources) ? body.sources : (body.source ? [body.source] : []);
+          // 只保留 http(s) 来源，避免把任意字符串当 URL 存进库里再注入
+          const sources = sourcesRaw.map((s) => String(s ?? '').trim()).filter((s) => /^https?:\/\//i.test(s)).slice(-10);
+          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('knowledge')) { sendJson({ ok: false, error: '工具未启用：qq_knowledge_submit' }, 403); return; }
+          if (!knowledgeEnabled()) { sendJson({ ok: false, error: '知识库已关闭（knowledge.enabled=false）' }, 403); return; }
+          if (!question) { sendJson({ ok: false, error: 'question 不能为空' }, 400); return; }
+          if (!answer) { sendJson({ ok: false, error: 'answer 不能为空' }, 400); return; }
+          if (question.length > QUESTION_MAX) { sendJson({ ok: false, error: `question 过长（最多 ${QUESTION_MAX} 字）` }, 400); return; }
+          if (answer.length > ANSWER_MAX) { sendJson({ ok: false, error: `answer 过长（最多 ${ANSWER_MAX} 字）` }, 400); return; }
+          if (!allowKnowledgeSubmit(key)) { sendJson({ ok: false, error: '知识提交过于频繁，请稍后再试' }, 429); return; }
+          const res = upsertKnowledge({ question, answer, kind, tags, aliases, sources, asker, key, evidence, conflictOf });
+          if (!res.entry) { sendJson({ ok: false, error: '写入失败：问题或答案被清洗后为空' }, 400); return; }
+          const pub = publicKnowledgeEntry(res.entry);
+          const repeat = shouldRemindRepeat(res.entry, knowledgeRemindThreshold(), knowledgeRemindMinAskers());
+          log(`[kb] ${res.created ? '新增' : '合并'}「${question.slice(0, 40)}」(${key})，累计 ${res.entry.hitCount} 次${res.conflict ? '（标记冲突待裁定）' : ''}`);
+          appendActivity(`${key} [kb] ${res.created ? '沉淀' : '更新'}答案：${question.slice(0, 60)}`);
+          sendJson({
+            ok: true,
+            created: res.created,
+            duplicate: !res.created,
+            match: res.match,
+            conflict: res.conflict,
+            repeat,
+            hitCount: res.entry.hitCount,
+            askerCount: Array.isArray(res.entry.askers) ? res.entry.askers.length : 0,
+            entry: pub,
+            note: res.created
+              ? '已沉淀入库，之后有人问同样的问题会直接命中这条答案。'
+              : `已合并到已有条目（${res.match}），这条已被问过 ${res.entry.hitCount} 次。`
+          });
+          return;
+        }
         if (req.method === 'POST' && url.pathname === '/api/authorize/read') {
           const body = await readBody();
           const key = String(body.key ?? '').trim();
@@ -6471,7 +7416,17 @@ async function main() {
       // 失败只记日志——向量检索是加分项，缺了就走按频次选词。
       if (ragEnabled()) {
         embedder.start()
-          .then(() => { log(`[rag] 本地向量检索已启用（${VECTOR_MODEL}，${vectorStore.dim || '?'} 维，库内 ${Object.keys(vectorStore.vectors || {}).length} 条）`); return scheduleRagRebuild(3000); })
+          .then(() => {
+            log(`[rag] 本地向量检索已启用（${VECTOR_MODEL}，${vectorStore.dim || '?'} 维，库内 ${Object.keys(vectorStore.vectors || {}).length} 条）`);
+            // 知识库用独立索引文件，黑话补完再补它，避免两个 embedder 任务同时抢内存。
+            return scheduleRagRebuild(3000).then(() => {
+              if (knowledgeEnabled()) {
+                log(`[kb] 知识库已启用（${knowledgeEntries.length} 条，其中已确认 ${knowledgeEntries.filter((e) => isActiveStatus(e.status)).length} 条）`);
+                return warmKnowledgeIndex();
+              }
+              return null;
+            });
+          })
           .catch((error) => log(`[rag] 本地向量检索不可用（降级为按频次选词）：${error?.message ?? error}`));
       }
     });
@@ -7787,6 +8742,13 @@ async function main() {
 
   loadSocialV2State();
 
+  // 启动时先按本地已保存的模式兜底一次。
+  // 之前 currentMode 一直停在初始的 'chat'，只有 DSH 可达（checkDsh → refreshMode）才会被纠正——
+  // 后果是 DSH 没起来时桥接整段时间都用错模式，state/mode.json 里配的 reserved2 形同虚设，
+  // 所有带 agent token 的二代工具一律 403「该接口仅 reserved2 模式可用」。
+  // 同步读，保证监听端口之前模式就已就位；等 DSH 起来后 refreshMode 仍以 DSH 设置为准。
+  applyLocalMode();
+
   function isSocialEnabled() {
     return currentMode === 'reserved' && cfg.social?.enabled !== false;
   }
@@ -8979,7 +9941,25 @@ async function main() {
     if (wcTr.anyMessage) wcTriggers.push('任意消息');
     if (Number(wcTr.probability) > 0) wcTriggers.push(`概率${wcTr.probability}`);
     const wakeLine = `【当前唤醒】${wcMode}，${wcTime}${wcTriggers.length ? `；触发：${wcTriggers.join('/')}` : ''}\n\n`;
-    const base = roleLine + tokenLine + antiAiLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + memoryLine + participationLine;
+    // 被反复问过、该沉淀准确答案的问题（同步算，纯内存，不碰向量）
+    const repeatReminders = knowledgeEntries
+      .filter((e) => isActiveStatus(e.status) && e.question && e.answer
+        && shouldRemindRepeat(e, knowledgeRemindThreshold(), knowledgeRemindMinAskers()))
+      .sort((a, b) => (Number(b.hitCount) || 0) - (Number(a.hitCount) || 0))
+      .map((e) => ({ id: e.id, question: e.question, hitCount: Number(e.hitCount) || 0, askerCount: (e.askers || []).length }));
+    // 知识库提示：不在这里注入答案本体（那是每轮按话题检索的，见 withSlangContext），
+    // 这里只交代「有这回事、什么时候用」+ 重复问题提醒，避免唤醒 prompt 里塞重复答案。
+    let knowledgeLine = '';
+    if (knowledgeEnabled()) {
+      knowledgeLine = '【群知识库】群友反复问过的客观事实/群规/称呼，答过一次就会沉淀；'
+        + '碰到「XX 是什么/什么时候/怎么弄/谁是」这类问题，先 mcp__snowluma__qq_knowledge_query（key/token/question）查一眼，命中就直接用，别重新查一遍。'
+        + '答完新问题（尤其是对比、考据、操作步骤这类费了力的）用 qq_knowledge_submit 存一条，下次别人问就省事。\n\n';
+      if (Array.isArray(repeatReminders) && repeatReminders.length) {
+        knowledgeLine += '【这几条被反复问过，答案该准一点】\n'
+          + repeatReminders.slice(0, 5).map((r) => `- ${r.question}（已问 ${r.hitCount} 次，${r.askerCount} 个人）`).join('\n') + '\n\n';
+      }
+    }
+    const base = roleLine + tokenLine + antiAiLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }

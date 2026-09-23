@@ -1,0 +1,103 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">09</span>群知识库：问题 → 答案</h2>
+      <div class="meta">
+        群友反复问到的客观事实、群规、称呼指代，答过一次就沉淀成一条；下次有人问同样的问题（换着说法也算）会直接命中并注入 AI 上下文，不用重新联网考据。
+        AI 用 <code>qq_knowledge_submit</code> 提交、用 <code>qq_knowledge_query</code> 查询。
+        <b>全自动写入</b>开启时提交即生效；关闭时落为<b>候选</b>等你确认。AI 主动报冲突的条目也会进候选，确认过才允许生效。
+        同一问题被足够多人问过时，AI 的提示词里会附「这问题已被问过 N 次」的提醒。
+      </div>
+      <div class="meta" id="kbStats">加载中…</div>
+      <span class="meta" id="kbMsg"></span>
+
+      <div class="slang-tabs" style="margin-top:8px">
+        <button class="slang-tab active" data-kb-tab="confirmed">已生效</button>
+        <button class="slang-tab" data-kb-tab="candidate">待确认候选</button>
+        <button class="slang-tab" data-kb-tab="conflict">待裁定冲突</button>
+        <button class="slang-tab" data-kb-tab="archived">已停用</button>
+        <button class="slang-tab" data-kb-tab="all">全部</button>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="kbSearch" placeholder="搜索问题 / 答案 / 别名 / 标签" style="flex:1">
+        <select id="kbKindFilter" style="width:130px">
+          <option value="">全部类型</option>
+          <option value="fact">事实 fact</option>
+          <option value="rule">群规 rule</option>
+          <option value="person">人物 person</option>
+          <option value="howto">操作 howto</option>
+        </select>
+        <select id="kbLimit" style="width:110px">
+          <option value="50">显示 50</option>
+          <option value="100" selected>显示 100</option>
+          <option value="300">显示 300</option>
+          <option value="1000">显示 1000</option>
+        </select>
+        <button id="kbRefresh" class="small">刷新</button>
+        <button id="kbDeleteSelected" class="small danger">批量删除</button>
+      </div>
+
+      <div id="kbConflictBox" style="display:none;margin-top:10px">
+        <div class="meta err" style="font-weight:600">⚠ 待裁定的答案冲突（AI 报告新旧答案不一致，确认哪条对、改掉错的那条）</div>
+        <div id="kbConflictList"></div>
+      </div>
+
+      <div id="kbList" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card span-all">
+      <h2><span class="sec-no">09a</span>手动新增 / 编辑知识</h2>
+      <div class="meta">新增用于补 AI 没沉淀到的重要事实（比如群规）。同一问题已存在时会提示你去改那一条，避免出现两个答案。</div>
+      <input type="hidden" id="kbEditId" value="">
+      <div class="row" style="margin-top:8px">
+        <select id="kbKind" style="width:130px">
+          <option value="fact">事实 fact</option>
+          <option value="rule">群规 rule</option>
+          <option value="person">人物 person</option>
+          <option value="howto">操作 howto</option>
+        </select>
+        <input type="text" id="kbQuestion" placeholder="问题（如：DeepSeek 什么时候开源的）" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <textarea id="kbAnswer" rows="4" placeholder="答案：简明、可直接照读，带关键数字/时间/前提" style="flex:1"></textarea>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="kbTags" placeholder="标签（逗号分隔，可留空）" style="flex:1">
+        <input type="text" id="kbAliases" placeholder="其他问法（逗号分隔，可留空）" style="flex:1">
+        <input type="text" id="kbSource" placeholder="来源 URL（可留空）" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="kbSave" class="small">保存</button>
+        <button id="kbCancelEdit" class="small" style="display:none">取消编辑</button>
+        <span class="meta" id="kbFormMsg"></span>
+      </div>
+    </section>
+
+    <section class="card span-all">
+      <h2><span class="sec-no">09b</span>知识库参数与检索调试</h2>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" class="switch" id="kbEnabled"> 启用知识库</label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" class="switch" id="kbAutoWrite"> AI 提交即生效（全自动写入）</label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">每次注入最多 <input type="number" id="kbInjectMax" min="1" max="30" style="width:70px"> 条</label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">命中提醒阈值 <input type="number" id="kbRemindHit" min="1" max="100" style="width:70px"></label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">至少 <input type="number" id="kbRemindAskers" min="1" max="50" style="width:70px"> 人问过</label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">去重门槛 <input type="number" id="kbSimThreshold" step="0.01" min="0.3" max="0.95" style="width:80px"></label>
+        <button id="kbConfigSave" class="small">保存参数</button>
+        <span class="meta" id="kbConfigMsg"></span>
+      </div>
+      <div class="meta" style="margin-top:8px">
+        关掉「AI 提交即生效」后，AI 写入的条目会记为已停用（不进注入池、不参与检索），需要你在上面手动启用。
+      </div>
+      <div class="meta" id="kbRagStatus" style="margin-top:10px">加载中…</div>
+      <div class="row" style="margin-top:8px">
+        <button id="kbRagRebuild" class="small">补齐向量索引</button>
+        <button id="kbRagRebuildForce" class="small danger">强制全量重建</button>
+        <span class="meta" id="kbRagMsg"></span>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <input type="text" id="kbDebugQuery" placeholder="输入一个群友可能会问的问题，看知识库会命中/注入哪几条" style="flex:1">
+        <input type="text" id="kbDebugKey" placeholder="会话 key（可选，group:群号）" style="width:220px">
+        <button id="kbDebugBtn" class="small">测试检索</button>
+      </div>
+      <div class="meta" id="kbDebugFingerprint" style="margin-top:6px"></div>
+      <div id="kbDebugOut" style="display:none;margin-top:8px"></div>
+    </section>

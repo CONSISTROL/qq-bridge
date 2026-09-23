@@ -376,12 +376,28 @@ function formatWakeStatus(r) {
 
 // ── 工具级配置弹窗 ───────────────────────────────────────────────────
 const CFG_SCHEMA = {
+  knowledge: {
+    title: '群知识库',
+    desc: '作用于 qq_knowledge_query · qq_knowledge_submit',
+    fields: [
+      { path: 'enabled', label: '启用知识库', type: 'bool' },
+      { path: 'autoWrite', label: 'AI 提交即生效', type: 'bool', hint: '关闭后 AI 写入的条目记为「已停用」，需要人工启用' },
+      { path: 'injectMax', label: '每次注入最多几条', type: 'number' },
+      { path: 'remindHitCount', label: '命中提醒阈值', type: 'number', hint: '被问够这么多次才提醒 AI「这问题被反复问过」' },
+      { path: 'remindMinAskers', label: '至少几个不同的人问过', type: 'number' },
+      { path: 'similarityThreshold', label: '问题去重门槛', type: 'number', step: 0.01, hint: '0~1，越低越容易把不同问法合并到同一条' }
+    ]
+  },
   image: {
-    title: '图片 / 表情来源',
-    desc: '作用于 qq_save_sticker · qq_send_image · qq_list_image_library',
+    title: '图片 / 表情来源（含搜图分级）',
+    desc: '作用于 qq_save_sticker · qq_send_image · qq_search_images · qq_list_image_library；搜图的图源在 qq_search_images 行的 ⚙ 里配，年龄分级在这个分区里配',
     fields: [
       { path: 'enabled', label: '启用图片功能', type: 'bool' },
       { path: 'allowRemoteUrl', label: '允许远程 URL', type: 'bool', hint: '关闭后只能用本地图库/base64，AI 不能抓网络图' },
+      { path: 'rating', label: '图片年龄分级', type: 'select', hint: '只决定「搜图返回什么」，不影响发送/收藏；明确色情内容任何档位都不返回', options: [{ value: 'safe', label: 'safe — 只返回全年龄（默认）' }, { value: 'mild', label: 'mild — 允许轻度擦边（水着/黑丝/大腿等标签）' }] },
+      { path: 'ratingWords.mild', label: '擦边词（safe 档滤掉 / mild 档放行）', type: 'list', hint: '每行一个标签，整标签匹配；留空=不按词过滤擦边（限制级仍然拦）' },
+      { path: 'ratingWords.tolerated', label: '明确放行为全年龄的词', type: 'list', hint: '优先于擦边词：两张表都写了也按全年龄处理（放宽记录就放这儿）' },
+      { path: 'ratingWords.explicitExtra', label: '额外限制级词（只增不减）', type: 'list', hint: '在内置限制级词表之外补充；内置那层无法通过配置移除' },
       { path: 'libraryDir', label: '本地图库目录', type: 'text', hint: '相对仓库根目录，默认 assets/stickers' },
       { path: 'maxBytes', label: '单图体积上限', type: 'number', factor: 1048576, unit: 'MB', step: 0.5, hint: '建议与发图功能保持一致' },
       { path: 'maxPerMinute', label: '每分钟上限', type: 'number' },
@@ -561,6 +577,10 @@ function renderToolCfg(view, section) {
       el.type = f.type === 'password' ? 'password' : 'text';
       el.value = raw ?? '';
       if (f.placeholder) el.placeholder = f.placeholder;
+      // 密码框必须显式声明 new-password：否则浏览器/密码管理器会在弹窗一打开时
+      // 自动填回上次保存的值，而那是「用户没动过」的写入 —— 会被未保存追踪算成
+      // 一项改动，于是「打开配置再取消」也弹出「还有 1 项没保存」。
+      if (f.type === 'password') el.autocomplete = 'new-password';
     }
     el.dataset.v2CfgField = f.path;
     cell.appendChild(el);
@@ -877,6 +897,9 @@ export async function mount(root) {
   const modalDirty = trackDirty(view, {
     selector: '#v2CfgBody [data-v2-cfg-field]',
     label: '工具配置弹窗',
+    // ⚙ 按钮在 view 里但在弹窗之外：点开弹窗不算「碰过弹窗里的字段」，
+    // 否则紧接着的浏览器自动填充（密码框尤其常见）会被当成用户改动。
+    interactionScope: '#v2CfgBody',
     onChange: (n) => {
       $('#v2CfgDirtyHint', view).textContent = n ? `● 有 ${n} 项未保存` : '';
       $('#v2CfgSave', view).classList.toggle('dirty', n > 0);
