@@ -1,0 +1,64 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">11</span>AI 图片：它下载了什么，占了多少盘，怎么清</h2>
+      <div class="meta">
+        AI 会从网上抓图落到本机：<b>本地图库</b>（它发图/存表情的来源）、<b>pixiv 抓取样例</b>、<b>B站视频帧缓存</b>。
+        这里把这些目录收成一个可管理的入口——看得见每类有多少张、占多少盘，能逐张删、按来源清空、按时间或容量自然清理。
+        <b>删除一律先进回收站</b>（<code>state/image-trash/</code>），能整批或逐张还原，确认不要了再彻底清空。
+      </div>
+      <div class="meta" id="imgSummary">加载中…</div>
+      <span class="meta" id="imgMsg"></span>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px"><b>图片来源</b>（点一行只看这一类）</div>
+      <div id="imgSources" class="slang-scroll">加载中…</div>
+      <span class="meta" id="imgBackfillMsg"></span>
+
+      <div class="divider"></div>
+      <div class="row">
+        <input type="text" id="imgSearch" placeholder="搜索文件名 / 标题 / 出处" style="flex:1">
+        <select id="imgSort" style="width:130px">
+          <option value="time">按时间（新→旧）</option>
+          <option value="size">按体积（大→小）</option>
+          <option value="name">按文件名</option>
+        </select>
+        <select id="imgLimit" style="width:110px">
+          <option value="120">显示 120</option>
+          <option value="300" selected>显示 300</option>
+          <option value="1000">显示 1000</option>
+        </select>
+        <button id="imgRefresh" class="small">刷新</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="imgSelectAll" class="small">全选本页</button>
+        <button id="imgClearSel" class="small">清空选择</button>
+        <button id="imgDelete" class="small danger">删除选中</button>
+        <button id="imgClearSource" class="small danger">清空该来源</button>
+        <span class="meta" id="imgSelMsg"></span>
+      </div>
+      <div id="imgList" class="slang-scroll" style="margin-top:8px">加载中…</div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">
+        <b>自然清理</b>：先按「保留天数」清太旧的，再按「总容量上限」从最旧的开始补删到预算内。
+        两条规则都是 0 = 不启用，至少要开一条；清掉的东西同样进回收站，可以反悔。
+      </div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">保留天数 <input type="number" id="imgKeepDays" value="30" min="0" step="1" style="width:80px"></label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">总容量上限（MB）<input type="number" id="imgMaxTotalMB" value="300" min="0" step="10" style="width:100px"></label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="imgAllSources"> 对所有来源执行</label>
+        <button id="imgForget" class="small">执行自然清理</button>
+        <span class="meta" id="imgForgetMsg"></span>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">
+        <b>回收站</b>：删掉的图先放这里，占盘但不参与 AI 选图。还原会把文件（连同图库索引条目）放回原处；
+        「彻底删除」才是真的从磁盘上抹掉。目录：<code>state/image-trash/</code>
+      </div>
+      <div class="row">
+        <button id="imgTrashReload" class="small">刷新回收站</button>
+        <button id="imgPurgeAll" class="small danger">彻底清空回收站</button>
+        <span class="meta" id="imgTrashMsg"></span>
+      </div>
+      <div id="imgTrash" class="slang-scroll" style="margin-top:8px">加载中…</div>
+    </section>

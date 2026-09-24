@@ -11,9 +11,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseBobopicImages, searchPixivByTag, pixivDailyRanking, artworkIdFromInput, decodeEntities, pixivProxyIdFromUrl, pixivThumbUrl, searchPixivWeb, pixivIllustOriginal, isPixivHost, normalizePixivCookie, pixivArtworkIdFromAnyUrl } from '../src/pixiv-search.js';
+import { parseBobopicImages, searchPixivByTag, pixivDailyRanking, artworkIdFromInput, decodeEntities, pixivProxyIdFromUrl, pixivThumbUrl, searchPixivWeb, pixivIllustOriginal, isPixivHost, normalizePixivCookie, pixivArtworkIdFromAnyUrl, pixivRenditionOf } from '../src/pixiv-search.js';
 import { parseProxy } from '../src/safe-fetch.js';
 import { classifyImageItem, filterByRating, normalizeImageRating, imageRatingAllowed, explicitTagVerdict, MILD_TAGS, TOLERATED_TAGS, normalizeRatingWords, normalizeWordList, DEFAULT_RATING_WORDS, RATING_WORD_LIMIT, EXPLICIT_TAGS, EXPLICIT_TITLE_RE } from '../src/image-rating.js';
+import { isPlaceholderImageUrl } from '../src/image-allow.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0;
@@ -152,7 +153,27 @@ ok(pixivProxyIdFromUrl('https://img.pixivdaily.com/small/91401787.jpg') === '', 
 ok(pixivProxyIdFromUrl('https://www.pixiv.net/artworks/91401787') === '', 'pixiv 作品页不是直链，不触发');
 ok(pixivProxyIdFromUrl('91401787') === '', '裸数字不触发（那是 query 的用法）');
 ok(pixivProxyIdFromUrl('https://evil.com/pixiv.re/91401787.png') === '', '不是 pixiv.re 域不认');
-ok(pixivThumbUrl('91401787') === 'https://img.pixivdaily.com/small/91401787.jpg', '缩略图兜底地址拼得对');
+ok(pixivThumbUrl('91401787') === 'https://img.pixivdaily.com/small/91401787.jpg-220', '缩略图兜底地址带 -220（不带后缀的 small/<id>.jpg 现在 404）');
+
+console.log('## 清晰度档位（缩略图不许冒充原图）');
+ok(pixivRenditionOf('https://i.pximg.net/img-original/img/2026/09/22/07/00/02/149957497_p0.png') === 'original', 'img-original 是原图');
+ok(pixivRenditionOf('https://i.pximg.net/img-master/img/2026/09/22/07/00/02/149957497_p0_master1200.jpg') === 'large', 'master1200 是 1200px 档');
+ok(pixivRenditionOf('https://i.pximg.net/c/250x250_80_a2/img-master/img/2026/09/24/22/00/17/91401787_p0_square1200.jpg') === 'thumb', '250×250 方形裁切图是缩略图');
+ok(pixivRenditionOf('https://i.pximg.net/c/540x540_70/img-master/img/a/91401787_p0_master1200.jpg') === 'thumb', '/c/WxH 代理路径一律算缩略图');
+ok(pixivRenditionOf('https://i.pximg.net/img-original/img/2026/09/24/22/05/03/150062598_p0_custom1200.jpg') === 'large', 'img-original 路径下的 _custom1200 仍是 1200px 档');
+ok(pixivRenditionOf('https://img.pixivdaily.com/small/91401787.jpg-220') === 'thumb', 'bobopic 的 -220 小图是缩略图');
+ok(pixivRenditionOf('https://pixiv.re/91401787.png') === '', 'pixiv.re 认不出档位（当原图候选走回退链）');
+ok(pixivRenditionOf('') === '', '空值安全');
+ok(pixivArtworkIdFromAnyUrl('https://i.pximg.net/c/250x250_80_a2/img-master/img/2026/09/24/22/00/17/91401787_p0_square1200.jpg') === '91401787', '方形缩略图也能认出作品 id');
+
+console.log('## 站点 404 占位图识别（bobopic 原图通道失效的坑）');
+ok(isPlaceholderImageUrl('http://img.pixivdaily.com/404.jpg') === true, 'http 的 404.jpg 认得出');
+ok(isPlaceholderImageUrl('https://img.pixivdaily.com/404.jpg') === true, 'https 的 404.jpg 认得出');
+ok(isPlaceholderImageUrl('https://example.com/404.png') === true, '换个图床的 404 也认');
+ok(isPlaceholderImageUrl('https://img.pixivdaily.com/small/91401787.jpg-220') === false, '正常的作品缩略图不误判');
+ok(isPlaceholderImageUrl('https://i.pximg.net/img-original/img/2026/09/22/07/00/02/149957497_p0.png') === false, '原图不误判');
+ok(isPlaceholderImageUrl('https://example.com/a/404.jpg?x=1') === true, '带 query 也认');
+ok(isPlaceholderImageUrl('not-a-url') === false, '非法 URL 不抛异常');
 
 console.log('## 防重发用的「作品身份」识别');
 ok(pixivArtworkIdFromAnyUrl('https://pixiv.re/91401787.png') === '91401787', 'pixiv.re 代理');
@@ -245,9 +266,20 @@ const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
 const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'social2.js'), 'utf8');
 ok(/searchPixivByTag/.test(bridge) && /pixivDailyRanking/.test(bridge), 'bridge 引用了 pixiv 搜索模块');
-ok(/pixivProxyIdFromUrl/.test(bridge) && /pixivThumbUrl/.test(bridge), 'bridge 用 pixiv 直链解析 + 缩略图兜底');
+ok(/pixivArtworkIdFromAnyUrl/.test(bridge) && /pixivThumbUrl/.test(bridge), 'bridge 用「任意 pixiv 地址 → 作品 id」+ 缩略图兜底');
 ok(/fetchBobopicPixivOriginal/.test(bridge), 'bridge 有 bobopic 原图通道');
+ok(/isPlaceholderImageUrl\(url\)/.test(bridge) && /isPlaceholderImageUrl\(res\.url/.test(bridge), 'bobopic 404 占位图会被当成抓取失败（不会发进群）');
 ok(/timeoutMs: 45000/.test(bridge), 'pixiv.re 原图尝试放宽到 45s（默认 20s 拉不完）');
+// 2026-09 线上事故：i.pximg 直链只走 20s 通用抓取 + 没有回退链，代理一慢就整条失败
+ok(/PIXIV_IMAGE_TIMEOUT_MS = 30000/.test(bridge) && /PIXIV_CHAIN_BUDGET_MS = 110000/.test(bridge), 'pixiv 取图有单次超时 + 整链预算');
+ok(/\['i\.pximg master1200'/.test(bridge) && /detail\?\.large/.test(bridge), '原图下不动时退到 pixiv 自己的 master1200');
+ok(/不是白名单问题/.test(bridge), '全链失败时明说不是白名单问题（AI 才不会跟群友解释成「pixiv 没放行」）');
+ok(/pixiv 每项的 url 就是原图直链/.test(bridge), '搜图提示不再教 AI 用 pixiv.re / thumbUrl 当主路径');
+ok(/搜图用 bobopic 榜单镜像/.test(mcp) && /不是白名单/.test(mcp), 'MCP 工具描述不再说「bobopic + pixiv.re」是唯一通路，且点明不是白名单问题');
+ok(/别用 thumbUrl 代替它/.test(mcp) && /rendition/.test(mcp), 'MCP 描述点明 thumbUrl 是方图、回执带 rendition');
+ok(/pixivRenditionOf/.test(bridge) && /givenRendition === 'original'/.test(bridge), 'bridge 按档位排回退链（缩略图不许插队）');
+ok(/rendition === 'thumb'/.test(bridge) && /只有缩略图画质/.test(bridge), '退到缩略图时回执里给 AI 画质警告');
+ok(/别拿它当原图的替代品/.test(bridge), '搜图提示明确别用 thumbUrl 代替原图');
 const safeFetchSrc = fs.readFileSync(path.join(ROOT, 'src', 'safe-fetch.js'), 'utf8');
 ok(/function requestTimeout\(options\)/.test(safeFetchSrc) && /options\?\.timeoutMs/.test(safeFetchSrc), 'safe-fetch 支持按调用传 timeoutMs');
 // 真实 pixiv 源 + 代理

@@ -127,7 +127,12 @@
       "memberRemark": true,
       "setMemberCard": false,
       "video": true,
-      "videoFrames": true
+      "videoFrames": true,
+      "runTask": true
+    },
+    "work": {
+      "enabled": true,
+      "maxSessions": 2
     },
     "wake": {
       "defaultMode": "diving",
@@ -213,6 +218,8 @@
       "maxPerMinute": 5,
       "maxPerHour": 30,
       "repeatGuardMs": 21600000,
+      "deliverCheckMs": 15000,
+      "deliverCheckFastMs": 4000,
       "rating": "safe",
       "ratingWords": {
         "mild": [
@@ -280,7 +287,22 @@
       "conflictMinCosine": 0.8
     }
   },
+  "moderation": {
+    "enabled": true,
+    "action": "reply",
+    "replyText": "这个我不接，换一个吧",
+    "matching": "substring",
+    "logMatch": false,
+    "cooldownMs": 0,
+    "extraPatterns": [],
+    "patterns": []
+  },
   "bili": {
     "videoCacheMB": 200
+  },
+  "imageAdmin": {
+    "trashMaxMB": 500,
+    "sentImagesMaxMB": 300,
+    "sources": []
   }
 }

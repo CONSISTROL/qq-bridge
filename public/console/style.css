@@ -476,3 +476,34 @@
     /* 窄屏把标签压在控件上方，.pairs 的 4 列也退回 2 列 */
     .form-row, .form-row.pairs { grid-template-columns: minmax(112px, 150px) 1fr; }
   }
+
+  /* AI 图片（控制台「AI 图片」分区）：缩略图网格 + 回收站条目 */
+  .img-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .img-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .img-cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .img-cell .img-thumb {
+    display: block;
+    width: 100%;
+    height: 118px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: var(--surface-3);
+  }
+  .img-cell .img-title { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+  .img-cell .img-meta { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+  .img-cell .img-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .img-cell .img-actions label { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; color: var(--muted); }
+  .img-trash-item { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

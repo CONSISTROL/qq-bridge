@@ -83,6 +83,21 @@ export function normalizeImageLimits(img, { maxBytesDefault = 5 * 1024 * 1024 } 
   };
 }
 
+/**
+ * 站点 404 占位图（`.../404.jpg`）判定。
+ *
+ * 背景：bobopic 的「查看原图」通道 2026-09 起失效，页面里的 `<img id="main-img">`
+ * 变成了 `img.pixivdaily.com/404.jpg`——它本身是一张**合法图片**，
+ * `looksLikeImageBuffer()` 拦不住，于是桥接把这张「404」当原图发进了群（踩过一次：
+ * 群里收到两张一模一样的 404，AI 还以为发成功了）。抓回来的地址命中这个形态就当成
+ * 抓取失败，让回退链继续往下走。
+ */
+export function isPlaceholderImageUrl(url) {
+  try {
+    return /(^|\/)404\.(?:jpe?g|png|gif|webp)$/i.test(new URL(String(url ?? '')).pathname);
+  } catch { return false; }
+}
+
 /** 白名单被拒时的可执行提示：把 AI 引到不受白名单限制的 qq_collect_sticker。 */
 export function imageAllowRejectHint(hostname) {
   return isQqImageCdnHost(hostname)

@@ -18,6 +18,16 @@ import * as slangIndex from '../src/slang-index.js';
 import * as stickerPicker from '../src/sticker-picker.js';
 import * as memberRemarks from '../src/member-remarks.js';
 import * as knowledgeStore from '../src/knowledge-store.js';
+// AI 记忆管理（bridge.js 的 /api/memory* 接线要用）：同样是「漏掉就在启动阶段
+// ReferenceError 崩掉、跑不到用例」的模块。
+import * as memoryAdmin from '../src/memory-admin.js';
+// AI 图片管理（bridge.js 的 /api/ai-images* 接线要用）：真实模块即可——
+// 审计里 ROOT/STATE_DIR 都在临时目录，它只会去扫那些不存在的目录，不会碰真实图库。
+import * as imageAdmin from '../src/image-admin.js';
+// AI 发出去的网络图落盘（bridge.js 启动时就 createSentImageStore）。
+import * as sentImages from '../src/sent-images.js';
+// 入站内容策略（bridge.js 启动时就 createContentGate）。
+import * as contentFilter from '../src/content-filter.js';
 import * as imageAllow from '../src/image-allow.js';
 import * as cardParse from '../src/card-parse.js';
 // bridge.js 的 loadConfig / 搜图接线会调用这些模块：漏掉任意一个，审计会在
@@ -28,7 +38,18 @@ import * as presetStamp from '../src/preset-stamp.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-export async function bridgeHarness({ config = {}, savedState, globals = {} } = {}) {
+/**
+ * @param {{config?:object, savedState?:object, globals?:object, getMsg?:Function,
+ *          hangActions?:string[]|Set<string>, failGetMsg?:boolean}} [options]
+ *   `getMsg`：假的 `get_msg` 返回值（图片送达确认用）。默认返回「已送达」形态
+ *   （message_seq>0 + 图片已换成 http CDN 地址）；传 `() => ({...})` 可模拟
+ *   「网关回 ok、QQ 静默丢图」那条路径（message_seq=0 + url 仍是 base64://）。
+ *   `hangActions`：这些 OneBot 动作在 WS 上永不返回（模拟「WS 超时」），
+ *   用来验证写类动作超时后**不会**回退 HTTP 重发（那正是重复发图的根因）。
+ *   `failGetMsg`：`get_msg` 探针本身打不通（模拟 WS 被大图 base64 占满）——
+ *   用来验证「探针没打通 ≠ 没送达」，此时不能重发。
+ */
+export async function bridgeHarness({ config = {}, savedState, globals = {}, getMsg, hangActions, failGetMsg } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-audit-bridge-'));
   fs.mkdirSync(path.join(temp, 'src'));
   fs.mkdirSync(path.join(temp, 'state'));
@@ -63,10 +84,27 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     // 否则表情发送测试会拿不到回执（calls.ws 里能看到实际发出的 params）。
     async request(action, params) {
       calls.ws.push({ action, params });
+      const hangSet = hangActions instanceof Set ? hangActions : new Set(hangActions ?? []);
+      if (hangSet.has(action)) {
+        // 永不 settle：模拟「WS 请求发出去了、但回执没在预算内回来」。
+        return new Promise(() => {});
+      }
       if (action === 'fetch_custom_face_detail') {
         return { status: 'ok', retcode: 0, data: [{ emoji_id: 'fixture-sticker', url: 'https://public.invalid/sticker' }] };
       }
-      return { status: 'ok', retcode: 0, data: { message_id: 1 } };
+      // 图片送达确认：真网关里「已送达」的消息 message_seq>0、图片段换成 QQ CDN 的 http 地址；
+      // 被 QQ 静默丢掉的则停在 message_seq=0 + base64://。默认给前者。
+      if (action === 'get_msg') {
+        // 探针本身打不通（大图把 WS 占满时线上就是这样）：不代表没送达，不能据此重发。
+        if (failGetMsg) throw new Error('WS get_msg 超时（5000ms）');
+        const data = typeof getMsg === 'function'
+          ? getMsg(Number(params?.message_id))
+          : { message_seq: 100, message: [{ type: 'image', data: { url: 'https://multimedia.nt.qq.com.cn/download?fixture=1' } }] };
+        return { status: 'ok', retcode: 0, data };
+      }
+      // 发送类调用返回递增的 message_id：送达确认用例要靠它区分「第几次发送」。
+      calls.sentMessageId = (calls.sentMessageId || 0) + 1;
+      return { status: 'ok', retcode: 0, data: { message_id: calls.sentMessageId } };
     }
   }
   let source = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
@@ -80,6 +118,28 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     // 「会话繁忙」判定：给审计用例用，验证残留忙标记能被识别成卡死（AI 无响应的那类事故）。
     busyMarkersV2, staleTurnMarkerV2, forceClearBusyV2, v2TurnStartAt, activeWaits, socialV2,
     getSocialV2State, takeBootstrapV2, resolveImageBuffer, sendImageV2, imageIdentityKey, recentSentImageKeys,
+    // 重复发图回归：写类动作超时后绝不能回退 HTTP 重发（那正是线上重复图的根因）。
+    postOneBot, isOneBotWriteAction, oneBotWriteTimeoutMs, isTimeoutError,
+    imageSendUncertainAt, markImageSendUncertain,
+    // 送达确认改成三态 {delivered, conclusive}：探针没打通时不许重发。
+    confirmImageDelivered, imageMessageDelivered, deliverCheckTasks,
+    /** 等后台送达确认跑完（回合已经返回，测试要断言最终状态）。 */
+    async awaitDeliverChecks() { await Promise.allSettled([...deliverCheckTasks]); },
+    /** 让该会话的发送链全部结算（验证按会话排队/隔离）。 */
+    async awaitSendChain(key) { await chainFor(key); },
+    /** 等该会话的 prompt 队列排空（工作车道回投结论是异步的，断言前要等到位）。 */
+    async awaitPromptQueue(key) {
+      for (let i = 0; i < 200; i++) {
+        const entry = promptQueues.get(key);
+        if (!entry || (!entry.running && entry.queue.length === 0)) return;
+        await sleep(10);
+      }
+    },
+    /** 等异步归档/停止动作落地（retire 系列的清理是 fire-and-forget）。 */
+    async flushAsync() { for (let i = 0; i < 10; i++) await Promise.resolve(); await sleep(5); },
+    // 工作车道：长任务丢给独立会话跑，聊天会话不被堵住。
+    deliverWorkTask, handleWorkLaneFrame, retireWorkLanes, workLaneEnabled, workLaneMaxSessions,
+    pickWorkLane, workSessions, workReverse, workTasks, workCollectors, buildWorkLanePrompt,
     setMode(value) { currentMode = value; },
     setReady(value) { dshReady = value; },
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
@@ -87,6 +147,16 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
   };
   bot.onPrivateMessage(async (event) => {`);
   const timers = new Set();
+  // 保护「等一个 unref 定时器」的用例：postOneBot 的 WS 超时计时器是 unref 的
+  // （生产里桥接本来就有别的事撑着事件循环，测试里没有），没有这个 keep-alive
+  // Node 会在定时器触发前判定「unsettled top-level await」直接退出。
+  let keepAliveTimer = null;
+  function keepLoopAlive() {
+    if (!keepAliveTimer) keepAliveTimer = setInterval(() => {}, 1000);
+    return () => {
+      if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+    };
+  }
   const context = vm.createContext({
     fs, path, http, crypto, fileURLToPath, URL, Buffer, AbortSignal, console: { log() {}, error() {} },
     // env 必须是空对象而不是传真实的 process.env：bridge.js 支持 QQ_BRIDGE_CONFIG /
@@ -117,14 +187,15 @@ export async function bridgeHarness({ config = {}, savedState, globals = {} } = 
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp, ...memoryAdmin, ...imageAdmin, ...sentImages, ...contentFilter,
     ...globals,
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);
   const bridge = await context.auditReady;
   bridge.setPresets(['standard', 'qq-chat', 'qq-chat-v2']);
   bridge.setReady(true);
-  return { ...bridge, calls, temp, async close() {
+  return { ...bridge, calls, temp, keepLoopAlive, async close() {
+    if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
     for (const timer of timers) clearTimeout(timer);
     fs.rmSync(temp, { recursive: true, force: true });
   } };

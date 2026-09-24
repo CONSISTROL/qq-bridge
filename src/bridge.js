@@ -26,10 +26,11 @@ import {
   hostInImageAllowList,
   hostNeedsImageReferer,
   hostnameOf,
-  imageAllowRejectHint
+  imageAllowRejectHint,
+  isPlaceholderImageUrl
 } from './image-allow.js';
 import { normalizeImageRating, normalizeRatingWords, DEFAULT_MILD_TAGS, DEFAULT_TOLERATED_TAGS, EXPLICIT_TAGS } from './image-rating.js';
-import { searchPixivByTag, pixivDailyRanking, pixivProxyIdFromUrl, pixivThumbUrl, searchPixivWeb, pixivIllustOriginal, isPixivHost, pixivArtworkIdFromAnyUrl } from './pixiv-search.js';
+import { searchPixivByTag, pixivDailyRanking, pixivThumbUrl, searchPixivWeb, pixivIllustOriginal, isPixivHost, pixivArtworkIdFromAnyUrl, pixivRenditionOf } from './pixiv-search.js';
 import { presetCompositionStamp } from './preset-stamp.js';
 import { cardSegmentToText, extractCardFromSegments, CARD_SUMMARY_MAX } from './card-parse.js';
 
@@ -116,6 +117,10 @@ import {
   STYLE_KEYWORDS,
   STICKER_LIBRARY_SOURCES
 } from './sticker-picker.js';
+import { createMemoryAdmin, MEMORY_KIND, estimateTokens as estimateMemoryTokens } from './memory-admin.js';
+import { createImageAdmin, defaultImageSources } from './image-admin.js';
+import { createSentImageStore } from './sent-images.js';
+import { createContentGate, normalizeModeration, checkContent } from './content-filter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -378,6 +383,14 @@ function loadConfig() {
       videoCacheMB: 200,   // 雪碧图磁盘缓存上限；超了按最久未用淘汰
       ...(file.bili ?? {})
     },
+    // AI 图片管理（控制台「AI 图片」分区）：回收站容量 + 可选的受管来源覆盖。
+    // 一般不用配——默认管本地图库 / pixiv 样图 / B站帧缓存三个目录；sources 只在
+    // 多机部署或测试时用来把某些目录指到别处。
+    imageAdmin: {
+      trashMaxMB: 500,     // 回收站上限；超了从最旧批次开始丢（0 = 不限）
+      sources: [],
+      ...(file.imageAdmin ?? {})
+    },
     // 本地向量检索（RAG）。缺依赖/模型时自动降级为按出现次数选词，不影响主流程。
     rag: {
       enabled: true,
@@ -437,6 +450,13 @@ function loadConfig() {
       autoReplyCheckMs: 30000,
       agentPreset: 'qq-chat-v2',
       provideRecommendations: true,
+      // 工作车道：把一个 QQ 会话的长任务投给独立 DSH 会话跑，聊天会话不被慢工具堵住。
+      // maxSessions 是「同时并行几个长任务」的上限，占满后新任务排队（仍然不阻塞聊天）。
+      work: {
+        enabled: true,
+        maxSessions: 2,
+        ...(file.socialV2?.work ?? {})
+      },
       tools: {
         getPrompt: true,
         getUnread: true,
@@ -469,6 +489,7 @@ function loadConfig() {
         sendImage: true,
         listImageLibrary: true,
         searchImages: true,
+        // 注：工具开关真正生效的深度合并在下面 cfg.socialV2.tools 那一块（新开关加在那里）。
       video: true,             // B站视频：搜视频 / 读字幕（一个工具两个用法）
       videoFrames: true,       // 按时间点取画面（进度条预览帧）
         getSelfImage: true
@@ -657,6 +678,9 @@ function loadConfig() {
     stickerNote: true,
     collectSticker: true,
     getSelfImage: true,
+    // 工作车道：把长任务投给独立会话跑，聊天会话不被慢工具堵住（这一步是真正生效的深度合并，
+    // 上面 tools 默认块里的同名项会被这里的 ...(cfg.socialV2.tools ?? {}) 覆盖）。
+    runTask: true,
     ...(cfg.socialV2.tools ?? {})
   };
 
@@ -699,6 +723,8 @@ function loadState() {
   if (!state.sessionPolicies || typeof state.sessionPolicies !== 'object' || Array.isArray(state.sessionPolicies)) state.sessionPolicies = {};
   // 会话建立时挂载的 preset 组成戳：用于判断「预设文件改过、但该会话仍跑旧版」。
   if (!state.sessionPresetStamps || typeof state.sessionPresetStamps !== 'object' || Array.isArray(state.sessionPresetStamps)) state.sessionPresetStamps = {};
+  // 工作车道会话池（key -> [sessionId]）：让桥接重启后还能复用，而不是每次重启都新开一堆。
+  if (!state.workSessions || typeof state.workSessions !== 'object' || Array.isArray(state.workSessions)) state.workSessions = {};
 }
 function saveState() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -791,6 +817,63 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * 发送结果不确定：写类 OneBot 动作超时后抛出它。
+ *
+ * 「超时」和「失败」是两件事：请求已经写进 WS 了，只是回执没在预算内回来。
+ * 网关很可能已经把它送出去了——所以调用方**不能**当成失败去重发，只能如实上报
+ * 「不知道送没送到」。见 postOneBot 里 2026-09 的重复发图事故说明。
+ */
+class OneBotUncertainError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'OneBotUncertainError';
+    this.uncertain = true;
+  }
+}
+
+/** 写类动作：真正改变 QQ 侧状态，重发会产生用户可见的重复。 */
+const ONEBOT_WRITE_ACTION_RE = /^(send_|set_group_card$|set_group_name$|set_friend_add_request$|set_group_add_request$|add_custom_face$|modify_custom_face$|delete_custom_face$|set_restart$)/;
+function isOneBotWriteAction(action) {
+  return ONEBOT_WRITE_ACTION_RE.test(String(action ?? ''));
+}
+
+/** 一次 WS 请求里 params 的 JSON 体积（发送类动作里 base64 图片是绝对大头）。 */
+function oneBotPayloadBytes(params) {
+  try {
+    return Buffer.byteLength(JSON.stringify(params ?? {}), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 写类动作的 WS 等待上限：按 payload 体积放量。
+ *
+ * 固定 15s 对 base64 图片是错的：pixiv 原图 10~19MB，base64 后 14~26MB，经 WS 推给
+ * SnowLuma 再上传 QQ CDN，15s 根本不够（实测 2.2MB 的图都会撞超时）。超时后旧逻辑
+ * 「回退 HTTP」再发一遍，而 HTTP 端点对大 body 本来就会 UND_ERR_SOCKET 断连 ——
+ * 结果既报失败、图又已经发出去了，AI 再换个档位重试就是群里两张。
+ *
+ * 这里按 ~512KB/s 估额外时间（保守：宁可多等，也不能把「还在传」误判成失败），
+ * 前 256KB 免费（普通文字消息不受影响），总上限兜住不无限等。
+ */
+const ONEBOT_WRITE_TIMEOUT_MAX_MS = 180000;
+const ONEBOT_WRITE_BYTES_PER_SEC = 512 * 1024;
+const ONEBOT_WRITE_FREE_BYTES = 256 * 1024;
+function oneBotWriteTimeoutMs(baseMs, params) {
+  const base = Math.max(1000, Number(baseMs) || SEND_TIMEOUT_MS);
+  const bytes = oneBotPayloadBytes(params);
+  const billable = Math.max(0, bytes - ONEBOT_WRITE_FREE_BYTES);
+  const extra = Math.ceil(billable / ONEBOT_WRITE_BYTES_PER_SEC) * 1000;
+  return Math.min(ONEBOT_WRITE_TIMEOUT_MAX_MS, base + extra);
+}
+
+/** 判断一个错误是不是「超时」（而不是连接压根没建立/被拒）。 */
+function isTimeoutError(error) {
+  const text = `${error?.name ?? ''} ${error?.message ?? error}`;
+  return /超时|timed?\s*out|TimeoutError|AbortError/i.test(text);
+}
 async function segmentsToText(segments, options = {}) {
   const { resolveAtName, resolveReply, includeReply = true } = options ?? {};
   // 有些 OneBot 实现直接把纯文本消息放在 message 字段里（string）
@@ -940,6 +1023,20 @@ async function main() {
   const learnerWaiters = new Map();     // sessionId -> [{resolve,reject,timer}]
   let slangLearnerSessionId = null;
   let slangTaskChain = Promise.resolve();
+
+  // ── 工作车道（work lane）────────────────────────────────────────────────
+  // 问题：一个 QQ 会话 = 一个 DSH session，而 DSH 同一时刻只跑一个 turn。
+  // 只要这一轮里有慢工具（pixiv 取图链上限 110s、十几 MB 的图发送几十秒、B 站视频），
+  // 群里再问什么都得压到回合结束才回 —— 用户感受就是「AI 不理我了」。
+  //
+  // 解法：给每个 QQ 会话开**独立的**工作车道会话。长任务丢进去跑，聊天会话保持随时可应答；
+  // 工作车道跑完把结论回投给聊天会话，由主 AI 决定怎么跟群友说。
+  // 工作车道的文本**不会**自动发到 QQ（和聊天会话一样要自己调发送工具），
+  // 所以它既能替主会话干慢活，也能直接把图/消息发出去。
+  const workSessions = new Set();       // sessionId：工作车道会话
+  const workReverse = new Map();        // sessionId -> QQ 会话 key
+  const workTasks = new Map();          // sessionId -> [{ task, startedAt }]（FIFO，支持排队）
+  const workCollectors = new Map();     // sessionId -> turn collector
 
   // ── B站视频理解运行时（元数据/字幕/画面）─────────────────────────────
   // 懒建：只有真的用到才创建 bili client，避免启动时多一次网络请求
@@ -1451,19 +1548,39 @@ async function main() {
     return entry;
   }
 
+  /**
+   * OneBot WS 请求的默认等待上限。
+   *
+   * 15s 对读类动作（get_msg / get_group_member_info）够用；写类动作会再按 payload 体积放宽
+   * （见 oneBotWriteTimeoutMs）。可用 config.json 的 snowluma.wsTimeoutMs 覆盖，
+   * 慢机器/慢网关可以调大，审计用例会调到几十毫秒来验证超时分支。
+   */
+  function oneBotDefaultTimeoutMs() {
+    const raw = cfg.snowluma?.wsTimeoutMs;
+    if (raw === undefined || raw === null || raw === '') return 15000;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 15000;
+  }
+
   // OneBot HTTP 调用（带网络层重试 + 保留底层 cause）。
   // 实测偶发 "fetch failed"（同一时刻端口本身健康，属连接抖动），重试即可恢复；
   // 并把 cause.code（ECONNRESET/ETIMEDOUT…）带进错误信息，便于定位。
-  async function postOneBot(action, params, { timeoutMs = 15000, retries = 2 } = {}) {
+  async function postOneBot(action, params, { timeoutMs = oneBotDefaultTimeoutMs(), retries = 2 } = {}) {
+    const isWrite = isOneBotWriteAction(action);
+    // 写类动作按体积放宽等待上限：固定 15s 会把「大图还在上传」误判成失败（见 oneBotWriteTimeoutMs）。
+    const wsTimeoutMs = isWrite ? oneBotWriteTimeoutMs(timeoutMs, params) : timeoutMs;
+    // 写类动作的 HTTP 兜底不能重试：HTTP 回执丢了不等于消息没发出去，第 2 次就是重复消息。
+    const httpRetries = isWrite ? 0 : retries;
     // 优先走 OneBot WebSocket。原因：SnowLuma 的 HTTP 端点在请求体 ≥2MB 时会直接断连
     // （宿主经 docker-proxy 与直连容器 IP 都是 UND_ERR_SOCKET / ECONNRESET），
     // 而 base64 图片动辄 3~7MB。WS 通道没有这个限制（收藏表情的 base64 一直走 WS，稳定）。
     if (bot && typeof bot.request === 'function') {
       try {
         const resp = await Promise.race([
-          bot.request(action, params),
+          // 把同一预算交给 SDK：它自己的 timer 会清掉 pending 表项，避免超时后回执到达时泄漏。
+          bot.request(action, params, { timeoutMs: wsTimeoutMs }),
           new Promise((_, reject) => {
-            const t = setTimeout(() => reject(new Error(`WS ${action} 超时（${timeoutMs}ms）`)), timeoutMs);
+            const t = setTimeout(() => reject(new Error(`WS ${action} 超时（${wsTimeoutMs}ms）`)), wsTimeoutMs);
             t.unref?.();
           })
         ]);
@@ -1473,12 +1590,22 @@ async function main() {
         // WS 返回 { status, retcode, data }；HTTP 分支返回 body.data —— 统一成 data
         return resp && typeof resp === 'object' && 'data' in resp ? resp.data : resp;
       } catch (error) {
+        // ── 关键分支：写类动作超时 ≠ 失败 ────────────────────────────────
+        // 2026-09 事故：大图 base64 走 WS，固定 15s 超时后这里「回退 HTTP」再发一遍；
+        // 超时的那个 WS 请求并没有被取消，SnowLuma 照样把它送出去了，于是群里收到两张一样的图。
+        // 日志证据：`[onebot] WS send_private_msg 失败（…超时（15000ms）），回退 HTTP`
+        // 与重复图的时间戳一一对应（10~19MB 的 pixiv 原图，连 2.2MB 的也会撞）。
+        // 所以写类动作一旦超时，直接放弃重发，把「不确定」如实交给上层。
+        if (isWrite && isTimeoutError(error)) {
+          log(`[onebot] WS ${action} 超时（${wsTimeoutMs}ms，payload ${Math.round(oneBotPayloadBytes(params) / 1024)}KB）：不再回退 HTTP 重发（避免重复发送），如实上报结果不确定`);
+          throw new OneBotUncertainError(`OneBot ${action} 在 ${wsTimeoutMs}ms 内没有回执，发送结果不确定（消息可能已经发出，不要重发）`);
+        }
         log(`[onebot] WS ${action} 失败（${error?.message ?? error}），回退 HTTP`);
       }
     }
     const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
     let lastError = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= httpRetries; attempt++) {
       try {
         const res = await fetch(`${httpUrl}/${action}`, {
           method: 'POST',
@@ -1501,7 +1628,7 @@ async function main() {
         const isOneBotError = /OneBot .* 失败/.test(String(error?.message ?? ''));
         const transient = !isOneBotError &&
           /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket hang up|UND_ERR/i.test(`${error?.message ?? ''} ${cause}`);
-        if (attempt < retries && transient) {
+        if (attempt < httpRetries && transient) {
           const wait = 300 * Math.pow(3, attempt);
           log(`[onebot] ${action} 第 ${attempt + 1} 次失败（${error?.message ?? error}${cause ? ' / ' + cause : ''}），${wait}ms 后重试`);
           await sleep(wait);
@@ -1549,14 +1676,14 @@ async function main() {
     const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
     const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
     const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    // 与文本发送共用 sendChain，保证“先文字后表情”的真人顺序不被并发工具调用打乱。
+    // 与文本发送共用本会话的发送链，保证“先文字后表情”的真人顺序不被并发工具调用打乱。
     let sendResolve;
     let sendReject;
     const sendResult = new Promise((resolve, reject) => {
       sendResolve = resolve;
       sendReject = reject;
     });
-    sendChain = sendChain.then(async () => {
+    setSendChain(key, chainFor(key).then(async () => {
       try {
         // 真人发表情前通常会有短暂停顿，避免“文字刚发完表情立刻跟上”的机械感。
         await sleep(randInt(800, 2000));
@@ -1565,7 +1692,7 @@ async function main() {
       } catch (error) {
         sendReject(error);
       }
-    });
+    }));
     const data = await sendResult;
     recordSelfMediaV2(key, {
       text: '[表情]', kind: 'sticker', messageId: data?.message_id ?? null,
@@ -2003,8 +2130,21 @@ async function main() {
   //       绝不把 URL 交给 OneBot 网关去抓。
   function resolveImageConfig() {
     const img = cfg.socialV2?.image ?? {};
+    // 送达确认时限：0 = 关闭（见 confirmImageDelivered）。只接受显式数字，别让 undefined 变成 0。
+    const rawCheck = img.deliverCheckMs;
+    const deliverCheckMs = rawCheck === undefined || rawCheck === null || rawCheck === ''
+      ? 15000
+      : Math.min(60000, Math.max(0, Math.round(Number(rawCheck) || 0)));
+    // 回合内只等这一小段（默认 4s）：绝大多数图 1~2s 就能确认送达，
+    // 剩下的（探针没打通）转后台，不再把 agent 回合卡满 15~30s。
+    const rawFast = img.deliverCheckFastMs;
+    const deliverCheckFastMs = rawFast === undefined || rawFast === null || rawFast === ''
+      ? 4000
+      : Math.min(60000, Math.max(0, Math.round(Number(rawFast) || 0)));
     return {
       ...normalizeImageLimits(img),
+      deliverCheckMs,
+      deliverCheckFastMs,
       // 年龄分级只影响「搜图返回什么」，不影响发送/收藏本身。
       rating: normalizeImageRating(img.rating),
       ratingWords: normalizeRatingWords(img.ratingWords),
@@ -2019,12 +2159,31 @@ async function main() {
   }
 
   /**
+   * pixiv 取图的超时预算（毫秒）。
+   *
+   * `PIXIV_IMAGE_TIMEOUT_MS` 是**单次**抓取的上限：本机只能经代理取 pixiv，
+   * 出口节点快时 1MB/4s，慢时 5MB 要 30s+，默认的 20s 明显不够（线上就是卡在这）。
+   * `PIXIV_CHAIN_BUDGET_MS` 是**整条回退链**的上限：再慢也不能让 AI 的一次
+   * qq_send_image 拖到几分钟，超了就把「已试过哪些」如实报回去。
+   */
+  const PIXIV_IMAGE_TIMEOUT_MS = 30000;
+  /** 原图档单次上限给得更宽：原图常是 5~16MB，节点快时 30s 刚好不够（慢时给多久都没用，靠预算兜住）。 */
+  const PIXIV_ORIGINAL_TIMEOUT_MS = 45000;
+  const PIXIV_CHAIN_BUDGET_MS = 110000;
+  /** 看着像图片直链（带图片后缀）的地址才值得「原样先抓一次」，作品页链接交给详情接口。 */
+  const LOOKS_LIKE_IMAGE_URL = /\.(?:jpe?g|png|gif|webp)(?:[?#]|$)/i;
+
+  /**
    * 通过 bobopic 详情页的「查看原图」通道取 pixiv 原图。
    *
    * 链路：`go.bobopic.com/<id>` → 302 到 `go.php?url=/tu/<id>.jpg` → 页面里的
    * `<img id="main-img" src="<sogou 代理的 weibo 图床原图>">`。
-   * 这是 bobopic 自己给用户点「查看原图」用的通道，实测 0.3~2s 拿到原分辨率
+   * 这是 bobopic 自己给用户点「查看原图」用的通道，曾经实测 0.3~2s 拿到原分辨率
    * （Pixiv 1080x1080 → 1080x1080；5120x2880 也原样给），比 pixiv.re 稳得多。
+   *
+   * 2026-09 这条通道整站失效：任何 id 的页面都只剩一个 `img.pixivdaily.com/404.jpg`
+   * 占位图（页面 3416 字节）。占位图是合法图片、格式校验拦不住，所以这里必须显式
+   * 认出来并当作抓取失败——否则桥接会把一张「404」当原图发到群里。
    */
   async function fetchBobopicPixivOriginal(id, maxBytes) {
     const page = await safeFetch(`https://go.bobopic.com/${id}`, 200000, { headers: { 'user-agent': IMAGE_PAGE_UA } });
@@ -2033,7 +2192,9 @@ async function main() {
     if (!matched) throw new Error('原图页没找到 main-img');
     const url = matched[1].replace(/&amp;/g, '&').trim();
     if (!/^https?:\/\//i.test(url)) throw new Error('原图地址不是 http(s)');
+    if (isPlaceholderImageUrl(url)) throw new Error(`原图通道返回 404 占位图（${url}），bobopic 通道已失效`);
     const res = await safeFetchBuffer(url, maxBytes);
+    if (isPlaceholderImageUrl(res.url || url)) throw new Error('原图通道跳到了 404 占位图，bobopic 通道已失效');
     if (!looksLikeImageBuffer(res.buffer)) throw new Error('原图不是有效图片（PNG/JPEG/GIF/WebP）');
     return { buffer: res.buffer, url: res.url };
   }
@@ -2041,7 +2202,12 @@ async function main() {
   /**
    * 真实 pixiv 搜索结果只带方图缩略图；原图直链要按 id 再查一次详情
    * （i.pximg 的路径里带日期，拼不出来）。并发 4，单个失败就退回 pixiv.re 直链——
-   * 发送时 resolveImageBuffer 还有 i.pximg / bobopic / pixiv.re / 缩略图 四段回退。
+   * 发送时 resolveImageBuffer 还会按作品 id 再走一遍回退链
+   * （直链 / i.pximg 原图 / master1200 / bobopic / pixiv.re / 缩略图）。
+   *
+   * 顺手把 `thumbUrl` 换成详情里的 1200px 档：pixiv 搜索接口给的 `url` 是
+   * **250×250 方形裁切图**，拿它当「原图的替代品」发出去分辨率就是错的（踩过一次），
+   * 1200px 才是能用的兜底。
    */
   async function attachPixivOriginals(items, pixivCfg) {
     const targets = (Array.isArray(items) ? items : []).filter((it) => it && it.id && !it.url);
@@ -2053,6 +2219,7 @@ async function main() {
         try {
           const detail = await pixivIllustOriginal(it.id, { cookie: pixivCfg.cookie, proxy: pixivCfg.proxy });
           if (detail.original) it.url = detail.original;
+          if (detail.large && pixivRenditionOf(it.thumbUrl) === 'thumb') it.thumbUrl = detail.large;
           if (!Array.isArray(it.tags) || !it.tags.length) it.tags = detail.tags || it.tags;
         } catch { /* 详情拿不到就用 pixiv.re */ }
         if (!it.url) it.url = `https://pixiv.re/${it.id}.png`;
@@ -2102,53 +2269,107 @@ async function main() {
       const referer = pixivHost ? 'https://www.pixiv.net/' : (needsReferer ? limits.imageReferer : '');
       const headers = referer ? { referer } : {};
       const fetchOpts = (extra = {}) => ({ ...(Object.keys(headers).length ? { headers } : {}), ...(pixivProxy ? { proxy: pixivProxy } : {}), ...extra });
-      // pixiv.re 直链：它是 Cloudflare 现去 pixiv 拉原图，实测常见 20s+（1.19MB/23s），
-      // 超时/522 是常态（原图发不出去多半卡在这）。回退顺序：
-      //   ① 有代理时先问 pixiv 自己要真正的原图地址（i.pximg.net，实测 3.5s）
-      //   ② bobopic 详情页的「查看原图」通道（0.3~2s，同样是原分辨率）
-      //   ③ 直连 pixiv.re，超时放宽到 45s
-      //   ④ 740px 缩略图兜底
-      const pixivId = pixivProxyIdFromUrl(raw);
+      // pixiv 系图片：**不要**只认 pixiv.re 那一种地址。本机到 pixiv 直连必然失败
+      // （DNS 污染），能不能取到全看 socialV2.image.pixiv.proxy 那条代理，而代理出口
+      // 快慢随时在变：同一张 1MB 的图可能 4s 下完，也可能 60s 都不动。
+      // 2026-09 线上那次「@机器人 走 pixiv.net 把图发出来」失败就是这么来的：
+      //   ① AI 手里的 i.pximg.net 直链走了「通用 URL 抓取」分支——只有 20s 默认超时、
+      //      没有回退链，代理稍慢就直接超时（报「请求超时：i.pximg.net」）；
+      //   ② AI 退回 pixiv.re 后，pixiv.re 自己在 522/超时；
+      //   ③ bobopic 的「查看原图」通道已经整站退化成 404 占位图，居然被当成原图发进了群；
+      //   ④ 最后的缩略图兜底拼的是已经不存在的 `small/<id>.jpg`（少了 `-220` 后缀）。
+      // 现在：pixiv 系地址一律按作品 id 走同一条回退链，每级独立超时 + 总预算，
+      // 顺序按「画质好 + 拿得到」排：AI 给的直链 → i.pximg 原图 → i.pximg master1200
+      // → bobopic 通道 → pixiv.re → 220px 缩略图。
+      const pixivId = pixivHost ? pixivArtworkIdFromAnyUrl(raw) : '';
       if (pixivId) {
         const tried = [];
+        const seenUrls = new Set();
+        const deadline = Date.now() + PIXIV_CHAIN_BUDGET_MS;
+        const pixivHeaders = { referer: 'https://www.pixiv.net/' };
+        // 单级抓取：tries 次尝试（代理 TLS 掉线是瞬时的，重试一次常常就过），
+        // 每次超时都被剩余预算夹住，避免最后一级把总时限拖穿。
+        const fetchStage = (url, { timeoutMs = PIXIV_IMAGE_TIMEOUT_MS, tries = 1, headers: stageHeaders = {}, proxy = '' } = {}) => async () => {
+          const target = String(url ?? '').trim();
+          if (!target) throw new Error('地址为空');
+          if (seenUrls.has(target)) throw new Error('与上一级是同一个地址，跳过');
+          seenUrls.add(target);
+          let last = null;
+          for (let i = 1; i <= Math.max(1, tries); i++) {
+            const left = deadline - Date.now();
+            if (left < 5000) {
+              throw new Error(last ? `${last.message}（总时限 ${PIXIV_CHAIN_BUDGET_MS / 1000}s 已到，放弃重试）` : `总时限 ${PIXIV_CHAIN_BUDGET_MS / 1000}s 已到`);
+            }
+            try {
+              const r = await safeFetchBuffer(target, limits.maxBytes, {
+                ...(Object.keys(stageHeaders).length ? { headers: stageHeaders } : {}),
+                ...(proxy ? { proxy } : {}),
+                timeoutMs: Math.max(5000, Math.min(timeoutMs, left))
+              });
+              if (isPlaceholderImageUrl(r.url || target)) throw new Error(`抓到的是站点 404 占位图（${r.url || target}）`);
+              if (!looksLikeImageBuffer(r.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
+              return r;
+            } catch (error) { last = error; }
+          }
+          throw last;
+        };
+        const stages = [];
+        // 先认清 AI 给的那条地址是哪个档位：原图 / 1200px / 缩略图（认不出 = ''）。
+        // 缩略图**永远不许插队**——踩过一次：AI 把搜索结果里的 thumbUrl（250×250 方形裁切）
+        // 拿来发，旧逻辑「AI 给的直链优先原样抓」就把它当成功发出去了，群里收到一张方图。
+        const givenRendition = pixivRenditionOf(raw);
+        const givenIsFetchable = LOOKS_LIKE_IMAGE_URL.test(raw) && !/pixiv\.re$/i.test(target.hostname);
+        // ① 只有原图直链才值得先原样抓（少绕一次详情接口）。
+        if (givenIsFetchable && givenRendition === 'original') {
+          stages.push(['直链（原图）', fetchStage(raw, { headers: pixivHeaders, proxy: pixivProxy, tries: 2, timeoutMs: PIXIV_ORIGINAL_TIMEOUT_MS }), 'original']);
+        }
+        // ②③ 有代理时问 pixiv 自己要真地址。路径里带日期，拼不出来，只能查详情。
+        let detail = null;
         if (pixivProxy) {
           try {
-            const detail = await pixivIllustOriginal(pixivId, { cookie: pixivCfg.cookie, proxy: pixivProxy });
-            const r = await safeFetchBuffer(detail.original, limits.maxBytes, { headers: { referer: 'https://www.pixiv.net/' }, proxy: pixivProxy, timeoutMs: 45000 });
-            if (!looksLikeImageBuffer(r.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
-            log(`[image] pixiv ${pixivId} 走 i.pximg.net 原图 ${Math.round(r.buffer.length / 1024)}KB`);
-            return { buffer: r.buffer, via: 'url', url: r.url, referer: 'https://www.pixiv.net/' };
+            detail = await pixivIllustOriginal(pixivId, { cookie: pixivCfg.cookie, proxy: pixivProxy });
           } catch (error) {
-            tried.push(`i.pximg 原图：${error?.message ?? error}`);
+            tried.push(`pixiv 详情：${error?.message ?? error}`);
           }
         }
-        try {
-          const r = await fetchBobopicPixivOriginal(pixivId, limits.maxBytes);
-          log(`[image] pixiv ${pixivId} 走 bobopic 原图通道 ${Math.round(r.buffer.length / 1024)}KB`);
-          return { buffer: r.buffer, via: 'url', url: r.url, referer: '' };
-        } catch (error) {
-          tried.push(`bobopic 原图：${error?.message ?? error}`);
+        if (detail?.original) stages.push(['i.pximg 原图', fetchStage(detail.original, { headers: pixivHeaders, proxy: pixivProxy, tries: 2, timeoutMs: PIXIV_ORIGINAL_TIMEOUT_MS }), 'original']);
+        // 1200px 档：AI 给的就是这一档时先用它（省一次抓取），否则用详情里的 master1200。
+        // 它通常 1MB 上下、2026-09 实测 4~7s 稳定拿到，是原图拉不动时保住体验的那一档。
+        if (givenIsFetchable && givenRendition === 'large') {
+          stages.push(['直链（1200px）', fetchStage(raw, { headers: pixivHeaders, proxy: pixivProxy, tries: 2 }), 'large']);
         }
-        try {
-          const r = await safeFetchBuffer(raw, limits.maxBytes, { timeoutMs: 45000 });
-          if (!looksLikeImageBuffer(r.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
-          log(`[image] pixiv ${pixivId} 回退到 pixiv.re 原图 ${Math.round(r.buffer.length / 1024)}KB`);
-          return { buffer: r.buffer, via: 'url', url: r.url, referer: headers.referer || '' };
-        } catch (error) {
-          tried.push(`pixiv.re 原图：${error?.message ?? error}`);
+        if (detail?.large) stages.push(['i.pximg master1200', fetchStage(detail.large, { headers: pixivHeaders, proxy: pixivProxy, tries: 2 }), 'large']);
+        // ④ bobopic「查看原图」通道（通道失效时这里会抛 404 占位图，直接跳过）
+        stages.push(['bobopic 原图', async () => fetchBobopicPixivOriginal(pixivId, limits.maxBytes), 'original']);
+        // ⑤ 第三方代理 pixiv.re（Cloudflare 现拉，20s+；现在更多是 522/超时）
+        stages.push(['pixiv.re 原图', fetchStage(`https://pixiv.re/${pixivId}.png`, { timeoutMs: 45000 }), 'original']);
+        // ⑥ 缩略图（几 KB / 220px）：只保证「有图」。AI 给的缩略图放这一档，不再提前
+        //    —— i.pximg 的缩略图同样要经代理取（本机直连不通）。
+        if (givenIsFetchable && givenRendition === 'thumb') {
+          stages.push(['缩略图（AI 给的）', fetchStage(raw, { headers: pixivHeaders, proxy: pixivProxy }), 'thumb']);
         }
-        try {
-          const thumb = pixivThumbUrl(pixivId);
-          const r = await safeFetchBuffer(thumb, limits.maxBytes);
-          if (!looksLikeImageBuffer(r.buffer)) throw new Error('缩略图不是有效图片');
-          log(`[image] pixiv ${pixivId} 原图都失败，改用缩略图 ${thumb}`);
-          return { buffer: r.buffer, via: 'url', url: r.url, referer: '' };
-        } catch (error) {
-          tried.push(`缩略图：${error?.message ?? error}`);
+        stages.push(['缩略图', fetchStage(pixivThumbUrl(pixivId)), 'thumb']);
+        for (const [label, run, rendition] of stages) {
+          if (Date.now() > deadline) { tried.push(`${label}：跳过（总时限 ${PIXIV_CHAIN_BUDGET_MS / 1000}s 已到）`); continue; }
+          try {
+            const r = await run();
+            if (rendition === 'thumb') {
+              log(`[image] pixiv ${pixivId} ⚠ 原图/1200px 都没拿到，只能发缩略图（${label} ${Math.round(r.buffer.length / 1024)}KB）——分辨率会明显偏低`);
+            } else {
+              log(`[image] pixiv ${pixivId} 走${label} ${Math.round(r.buffer.length / 1024)}KB${r.url ? ' ' + r.url : ''}`);
+            }
+            return { buffer: r.buffer, via: 'url', url: r.url, referer: pixivHost ? 'https://www.pixiv.net/' : (headers.referer || ''), rendition: rendition || 'original' };
+          } catch (error) {
+            tried.push(`${label}：${error?.message ?? error}`);
+          }
         }
-        throw new Error(`pixiv 原图抓取失败（已试 ${tried.join('；')}）`);
+        // 说清楚这不是白名单问题：pixiv 系域名在 pixiv 源开着时始终放行，
+        // 失败只可能是代理这条通道慢/断。否则 AI 会跟群友解释成「pixiv 没被放行」。
+        throw new Error(`pixiv 图片抓取失败（不是白名单问题，pixiv 系域名始终放行；是取图通道慢/断。已试 ${tried.join('；')}）`);
       }
-      const res = await safeFetchBuffer(raw, limits.maxBytes, fetchOpts());
+      // 认不出作品 id 的 pixiv 系地址（少见）也把超时放宽：默认 20s 对代理取 pixiv 太短。
+      const res = await safeFetchBuffer(raw, limits.maxBytes, fetchOpts(pixivHost ? { timeoutMs: PIXIV_IMAGE_TIMEOUT_MS * 2 } : {}));
+      if (isPlaceholderImageUrl(res.url)) throw new Error(`抓到的是站点 404 占位图（${res.url}）`);
       if (!looksLikeImageBuffer(res.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
       return { buffer: res.buffer, via: 'url', url: res.url, referer: headers.referer || '' };
     }
@@ -2165,11 +2386,40 @@ async function main() {
     return { buffer, via: 'library', name };
   }
 
+  /**
+   * 把一张「桥接自己下载下来的图」落一份进 state/sent-images/（控制台「AI 图片」的受管来源之一）。
+   * 同一张（sha256 相同）只存一次。失败只记日志：落盘是锦上添花，绝不能因为存不下而让发图/存表情失败。
+   */
+  function recordSentImage({ key, resolved, url = '', kind = 'send', delivered = null, at = 0 } = {}) {
+    try {
+      if (!resolved?.buffer?.length) return null;
+      const sourceUrl = String(resolved.url || url || '');
+      const dims = getImageDimensions(resolved.buffer) || {};
+      return sentImages.store({
+        buffer: resolved.buffer,
+        url: sourceUrl,
+        key,
+        kind,
+        delivered,
+        rendition: resolved.rendition || '',
+        artworkId: pixivArtworkIdFromAnyUrl(sourceUrl) || '',
+        at,
+        width: dims.width || 0,
+        height: dims.height || 0
+      });
+    } catch (error) {
+      log(`[sent-images] 落盘失败（不影响发送）：${error?.message ?? error}`);
+      return null;
+    }
+  }
+
   // 把一张外部图片存进 QQ 收藏表情库，返回 emoji_id（之后用 qq_send_sticker 发送）。
   async function saveStickerV2(key, source, options = {}) {
     const assertSendAllowed = captureSendGuard(key);
     const resolved = await resolveImageBuffer(source, options);
     assertSendAllowed();
+    // 存进收藏表情的图同样是「AI 下载过的图」：本地留一份，原链接过期后还能在控制台回看。
+    recordSentImage({ key, resolved, url: String(source ?? ''), kind: 'sticker' });
     const addRes = await bot.request('add_custom_face', { file: 'base64://' + resolved.buffer.toString('base64') });
     if (!addRes || addRes.status !== 'ok' || addRes.retcode !== 0) {
       throw new Error(`add_custom_face 失败: ${addRes?.wording || addRes?.retcode || 'unknown'}`);
@@ -2223,6 +2473,7 @@ async function main() {
     const since = Date.now() - windowMs;
     for (const m of Array.isArray(st?.recentMessages) ? st.recentMessages : []) {
       if (!m?.isSelf || !Array.isArray(m.media)) continue;
+      if (m.undelivered === true) continue; // 没送达的图不算「发过」（否则 QQ 吞掉的图会被防重复永久挡住）
       const at = Number(m.time) || 0;
       if (at && at < since) continue;
       for (const media of m.media) {
@@ -2231,6 +2482,32 @@ async function main() {
       }
     }
     return set;
+  }
+
+  /**
+   * 「发送结果不确定」的图（写类 OneBot 动作 WS 超时）：既没拿到回执、也不能假定没发出去。
+   * 这类图必须同时做到两件事——不报成功（不许 AI 说「发给你了」），也不许自动重发（否则就是重复）。
+   * 10 分钟窗口足够让 AI 先去确认；过期后允许再试（避免一直卡住）。
+   */
+  const IMAGE_UNCERTAIN_WINDOW_MS = 10 * 60 * 1000;
+  function markImageSendUncertain(key, identity) {
+    if (!identity) return;
+    const st = getSocialV2State(key);
+    if (!st.imageUncertain || typeof st.imageUncertain !== 'object' || Array.isArray(st.imageUncertain)) st.imageUncertain = {};
+    st.imageUncertain[identity] = Date.now();
+    // 顺手清掉过期的，避免这个表随时间无限涨。
+    const now = Date.now();
+    for (const [k, at] of Object.entries(st.imageUncertain)) {
+      if (now - (Number(at) || 0) > IMAGE_UNCERTAIN_WINDOW_MS) delete st.imageUncertain[k];
+    }
+    saveSocialV2State();
+  }
+  function imageSendUncertainAt(key, identity) {
+    if (!identity) return 0;
+    const st = socialV2.conversations.get(key);
+    const at = Number(st?.imageUncertain?.[identity]) || 0;
+    if (!at) return 0;
+    return Date.now() - at > IMAGE_UNCERTAIN_WINDOW_MS ? 0 : at;
   }
 
   async function sendImageV2(key, source, options = {}) {
@@ -2242,8 +2519,18 @@ async function main() {
       const mins = Math.round(repeatWindow / 60000);
       throw new Error(`这张图本会话最近发过了（${identity}，${mins} 分钟内不重复发）。换一张：可以再调 qq_search_images 换个关键词，或挑结果里的另一项；群友明确要求重发同一张时先跟他说明再让他确认`);
     }
+    // 上一次这张图「结果不确定」（WS 超时、网关没回执）：既不能算发过、也不能重发。
+    // 这是重复发图事故的另一半——超时被当成失败 → AI 换个档位再试一次 → 群里两张。
+    const uncertainAt = imageSendUncertainAt(key, identity);
+    if (uncertainAt) {
+      const mins = Math.max(1, Math.round((Date.now() - uncertainAt) / 60000));
+      throw new Error(`这张图在 ${mins} 分钟前的发送结果**不确定**（WS 超时，网关没回执，消息可能已经发出去了），所以不能自动重发——重发就会变成两张。请先用 qq_get_recent_messages / qq_get_my_recent_messages 确认到底发出去没有：已经发了就照常接话，确实没发再换一张，别拿同一张硬试。`);
+    }
     const resolved = await resolveImageBuffer(source, options);
     assertSendAllowed();
+    // 先把字节在本机留一份（state/sent-images/）：等发送流程走完再存的话，
+    // 中途抛错（比如 QQ 拒收）就会把这张图彻底弄丢。送达结果稍后回填。
+    const sentRecord = recordSentImage({ key, resolved, url: String(source ?? ''), kind: 'send', delivered: null });
     const [kind, id] = key.split(':');
     const segments = [];
     const replyToMessageId = options.replyToMessageId;
@@ -2261,27 +2548,214 @@ async function main() {
     segments.push({ type: 'image', data: { file: 'base64://' + resolved.buffer.toString('base64') } });
     const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
     const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
-    // 与文字/表情共用 sendChain，保证顺序不被并发工具调用打乱。
-    let sendResolve;
-    let sendReject;
-    const sendResult = new Promise((resolve, reject) => { sendResolve = resolve; sendReject = reject; });
-    sendChain = sendChain.then(async () => {
-      try {
-        await sleep(randInt(500, 1500));
-        assertSendAllowed();
-        sendResolve(await postOneBot(action, params));
-      } catch (error) {
-        sendReject(error);
+    // 与文字/表情共用同一会话的发送链，保证顺序不被并发工具调用打乱。
+    const postImage = async () => {
+      let sendResolve;
+      let sendReject;
+      const sendResult = new Promise((resolve, reject) => { sendResolve = resolve; sendReject = reject; });
+      setSendChain(key, chainFor(key).then(async () => {
+        try {
+          await sleep(randInt(500, 1500));
+          assertSendAllowed();
+          sendResolve(await postOneBot(action, params));
+        } catch (error) {
+          sendReject(error);
+        }
+      }));
+      return sendResult;
+    };
+    let data;
+    try {
+      data = await postImage();
+    } catch (error) {
+      if (error?.uncertain === true) {
+        // 写类动作 WS 超时：网关没给回执，消息可能已经发出去了。
+        // 不重发、不报成功，并记下这张图的「未知」状态挡住后续自动重试。
+        markImageSendUncertain(key, identity);
+        if (sentRecord) sentImages.update(sentRecord.file, { delivered: null, uncertain: true });
+        recordSelfMediaV2(key, {
+          text: '[图片]', kind: 'image', messageId: null,
+          media: [{ kind: 'image', file: resolved.name || '', url: resolved.url || '' }],
+          undelivered: false
+        });
+        const uncertainError = new Error(`图片发送结果不确定：${error?.message ?? error}`);
+        uncertainError.uncertain = true;
+        throw uncertainError;
       }
-    });
-    const data = await sendResult;
+      throw error;
+    }
+    // 送达确认：网关回 ok ≠ QQ 收下了（图片审核会静默丢图，见 confirmImageDelivered）。
+    //
+    // 这里同时解决两个老问题：
+    //  1) **阻塞**：原来无条件等满 deliverCheckMs（默认 15s），确认失败还要再等一个 15s 才重发，
+    //     一次发图把 agent 回合占住 30s+。绝大多数图 1~2s 内就能确认，所以先只等一个短窗口
+    //     （deliverCheckFastMs，默认 4s）；没结果就把剩下的确认+重发丢到后台，回合立刻返回。
+    //  2) **误重发**：探针本身也可能打不通（WS 被大图 base64 占满时 get_msg 一样会超时，
+    //     日志里 `WS get_msg 失败（…超时（5000ms））` 就是这种）。探针没打通 ≠ 没送达，
+    //     这时重发就是重复图。所以只在**探针确实查到、且明确未送达**时才重发。
+    const deliverCheckMs = resolveImageConfig().deliverCheckMs;
+    let delivered = true;
+    if (deliverCheckMs > 0) {
+      const fastMs = Math.min(deliverCheckMs, resolveImageConfig().deliverCheckFastMs);
+      const check = await confirmImageDelivered(data?.message_id, fastMs);
+      if (check.delivered) {
+        delivered = true;
+      } else if (!check.conclusive) {
+        // 短窗口内探针没打通：不阻塞、也不重发，交给后台继续确认。
+        delivered = null;
+        log(`[image] ${key} 送达未确认（${Math.round(fastMs / 1000)}s 内探针未打通），回合不等待，转后台确认（不重发以免重复）`);
+        trackDeliverCheck(confirmImageDeliveredInBackground(key, data?.message_id, deliverCheckMs));
+      } else if (check.conclusive) {
+        // 探针查到了这条消息、且它确实没被 QQ 接受 —— 只有这种确定情况下才重发。
+        log(`[image] ${key} 图片发出后 ${Math.round(fastMs / 1000)}s 内没被 QQ 收下，自动重发一次`);
+        let retry;
+        try {
+          retry = await postImage();
+        } catch (error) {
+          if (error?.uncertain === true) {
+            markImageSendUncertain(key, identity);
+            if (sentRecord) sentImages.update(sentRecord.file, { delivered: null, uncertain: true });
+            recordSelfMediaV2(key, {
+              text: '[图片]', kind: 'image', messageId: null,
+              media: [{ kind: 'image', file: resolved.name || '', url: resolved.url || '' }],
+              undelivered: false
+            });
+            const uncertainError = new Error(`图片发送结果不确定：${error?.message ?? error}`);
+            uncertainError.uncertain = true;
+            throw uncertainError;
+          }
+          throw error;
+        }
+        const retryCheck = await confirmImageDelivered(retry?.message_id, fastMs);
+        if (retryCheck.delivered) {
+          data = retry;
+          delivered = true;
+          log(`[image] ${key} 重发后确认送达`);
+        } else if (!retryCheck.conclusive) {
+          delivered = null;
+          log(`[image] ${key} 重发后探针未打通，转后台确认（不再次重发）`);
+          trackDeliverCheck(confirmImageDeliveredInBackground(key, retry?.message_id, deliverCheckMs));
+        } else {
+          log(`[image] ${key} ⚠ 重发后仍未送达：这张图多半被 QQ 图片审核静默拦下了（露骨/擦边图常见）`);
+          delivered = false;
+        }
+      }
+    }
     const anim = resolved.anim || { kind: null, frames: null, animated: false };
     if (anim.kind === 'gif' && !anim.animated) log(`[image] 注意：${resolved.url || resolved.name} 是单帧静态 .gif（不会动）`);
+    // 回填「到底送没送达」：网关回 ok ≠ QQ 收下了（审核会静默吞图），
+    // 控制台里标出来，群友说「少了一张」时能一眼看到是哪张。
+    // delivered=null 表示「还没确认出来」：不要写成 false（那是「确定没送达」，会误导排查）。
+    if (sentRecord) {
+      sentImages.update(sentRecord.file, {
+        delivered: delivered === true ? true : (delivered === false ? false : null),
+        ...(delivered === null ? { uncertain: true } : {}),
+        messageId: String(data?.message_id ?? '')
+      });
+    }
     recordSelfMediaV2(key, {
       text: '[图片]', kind: 'image', messageId: data?.message_id ?? null,
-      media: [{ kind: 'image', file: resolved.name || '', url: resolved.url || '' }]
+      media: [{ kind: 'image', file: resolved.name || '', url: resolved.url || '' }],
+      undelivered: delivered === false
     });
-    return { data, via: resolved.via, sourceUrl: resolved.url || '', name: resolved.name || '', animated: anim.animated, frames: anim.frames };
+    // 这一张到底是哪个档位（原图 / 1200px / 缩略图）＋实际像素：一起回给 AI，
+    // 免得它把「代理拉不动原图、退到了缩略图」说成「原图给你了」。
+    const dims = getImageDimensions(resolved.buffer);
+    return {
+      data, via: resolved.via, sourceUrl: resolved.url || '', name: resolved.name || '',
+      animated: anim.animated, frames: anim.frames, delivered,
+      rendition: resolved.rendition || '',
+      size: dims ? `${dims.width}x${dims.height}` : ''
+    };
+  }
+
+  /**
+   * 图片到底有没有被 QQ 收下？——网关的发送接口回 ok 并不等于送达。
+   *
+   * 判据来自 `get_msg`：消息真被 QQ 接受后，网关会把它切成「已发送」形态——
+   * `message_seq` 变成真实序号、图片段从 `base64://…` 换成 QQ CDN 的 http 地址；
+   * 被 QQ 静默丢掉的消息则一直停在本地待发状态（`message_seq=0`、url 仍是 `base64://`）。
+   * 2026-09 实测 10 条历史图片消息：9 条送达的全部满足前者，唯一没送达的那条正是后者
+   * —— 一张露骨的 pixiv 原图（网关回 ok、群里没有、AI 却跟群友说「两张都发出去了」）。
+   */
+  function imageMessageDelivered(data) {
+    const seq = Number(data?.message_seq);
+    if (Number.isFinite(seq) && seq > 0) return true;
+    const segs = Array.isArray(data?.message) ? data.message : [];
+    return segs.some((seg) => seg?.type === 'image' && /^https?:\/\//i.test(String(seg?.data?.url ?? '')));
+  }
+
+  /**
+   * 轮询 get_msg 直到确认送达 / 超时。
+   *
+   * 返回 `{ delivered, conclusive }`，三态要分清：
+   *   - `delivered: true`                      → 确认送达。
+   *   - `delivered: false, conclusive: true`   → **查到了**这条消息，且它确实没被 QQ 接受；
+   *                                              只有这一种情况下重发才是安全的。
+   *   - `delivered: false, conclusive: false`  → 探针本身没打通（发送大图时 WS 被 base64 占满，
+   *                                              get_msg 一样会超时）。既不能算送达，也**绝不能重发**：
+   *                                              盲目重发正是「重复发图」事故的放大器。
+   */
+  async function confirmImageDelivered(messageId, timeoutMs) {
+    const id = Number(messageId);
+    if (!Number.isFinite(id) || id === 0) return { delivered: false, conclusive: false };
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    let probeAnswered = false;
+    for (;;) {
+      try {
+        const data = await postOneBot('get_msg', { message_id: id }, { timeoutMs: 5000, retries: 0 });
+        probeAnswered = true;
+        if (imageMessageDelivered(data)) return { delivered: true, conclusive: true };
+      } catch { /* 刚发出去的一瞬可能还查不到、或 WS 正忙，继续等 */ }
+      if (Date.now() >= deadline) return { delivered: false, conclusive: probeAnswered };
+      await sleep(Math.max(300, Math.min(1500, deadline - Date.now())));
+    }
+  }
+
+  // 后台送达确认任务：只是为了审计/测试能等它们结束，不影响回合。
+  const deliverCheckTasks = new Set();
+  function trackDeliverCheck(promise) {
+    deliverCheckTasks.add(promise);
+    const done = () => deliverCheckTasks.delete(promise);
+    promise.then(done, done);
+    return promise;
+  }
+
+  /**
+   * 回合已经返回之后仍在跑的那半段送达确认：只回填结果，绝不重发。
+   * 重发决策已经在回合内做完了（且只在探针确实回答「没送达」时才会做）。
+   */
+  async function confirmImageDeliveredInBackground(key, messageId, timeoutMs) {
+    const check = await confirmImageDelivered(messageId, timeoutMs);
+    const st = getSocialV2State(key);
+    if (check.delivered) {
+      log(`[image] ${key} 后台确认送达（message_id=${messageId}）`);
+      return check;
+    }
+    if (check.conclusive) {
+      log(`[image] ${key} ⚠ 后台确认：这张图确实没送达（多半被 QQ 图片审核静默拦下）`);
+    } else {
+      log(`[image] ${key} 后台确认未完成：探针一直没打通，送达状态仍未知（不要重发同一张）`);
+    }
+    // 把「未送达」记进会话自我媒体，让 AI 之后能看见这张其实没出去。
+    if (check.conclusive) {
+      const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+      for (let i = recent.length - 1; i >= 0; i--) {
+        const m = recent[i];
+        if (m?.isSelf && m.kind === 'image' && String(m.messageId ?? '') === String(messageId ?? '')) {
+          m.undelivered = true;
+          break;
+        }
+      }
+      // 最近一条自我图片消息（message_id 为空时兜底）
+      if (!messageId) {
+        for (let i = recent.length - 1; i >= 0; i--) {
+          if (recent[i]?.isSelf && recent[i].kind === 'image') { recent[i].undelivered = true; break; }
+        }
+      }
+      saveSocialV2State();
+    }
+    return check;
   }
 
   // ── 忙标记看门狗 ────────────────────────────────────────────────────────
@@ -2407,6 +2881,204 @@ async function main() {
       arr.push(waiter);
       learnerWaiters.set(sessionId, arr);
     });
+  }
+
+  // ── 工作车道：比聊天会话多一条并行的 turn 通道 ──────────────────────────
+  // 详见 workSessions 声明处的说明。这里只放机制，不做「什么时候该用」的判断
+  // （那是 prompt 层的事，见 withSlangContext 里的工作车道指引）。
+
+  function workLaneEnabled() {
+    if (cfg.socialV2?.enabled === false) return false;
+    return cfg.socialV2?.work?.enabled !== false;
+  }
+  function workLaneMaxSessions() {
+    const n = Number(cfg.socialV2?.work?.maxSessions);
+    return Number.isFinite(n) && n >= 1 ? Math.min(8, Math.floor(n)) : 2;
+  }
+  function workLanePool(key) {
+    if (!state.workSessions || typeof state.workSessions !== 'object') state.workSessions = {};
+    if (!Array.isArray(state.workSessions[key])) state.workSessions[key] = [];
+    return state.workSessions[key];
+  }
+  /** 这条车道手上还有活吗（已投递但 turn 没结束，或 turn 正在跑）。 */
+  function isWorkLaneBusy(sessionId) {
+    if ((workTasks.get(sessionId)?.length ?? 0) > 0) return true;
+    if (collectors.has(sessionId) || v2TurnStartAt.has(sessionId)) return true;
+    return false;
+  }
+
+  /**
+   * 建一条工作车道。
+   * 与聊天会话同 preset —— 走和 ensureSession 一样的 fail-closed：群聊模式下拿不到
+   * qq-chat* preset 就拒绝创建，绝不让 DSH 用默认 preset 把本地工具暴露给 QQ 群。
+   */
+  async function createWorkLaneSession(key) {
+    const preset = modePreset(key, currentMode, cfg);
+    const strictPreset = currentMode !== 'closed-agent';
+    if (strictPreset && !preset) {
+      const wanted = currentMode === 'reserved2' ? (cfg.socialV2?.agentPreset || cfg.agentPreset) : cfg.agentPreset;
+      throw new Error(`拒绝为 ${key} 创建工作车道：模式 ${currentMode} 需要 preset "${wanted}"，但它不在 DSH 可用清单中（${dshPresetIds.join(', ') || '未知'}）`);
+    }
+    const dir = cfg.sessionCwd ? String(cfg.sessionCwd) : path.join(STATE_DIR, 'agents');
+    fs.mkdirSync(dir, { recursive: true });
+    const wsValue = unwrap(await api.workspace.create({ path: dir }), 'work workspace.create');
+    const params = { workspaceId: wsValue.workspace.workspaceId };
+    if (preset) params.agentPreset = preset;
+    const value = unwrap(await api.sessions.create(params), 'work session.create');
+    const sessionId = value.sessionId;
+    api.events.follow(sessionId);
+    workSessions.add(sessionId);
+    workReverse.set(sessionId, key);
+    workLanePool(key).push(sessionId);
+    saveState();
+    log(`[work] ${key} 工作车道已创建 ${sessionId}（preset ${preset ?? '无'}）`);
+    return sessionId;
+  }
+
+  /** 挑一条车道：优先空闲的；不够就新建（受 maxSessions 限制）；都忙就排到最早开始的那条。 */
+  async function pickWorkLane(key) {
+    const pool = workLanePool(key).slice();
+    // 重启后 workSessions 是内存集合，这里按持久化的池补回来。
+    for (const id of pool) {
+      if (!workSessions.has(id)) {
+        workSessions.add(id);
+        workReverse.set(id, key);
+      }
+    }
+    const idle = pool.find((id) => !isWorkLaneBusy(id));
+    if (idle) {
+      try { await ensureChatModel(id); } catch (error) { log(`[work] ${key} 车道 ${id} 模型设置失败：${error?.message ?? error}`); }
+      return { sessionId: idle, queued: false };
+    }
+    if (pool.length < workLaneMaxSessions()) {
+      const created = await createWorkLaneSession(key);
+      try { await ensureChatModel(created); } catch (error) { log(`[work] ${key} 新车道 ${created} 模型设置失败：${error?.message ?? error}`); }
+      return { sessionId: created, queued: false };
+    }
+    let oldest = pool[0];
+    let oldestAt = Infinity;
+    for (const id of pool) {
+      const at = Number(v2TurnStartAt.get(id)) || Number(workTasks.get(id)?.[0]?.startedAt) || Date.now();
+      if (at < oldestAt) { oldestAt = at; oldest = id; }
+    }
+    return { sessionId: oldest, queued: true };
+  }
+
+  /** 工作车道的提示词：自带 key/令牌 + 收尾契约，不依赖聊天会话的历史。 */
+  function buildWorkLanePrompt(key, st, task, options = {}) {
+    const roleState = readRoleState();
+    const lines = [];
+    lines.push('【工作车道】你正在这个 QQ 会话的**独立工作会话**里执行一个长任务。它不是群友当场追问，也没有聊天上下文。');
+    lines.push('这一轮花多久都不会挡住聊天会话（那边照常应答），所以放心用慢工具：一次做完再收尾，不要因为「怕慢」而中途放弃或改用低质量档位。');
+    lines.push('');
+    lines.push(`【会话 key】${key}`);
+    lines.push(`【会话令牌】${st.agentToken}`);
+    lines.push('调用 qq_* 工具时把上面的 key 和 token 原样带上（参数名 key / token）。');
+    if (options.note) lines.push(`【情况说明】${String(options.note).slice(0, 500)}`);
+    lines.push('');
+    lines.push('【任务】');
+    lines.push(String(task).trim());
+    lines.push('');
+    lines.push('【收尾要求】');
+    lines.push('1) 要发到 QQ 的东西（图片 / 表情 / 消息）直接用发送工具发出去——工作车道不会把你的文本自动转发到 QQ。');
+    lines.push('2) 最后写一小段中文结论：做了什么、成功还是失败、失败原因（例如「取图通道慢/图被 QQ 审核吞了」）。这段结论会回投给主会话的 AI，由它决定怎么跟群友说——所以只写事实，不要对群友说话、不要客套。');
+    lines.push('3) 不要调用 qq_set_wake_config / qq_mark_read（那是聊天会话的收尾动作，工作车道不需要）。');
+    lines.push('4) 也不要调用 qq_wait_for_messages：那是聊天会话判断「对方说完没」用的，工作车道不等消息、只把任务做完。');
+    if (roleState.role) lines.push(`（角色参考：${roleState.role}——只在需要写群友可见文案时用来对齐语气。）`);
+    return lines.join('\n');
+  }
+
+  /**
+   * 把一条长任务投给工作车道。**立即返回**（不 await 回合结束）：
+   * 调用它的聊天会话这一轮马上就能继续，这就是「同时处理多个任务」的关键。
+   */
+  async function deliverWorkTask(key, task, options = {}) {
+    if (!workLaneEnabled()) throw new Error('工作车道未启用（config.json 的 socialV2.work.enabled === false）');
+    if (currentMode !== 'reserved2') throw new Error('工作车道只在二代仿真模式（reserved2）下可用');
+    const text = String(task ?? '').trim();
+    if (!text) throw new Error('task 不能为空');
+    if (text.length > 4000) throw new Error(`task 太长（${text.length} 字，上限 4000）——把任务收敛成一句话，细节放进 note`);
+    if (!isSessionAllowedInCurrentMode(key)) throw new Error(`当前模式不允许会话 ${key}`);
+    const st = getSocialV2State(key);
+    const { sessionId, queued } = await pickWorkLane(key);
+    const promptText = buildWorkLanePrompt(key, st, text, options);
+    const accepted = await api.sessions.prompt({ sessionId, mode: 'queue', content: [{ type: 'text', text: promptText }] });
+    if (!accepted.result.ok) {
+      const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
+      throw new Error(`工作车道投递被拒：${errText}`);
+    }
+    const queue = workTasks.get(sessionId) ?? [];
+    queue.push({ key, task: text.slice(0, 300), startedAt: Date.now() });
+    workTasks.set(sessionId, queue);
+    log(`[work] ${key} 任务已交给工作车道 ${sessionId}${queued ? `（排队第 ${queue.length} 位）` : ''}：${text.slice(0, 60)}`);
+    appendActivity(`${key} [work] 已交给工作车道：${text.slice(0, 60)}`);
+    return { sessionId, queued, position: queue.length };
+  }
+
+  /** 事件流里属于工作车道的帧：单独收，回合结束后把结论回投聊天会话。 */
+  function handleWorkLaneFrame(frame) {
+    const sessionId = frame.sessionId;
+    const key = workReverse.get(sessionId) || workTasks.get(sessionId)?.[0]?.key || '';
+    if (frame.event.type === 'tool/call') {
+      appendToolLog({
+        type: 'call', time: new Date().toISOString(), key, sessionId, lane: 'work',
+        tool: String(frame.event.data?.name ?? ''),
+        args: sanitizeToolArgs(frame.event.data?.arguments ?? frame.event.data?.input ?? frame.event.data)
+      });
+    }
+    const collector = workCollectors.get(sessionId) ?? createTurnCollector();
+    workCollectors.set(sessionId, collector);
+    const ended = collector.push(frame.event);
+    if (!ended) return;
+    workCollectors.delete(sessionId);
+    const queue = workTasks.get(sessionId) ?? [];
+    queue.shift();
+    if (queue.length === 0) workTasks.delete(sessionId);
+    else workTasks.set(sessionId, queue);
+    if (!key) {
+      log(`[work] 工作车道 ${sessionId} 回合结束，但已找不到归属会话`);
+      return;
+    }
+    const ok = ended.reason.kind === 'completed';
+    const text = String(ended.text ?? '').trim();
+    let report;
+    if (ok && text) {
+      report = `【工作车道回报】${key} 的长任务跑完了，结论如下（是工作会话给你的内部汇报，不是群友说的话）：\n${text}\n\n`
+        + '请按情况处理：该发到群里的东西如果工作车道已经发了，你就不必重复发；需要跟群友说一句就正常用发送工具说，不需要就按规矩收尾。';
+      log(`[work] ${key} 工作车道完成（${text.length} 字），回投给聊天会话`);
+    } else {
+      const why = ok ? '没有输出结论' : `回合异常结束（${ended.reason.kind}）`;
+      report = `【工作车道回报】${key} 的长任务${why}，没能拿到结论。`
+        + '别把这次的失败说成已经完成；如果群友还在等，如实说明没弄成（或换个思路再试一次，但不要硬撞同一件事）。';
+      log(`[work] ${key} 工作车道未产出结论：${ended.reason.kind}`);
+    }
+    deliverPrompt(key, report).catch((error) => log(`[work] ${key} 结论回投失败：${error?.message ?? error}`));
+    saveState();
+  }
+
+  /** 退役某个会话的全部工作车道（模式切换 / 权限变化 / reset 时调用）。 */
+  function retireWorkLanes(key) {
+    const pool = Array.isArray(state.workSessions?.[key]) ? state.workSessions[key].slice() : [];
+    if (state.workSessions) delete state.workSessions[key];
+    for (const id of pool) {
+      workSessions.delete(id);
+      workReverse.delete(id);
+      workTasks.delete(id);
+      workCollectors.delete(id);
+      collectors.delete(id);
+      v2TurnStartAt.delete(id);
+      toolCallNames.delete(id);
+      void (async () => {
+        try { await api.stopSessionWork(id); } catch { /* 已经停了就算了 */ }
+        try { await api.workspace.archiveSession({ sessionId: id }); } catch { /* 归档失败不影响主流程 */ }
+      })();
+    }
+    if (pool.length) log(`[work] ${key} 已退役 ${pool.length} 条工作车道`);
+    return pool.length;
+  }
+  function retireAllWorkLanes() {
+    const keys = Object.keys(state.workSessions ?? {});
+    for (const key of keys) retireWorkLanes(key);
   }
 
   async function runSlangExtraction(key) {
@@ -2700,7 +3372,20 @@ async function main() {
         '或按上下文里最近提到的角色搜。「色图」两个字不改变你的动作——不要拿「没有」当回答。',
         '另外：同一张图别重复发（接口会直接拒绝「最近发过了」，搜图结果也会自动滤掉最近发过的）。',
         '搜到 0 条时先换**标签式**关键词（角色名 + 常用标签）再搜一次，别断言「被限制级滤掉了」——R-18 在 r18 档是放行的，只有 R-18G 会被硬拦。',
-        '别把二次元萝莉当真人：二次元/虚构角色的普通、非性化图（画风幼、看起来像小孩的角色，例如纳西妲/可莉）照搜照发，不要因为「她看起来像小孩」就不搜、不回或先讲边界。'
+        '别把二次元萝莉当真人：二次元/虚构角色的图（画风幼、看起来像小孩的角色，例如纳西妲/可莉）照搜照发。'
+      ].join(''));
+    }
+    // 工作车道指引：告诉 AI「慢活可以外包」，否则它会习惯性地自己串行做完，
+    // 把整条会话堵住（用户感受就是「问了别的它不理」）。每轮注入，不受已挂载 preset 影响。
+    if (workLaneEnabled() && cfg.socialV2?.tools?.runTask !== false) {
+      parts.push([
+        '【慢活外包：qq_run_task】你这一轮跑工具的时候，群里发来的新消息是收不到的——它们要等你收尾才会被处理。',
+        '所以**任务里有耗时步骤时，把它整条交给工作车道**（mcp__snowluma__qq_run_task），别自己排队做完：',
+        '典型是「找张 XX 的图并发出来」（pixiv 取图 + 大图发送常常 1~2 分钟）、「看几个 B 站视频总结一下」、',
+        '「把这几条链接都看一遍再汇总结论」。投递是**立即返回**的，你这一轮马上就能继续接别的话，',
+        '跑完它会主动把结论回投给你，到时候你再决定要不要跟群友补一句。',
+        '任务描述要**自包含**（工作车道是全新会话，看不到你们的聊天上下文）：写清对象、数量、发到哪、有什么要求，细节放 note。',
+        '不要用它干一句话就能答的事，也不要投完就在本轮里反复查进度。'
       ].join(''));
     }
     if (cfg.slang?.enabled !== false) {
@@ -2754,6 +3439,15 @@ async function main() {
   for (const [key, sessionId] of Object.entries(state.sessions)) reverse.set(sessionId, key);
   // 新版 DSH 事件流需要显式 follow；启动时为已持久化的 QQ 会话补上。
   for (const sessionId of Object.values(state.sessions)) api.events.follow(sessionId);
+  // 工作车道同理：把持久化的车道会话重新挂上（否则重启后它们的 turn 事件没人收、
+  // 结论永远回投不回来），并让 pool 里的 id 直接可用，不用重建。
+  for (const [key, ids] of Object.entries(state.workSessions ?? {})) {
+    for (const id of Array.isArray(ids) ? ids : []) {
+      workSessions.add(id);
+      workReverse.set(id, key);
+      api.events.follow(id);
+    }
+  }
   const sessionPromises = new Map(); // key -> create promise（防并发重复创建）
   const promptQueues = new Map(); // key -> { queue: [], running: false }：每个 QQ 会话串行投递 DSH prompt，保证 turn 顺序
 
@@ -2981,6 +3675,9 @@ async function main() {
     delete state.sessions[key];
     delete state.sessionPolicies[key];
     if (state.sessionPresetStamps) delete state.sessionPresetStamps[key];
+    // 工作车道跟着聊天会话一起退役：它们是同一条 preset/权限下的产物，
+    // 聊天会话都失效了还留着车道，就会出现「工具面已经变了但车道还在跑」。
+    retireWorkLanes(key);
     if (!sessionId) return;
     reverse.delete(sessionId);
     collectors.delete(sessionId);
@@ -3325,9 +4022,11 @@ async function main() {
             '<script>(function(){',
             "var saved=null;try{saved=localStorage.getItem('consoleToken');}catch(e){}",
             "var tried=/[?&]token=/.test(location.search);",
-            "if(saved&&!tried){location.replace('/?token='+encodeURIComponent(saved));return;}",
+            // 用 './?token='（相对当前目录）而不是 '/?token='：控制台可能被反代在子路径下，
+            // 根绝对地址会把令牌送到反代自己的根上去（那里当然不认这个令牌）。
+            "if(saved&&!tried){location.replace('./?token='+encodeURIComponent(saved));return;}",
             "var t=prompt('请输入控制台访问令牌：');",
-            "if(t)location.replace('/?token='+encodeURIComponent(t.trim()));",
+            "if(t)location.replace('./?token='+encodeURIComponent(t.trim()));",
             '})();</script>'
           ].join(''));
         } else {
@@ -3387,6 +4086,17 @@ async function main() {
         }
         // 表情库管理接口只允许控制台（带 agent token 的 v2 工具一律拒绝，防止越权改库）
         if (req.headers['x-agent-token'] && (url.pathname === '/api/stickers' || url.pathname.startsWith('/api/stickers/'))) {
+          sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
+          return;
+        }
+        // AI 记忆管理接口同样只允许控制台：AI 自己的记忆工具走 /api/socialV2/memory-*，
+        // 不该让它够到「清空全部记忆 / 改钉住表 / 回滚备份」这些管理员动作。
+        if (req.headers['x-agent-token'] && (url.pathname === '/api/memory' || url.pathname.startsWith('/api/memory/'))) {
+          sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
+          return;
+        }
+        // AI 图片管理接口同理：AI 可以看图、发图，但不该够到「删图库 / 清缓存 / 清回收站」。
+        if (req.headers['x-agent-token'] && (url.pathname === '/api/ai-images' || url.pathname.startsWith('/api/ai-images/'))) {
           sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
           return;
         }
@@ -4367,7 +5077,7 @@ async function main() {
             merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
           }
           // tools：只接受布尔开关
-          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker', 'memberRemark', 'video', 'videoFrames'];
+          const toolFlags = ['getPrompt', 'getUnread', 'getRecent', 'socialState', 'sendGroup', 'sendPrivate', 'reply', 'sendBurst', 'sendMessage', 'waitMessages', 'feedback', 'getMyRecent', 'getMessageDetail', 'getActiveMembers', 'setWakeConfig', 'markRead', 'memory', 'slangQuery', 'slangSubmit', 'getImages', 'getForwardMsg', 'sendPoke', 'listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'saveSticker', 'sendImage', 'listImageLibrary', 'searchImages', 'getSelfImage', 'pickSticker', 'memberRemark', 'video', 'videoFrames', 'runTask'];
           // 默认关闭的高危工具（真·QQ 写操作）：非布尔一律按「当前值 === true」兜底，不能用 !== false。
           const optInToolFlags = ['setMemberCard'];
           if (body.tools && typeof body.tools === 'object') {
@@ -4383,7 +5093,7 @@ async function main() {
           if (body.image && typeof body.image === 'object') {
             const cur = current.image ?? {};
             merged.image = { ...cur, ...body.image };
-            for (const k of ['maxBytes', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs']) {
+            for (const k of ['maxBytes', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs', 'deliverCheckMs', 'deliverCheckFastMs']) {
               if (merged.image[k] !== undefined) {
                 const n = Number(merged.image[k]);
                 merged.image[k] = Number.isFinite(n) && n >= 0 ? Math.round(n) : (cur[k] ?? 0);
@@ -4445,6 +5155,14 @@ async function main() {
             }
             if (merged.wake.defaultMode !== 'active') merged.wake.defaultMode = 'diving';
             if (merged.wake.recommendedHint !== undefined) merged.wake.recommendedHint = String(merged.wake.recommendedHint ?? '');
+          }
+          // work：工作车道（把长任务丢给独立会话跑，聊天会话不被慢工具堵住）
+          if (body.work && typeof body.work === 'object') {
+            const curWork = current.work ?? {};
+            merged.work = { ...curWork, ...body.work };
+            if (merged.work.enabled !== undefined) merged.work.enabled = merged.work.enabled !== false;
+            const n = Number(merged.work.maxSessions);
+            merged.work.maxSessions = Number.isFinite(n) && n >= 1 ? Math.min(8, Math.floor(n)) : (Number(curWork.maxSessions) || 2);
           }
           // send：数值归一化
           if (body.send && typeof body.send === 'object') {
@@ -4708,6 +5426,8 @@ async function main() {
             sendImage: 'qq_send_image',
             listImageLibrary: 'qq_list_image_library',
             searchImages: 'qq_search_images',
+            // 工作车道（慢活外包）：把整条长任务投给独立会话，立即返回。
+            runTask: 'qq_run_task',
             pickSticker: 'qq_pick_sticker',
             getSelfImage: 'qq_get_self_image',
             memberRemark: 'qq_get_member_remarks / qq_set_member_remark / qq_remove_member_remark',
@@ -5031,6 +5751,40 @@ async function main() {
           sendWakePromptV2(key, reason);
           log(`控制台：手动唤醒 ${key}（${reason}）`);
           sendJson({ ok: true, key, reason });
+          return;
+        }
+        // ── 把长任务丢给工作车道（qq_run_task）────────────────────────────
+        // 立即返回：聊天会话这一轮不用等任务跑完，所以「发图/搜图/看视频」这类慢活
+        // 不再把整条会话堵死（见 workSessions 声明处的说明）。
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/run-task') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const task = String(body.task ?? '').trim();
+          if (!key || !task) { sendJson({ ok: false, error: 'key 和 task 不能为空' }, 400); return; }
+          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('runTask')) { sendJson({ ok: false, error: '工具未启用：qq_run_task' }, 403); return; }
+          if (!workLaneEnabled()) { sendJson({ ok: false, error: '工作车道未启用（控制台「工具」里打开，或 config.json socialV2.work.enabled）' }, 403); return; }
+          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '工作车道仅在二代仿真模式下可用' }, 403); return; }
+          if (!dshReady) { sendJson({ ok: false, error: 'DSH 不可用，稍后再试' }, 503); return; }
+          try {
+            const result = await deliverWorkTask(key, task, { note: body.note });
+            sendJson({
+              ok: true,
+              key,
+              lane: result.sessionId,
+              queued: result.queued,
+              position: result.position,
+              // 关键：明确告诉 AI「你没在等」——它这一轮可以照常接别的话。
+              note: result.queued
+                ? `工作车道都占着，这条排在第 ${result.position} 位，仍然不影响你继续聊天。`
+                : '已交给独立的工作车道，它自己会跑完并把结论回投给你；你这一轮不用等它，可以继续接别的话。'
+            });
+          } catch (error) {
+            log(`[work] ${key} 投递失败：${error?.message ?? error}`);
+            sendJson({ ok: false, error: `交给工作车道失败：${error?.message ?? error}` }, 500);
+          }
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/send-burst') {
@@ -5831,11 +6585,59 @@ async function main() {
               atUserId: body.atUserId
             });
             saveSocialV2State();
-            log(`[image] 发送图片 ${key} via=${result.via}${result.sourceUrl ? ' ' + result.sourceUrl : ''}`);
-            appendActivity(`${key} [image] 发送图片（${result.via}）`);
-            sendJson({ ok: true, key, via: result.via, messageId: result.data?.message_id ?? null });
+            log(`[image] 发送图片 ${key} via=${result.via}${result.sourceUrl ? ' ' + result.sourceUrl : ''}${result.delivered === false ? '（⚠ 未确认送达）' : (result.delivered === null ? '（送达待确认）' : '')}`);
+            appendActivity(`${key} [image] 发送图片（${result.via}）${result.delivered === false ? ' ⚠ 未确认送达' : (result.delivered === null ? ' 送达待确认' : '')}`);
+            if (result.delivered === false) {
+              // 探针确实查到「QQ 没要」：如实报失败，并明确劝住「对同一张硬重试」。
+              st.imageSendTimes = st.imageSendTimes.filter((t) => t !== now);
+              sendJson({
+                ok: false,
+                delivered: false,
+                key,
+                messageId: result.data?.message_id ?? null,
+                error: '图片没有真正送达：网关接受了这条图片消息并返回成功，但 QQ 侧一直没把它变成已发送（get_msg 里 message_seq=0、图片仍是 base64），桥接已自动重发一次仍然如此。'
+                  + '最常见的原因是 QQ 的图片审核静默拦截了这张图（露骨、擦边、含二维码/联系方式的图都容易被吞），这类图重发多少次都不会出现——'
+                  + '别再对同一张反复重试：换一张图，或者如实告诉群友这张没发出去（不要说「已发送」）。'
+              }, 502);
+              return;
+            }
+            const sendWarnings = [];
+            if (result.delivered === null) {
+              sendWarnings.push('这张图已经交给网关了，但发送大图时 WS 通道被占满、送达回执没能在回合内确认出来（后台仍在确认）。**不要重发同一张**——重复图基本都是这么来的。照常接话即可；群友说没看到再换一张。');
+            }
+            // 退到缩略图时明确告诉 AI 画质掉了：别把它当原图，要么换一张、要么如实说明。
+            if (result.rendition === 'thumb') {
+              sendWarnings.push(`这一张只有缩略图画质（${result.size || '?'}）：原图和 1200px 档都没能从取图通道拿到，桥接发的是小图。别当原图用；要么换一张，要么如实跟群友说这张只有缩略图。`);
+            }
+            sendJson({
+              ok: true,
+              key,
+              via: result.via,
+              messageId: result.data?.message_id ?? null,
+              // delivered=null：图已经提交给网关了，但送达还没确认出来（探针被大图占满的 WS 拖住）。
+              // 既不能说「确认送达」，也不能说「没发出去」；如实回三态，并明确禁止重发同一张。
+              delivered: result.delivered === null ? null : true,
+              rendition: result.rendition || '',
+              size: result.size || '',
+              ...(sendWarnings.length ? { warning: sendWarnings.join(' ') } : {})
+            });
           } catch (error) {
             st.imageSendTimes = st.imageSendTimes.filter((t) => t !== now);
+            // 结果不确定（WS 超时、网关没回执）：既不能说成功，也不能让 AI 以为失败去重发。
+            // 用 502 + uncertain 标记如实上报，并把「不许重发同一张」讲清楚。
+            if (error?.uncertain === true) {
+              log(`[image] ⚠ 发送结果不确定 ${key}：${error?.message ?? error}`);
+              appendActivity(`${key} [image] ⚠ 发送结果不确定（网关无回执，已挡住同图重发）`);
+              sendJson({
+                ok: false,
+                uncertain: true,
+                key,
+                error: `${error?.message ?? error}。这张图已经进入「结果不确定」状态，10 分钟内再发同一张会被直接拒绝（防止重复图）。`
+                  + '正确做法：先用 qq_get_recent_messages 或 qq_get_my_recent_messages 看看到底发出去没有——'
+                  + '已经发出就照常接话（别说「没发出去」），确实没有就换一张，或者先跟群友说明情况让他确认。'
+              }, 502);
+              return;
+            }
             sendJson({ ok: false, error: `发送图片失败：${error?.message ?? error}` }, 500);
           }
           return;
@@ -5987,7 +6789,7 @@ async function main() {
             log(`[${source}] 搜图 ${query || '(pixiv 日榜)'} → ${items.length} 张`);
             const hintParts = [];
             if (source !== 'pixiv') hintParts.push('B 站图默认取自相关视频评论区（不够再补专栏配图），不含视频封面；B 站很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true');
-            if (source !== 'bilibili') hintParts.push('pixiv 每项 url 是 pixiv.re 代理的原图直链；若发送时报「图片超过体积上限」，改用同一项的 thumbUrl（几十 KB 缩略图）；id 也可以留着下次直接复用');
+            if (source !== 'bilibili') hintParts.push('pixiv 每项的 url 就是原图直链（桥接自己走配置的代理取回，原图拉不动会自动退到 1200px 档，不用你换地址）；**thumbUrl 是 250×250 方形裁切图/220px 小图，别拿它当原图的替代品**——发出去分辨率明显不对。若发送时报「图片超过体积上限」才考虑 thumbUrl；id 也可以留着下次直接复用');
             if (source === 'auto') hintParts.push('source=auto 会先试 pixiv 标签，没结果自动回退 B 站（notes 里会写明走的是哪边）；中文主播/VTuber/梗图这种 pixiv 收录少的，本来就更依赖 B 站');
             hintParts.push('每项 url 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker 存进收藏表情库；不要刷屏，一次挑 1~2 张合适的即可');
             sendJson({
@@ -7395,6 +8197,226 @@ async function main() {
           sendJson({ ok: true, key });
           return;
         }
+        // ── AI 记忆管理端点（仅控制台可用）──────────────────────────────────
+        // 一个入口管住七类记忆：清单 / 逐条增删 / 自然遗忘 / 钉住保护 / 备份回滚。
+        // 这里**不接受 agent token**（AI 自己的记忆工具走 /api/socialV2/memory-*），
+        // 免得 AI 用管理端接口绕过 socialV2.tools.memory 开关或把钉住表删掉。
+        if (url.pathname === '/api/memory' || url.pathname.startsWith('/api/memory/')) {
+          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+          const action = url.pathname === '/api/memory' ? '' : url.pathname.slice('/api/memory/'.length);
+          try {
+            if (req.method === 'GET' && (action === '' || action === 'inventory')) {
+              sendJson(memoryAdmin.inventory());
+              return;
+            }
+            if (req.method === 'GET' && action === 'items') {
+              sendJson(memoryAdmin.items({
+                kind: String(url.searchParams.get('kind') ?? '').trim(),
+                key: String(url.searchParams.get('key') ?? '').trim(),
+                q: String(url.searchParams.get('q') ?? '').trim(),
+                limit: Number(url.searchParams.get('limit')) || 300
+              }));
+              return;
+            }
+            if (req.method === 'GET' && action === 'backups') {
+              sendJson({ ok: true, backups: memoryAdmin.listBackups(), backupRoot: memoryAdmin.backupRoot });
+              return;
+            }
+            if (req.method === 'GET' && action === 'preview') {
+              const keys = String(url.searchParams.get('keys') ?? '').split(',')
+                .map((k) => k.trim())
+                .filter((k) => /^(group|private):\d+$/.test(k));
+              sendJson(memoryPreview(keys.length ? keys : [...socialV2.conversations.keys()]));
+              return;
+            }
+            if (req.method !== 'POST') { sendJson({ ok: false, error: `不支持的请求：${req.method} ${url.pathname}` }, 405); return; }
+            const body = await readBody();
+            if (action === 'reload') {
+              // 手改了 state/*.json（或从备份里抠回一条）之后，让运行中的桥接重新读一遍，
+              // 免得「文件是对的、页面上还是旧的」——也省掉一次为读盘而重启。
+              reloadMemoryState(['social-v2.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json']);
+              log('控制台：AI 记忆已从磁盘重新读入');
+              sendJson({ ok: true, inventory: memoryAdmin.inventory() });
+              return;
+            }
+            if (action === 'backup') {
+              sendJson(memoryAdmin.backup({ reason: String(body.reason ?? '控制台手动备份') }));
+              return;
+            }
+            if (action === 'restore') {
+              // 回滚前先让内存态跟着重载，否则页面显示的还是回滚前的数据。
+              const result = memoryAdmin.restoreBackup({ name: String(body.name ?? '').trim(), reload: reloadMemoryState });
+              if (result.ok) log(`控制台：AI 记忆回滚到备份 ${result.name}`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'clear') {
+              const kind = String(body.kind ?? '').trim();
+              const label = kind === 'all' ? '全部记忆' : kind;
+              const result = memoryAdmin.clear({
+                kind,
+                key: String(body.key ?? '').trim(),
+                category: String(body.category ?? '').trim(),
+                includePinned: body.includePinned === true,
+                reason: `控制台清空 ${label}`
+              });
+              if (result.ok) {
+                log(`控制台：清空 AI 记忆（${label}${body.key ? ` @ ${body.key}` : ''}）共 ${result.clearedTotal} 条，备份 ${result.backup || '无'}`);
+                appendActivity(`控制台清空 AI 记忆：${label} ${result.clearedTotal} 条`);
+              }
+              sendJson(result);
+              return;
+            }
+            if (action === 'forget') {
+              const result = memoryAdmin.forget({
+                key: String(body.key ?? '').trim(),
+                thoughtTtlMs: body.thoughtTtlMs,
+                topicIdleMs: body.topicIdleMs,
+                stickerIdleMs: body.stickerIdleMs
+              });
+              if (result.ok) log(`控制台：AI 记忆自然遗忘 ${result.forgottenTotal} 条（备份 ${result.backup || '无'}）`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'remove') {
+              const result = memoryAdmin.remove({
+                kind: String(body.kind ?? '').trim(),
+                key: String(body.key ?? '').trim(),
+                id: String(body.id ?? '').trim(),
+                id2: String(body.id2 ?? '').trim()
+              });
+              if (result.ok && result.removed) log(`控制台：忘掉一条记忆 ${result.kind} @ ${result.key} -> ${result.id}`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'pin') {
+              sendJson(memoryAdmin.setPin({
+                kind: String(body.kind ?? '').trim(),
+                key: String(body.key ?? '').trim(),
+                id: String(body.id ?? '').trim(),
+                id2: String(body.id2 ?? '').trim(),
+                pinned: body.pinned !== false,
+                reason: String(body.reason ?? '').trim()
+              }));
+              return;
+            }
+            sendJson({ ok: false, error: `未知的记忆管理动作：${action || '(空)'}` }, 404);
+            return;
+          } catch (error) {
+            log('记忆管理接口异常:', error?.stack ?? error);
+            sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
+            return;
+          }
+        }
+        // ── AI 图片管理端点（仅控制台可用）──────────────────────────────────
+        // 管的是「AI 从网上抓下来落盘的图片」：本地图库 / pixiv 样图 / B站帧缓存。
+        // 删除一律进回收站（state/image-trash/<批次>/），能整批或逐张还原，也可彻底清空；
+        // 这里同样**不接受 agent token**，免得 AI 把管理员的图库删了。
+        if (url.pathname === '/api/ai-images' || url.pathname.startsWith('/api/ai-images/')) {
+          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+          const action = url.pathname === '/api/ai-images' ? '' : url.pathname.slice('/api/ai-images/'.length);
+          try {
+            // 图片预览/下载：直接回字节流。控制台鉴权已在上面统一做过（浏览器 <img> 带 Cookie）。
+            if (req.method === 'GET' && action === 'file') {
+              const found = imageAdmin.fileFor({
+                source: String(url.searchParams.get('source') ?? '').trim(),
+                name: String(url.searchParams.get('name') ?? '').trim()
+              });
+              res.writeHead(200, {
+                'content-type': found.mime,
+                'content-length': String(found.bytes),
+                'Cache-Control': 'private, max-age=60',
+                'X-Content-Type-Options': 'nosniff'
+              });
+              const stream = fs.createReadStream(found.abs);
+              // 统计和真正读之间文件被删/被换（控制台正好删了它）时，别把异常抛到进程级
+              stream.on('error', () => { try { res.destroy(); } catch { /* 连接已断 */ } });
+              stream.pipe(res);
+              return;
+            }
+            if (req.method === 'GET' && (action === '' || action === 'inventory')) {
+              sendJson(imageAdmin.inventory());
+              return;
+            }
+            if (req.method === 'GET' && action === 'items') {
+              sendJson(imageAdmin.items({
+                source: String(url.searchParams.get('source') ?? '').trim(),
+                q: String(url.searchParams.get('q') ?? '').trim(),
+                sort: String(url.searchParams.get('sort') ?? 'time').trim(),
+                limit: Number(url.searchParams.get('limit')) || 300
+              }));
+              return;
+            }
+            if (req.method === 'GET' && action === 'trash') {
+              sendJson(imageAdmin.listTrash());
+              return;
+            }
+            // 补抓历史发过的图：GET 看进度，POST 启动（后台跑，接口立刻返回）
+            if (req.method === 'GET' && action === 'backfill') {
+              sendJson({ ok: true, backfill: sentBackfill, candidates: sentImageUrlCandidates().length });
+              return;
+            }
+            if (req.method !== 'POST') { sendJson({ ok: false, error: `不支持的请求：${req.method} ${url.pathname}` }, 405); return; }
+            const body = await readBody();
+            if (action === 'backfill') {
+              const started = startSentBackfill({ limit: body.limit, budgetMs: body.budgetMs });
+              sendJson({ ok: true, backfill: started, candidates: sentImageUrlCandidates().length, inventory: imageAdmin.inventory() });
+              return;
+            }
+            if (action === 'remove') {
+              const names = Array.isArray(body.names) ? body.names.map(String) : [String(body.name ?? '')].filter(Boolean);
+              const result = imageAdmin.remove({
+                source: String(body.source ?? '').trim(),
+                names,
+                reason: `控制台删除 ${names.length} 张`
+              });
+              if (result.removed?.length) log(`控制台：删除 AI 图片 ${result.removed.length} 张（回收站 ${result.trash}）`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'clear') {
+              const result = imageAdmin.clear({
+                source: String(body.source ?? '').trim(),
+                reason: '控制台清空该来源'
+              });
+              if (result.removed?.length) log(`控制台：清空图片来源 ${result.source}（${result.removed.length} 张 → 回收站 ${result.trash}）`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'forget') {
+              const result = imageAdmin.forget({
+                source: String(body.source ?? '').trim(),
+                olderThanDays: body.olderThanDays,
+                maxTotalMB: body.maxTotalMB,
+                reason: '控制台自然清理'
+              });
+              if (result.ok) log(`控制台：AI 图片自然清理 ${result.forgotten?.files ?? 0} 张（回收站 ${result.trash || '无'}）`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'restore') {
+              const result = imageAdmin.restore({
+                stamp: String(body.stamp ?? '').trim(),
+                items: Array.isArray(body.items) ? body.items : []
+              });
+              if (result.restored?.length) log(`控制台：从回收站还原 AI 图片 ${result.restored.length} 张`);
+              sendJson(result);
+              return;
+            }
+            if (action === 'purge') {
+              const result = imageAdmin.purge({ stamp: String(body.stamp ?? '').trim() });
+              log(`控制台：彻底删除回收站 ${result.purged?.batches ?? 0} 个批次 / ${result.purged?.files ?? 0} 张`);
+              sendJson(result);
+              return;
+            }
+            sendJson({ ok: false, error: `未知的图片管理动作：${action || '(空)'}` }, 404);
+            return;
+          } catch (error) {
+            log('图片管理接口异常:', error?.stack ?? error);
+            sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
+            return;
+          }
+        }
         // ── 图片/表情查询端点（MCP qq_get_message_images 走这里） ────────────
         if (req.method === 'GET' && url.pathname === '/api/images/message') {
           const key = String(url.searchParams.get('key') ?? '').trim();
@@ -7675,6 +8697,9 @@ async function main() {
           state.sessions = {};
           state.sessionPolicies = {};
           reverse.clear();
+          // 工作车道也一起退役/归档：不然清空工作区后它们仍活着，还会把结论回投到已清空的会话。
+          retireAllWorkLanes();
+          state.workSessions = {};
           collectors.clear();
           sendToolSucceededSessions.clear();
           pendingSendToolCalls.clear();
@@ -7766,8 +8791,31 @@ async function main() {
   // 待应答的提问/审批：convKey -> pending
   const pending = new Map(); // key -> { kind, rpcId, sessionId, ... }
 
-  // QQ 发送队列（顺序发送 + 间隔，避免触发频率限制）
-  let sendChain = Promise.resolve();
+  // QQ 发送队列：**按会话**串行（顺序发送 + 间隔，避免触发频率限制）。
+  //
+  // 为什么不是全局一条链：base64 图片走 WS 要推十几秒到几十秒（pixiv 原图 10~26MB），
+  // 全局链会把所有会话的文字/表情/图片全都堵在它后面 —— 表现就是「A 会话在发大图，
+  // B 会话问什么 AI 都没反应」。跨会话本来就不需要保序：顺序只对「同一个会话里
+  // 先文字后表情/先问后补」有意义。所以这里按 key 各排各的。
+  const sendChains = new Map(); // key -> Promise（该会话的发送队尾）
+  function chainFor(key) {
+    const k = String(key ?? '');
+    let chain = sendChains.get(k);
+    if (!chain) {
+      chain = Promise.resolve();
+      sendChains.set(k, chain);
+    }
+    return chain;
+  }
+  /** 更新队尾。吞掉 rejection 只是为了让下一条还能排上；错误由各自的上游 catch 负责记录。 */
+  function setSendChain(key, chain) {
+    const k = String(key ?? '');
+    const tail = chain.then(() => {}, () => {});
+    sendChains.set(k, tail);
+    // 会话发送链不无限增长：整条链结算后如果队尾还是它，就删掉表项。
+    tail.then(() => { if (sendChains.get(k) === tail) sendChains.delete(k); });
+    return chain;
+  }
   function redactKnownTokensOnly(text) {
     let s = String(text ?? '');
     for (const token of KNOWN_AGENT_TOKENS) {
@@ -7781,8 +8829,9 @@ async function main() {
     const safeMsg = redactKnownTokensOnly(msg);
     const [kind, id] = key.split(':');
     const parts = splitForQQ(safeMsg);
+    let chain = chainFor(key);
     for (const part of parts) {
-      sendChain = sendChain
+      chain = chain
         .then(async () => {
           assertSendAllowed();
           if (kind === 'private') await withTimeout(bot.sendPrivateMessage(Number(id), text(escapeCqText(part))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
@@ -7791,7 +8840,7 @@ async function main() {
         .catch((error) => log(`QQ 发送失败 (${key}):`, error?.message ?? error))
         .then(() => sleep(cfg.sendDelayMs));
     }
-    return sendChain;
+    return setSendChain(key, chain);
   }
 
   // ── 真人式分条发送 ──────────────────────────────────────────────────────
@@ -7906,7 +8955,7 @@ async function main() {
     return { main: main.filter(Boolean), followUp: null };
   }
 
-  // 分条发送：与 sendToQQ 共用同一 sendChain，严格顺序；条间随机间隔，
+  // 分条发送：与 sendToQQ 共用本会话的发送链，严格顺序；条间随机间隔，
   // 有概率使用长间隔（错落感）；最后一条后不再 sleep。
   function sendBurstToQQ(key, messages, socialCfgOrMin, maybeMax) {
     const assertSendAllowed = captureSendGuard(key);
@@ -7925,10 +8974,11 @@ async function main() {
     }
 
     const sent = [];
+    let chain = chainFor(key);
     for (let i = 0; i < messages.length; i++) {
       const msg = redactKnownTokensOnly(messages[i]);
       const isLast = i === messages.length - 1;
-      sendChain = sendChain
+      chain = chain
         .then(async () => {
           assertSendAllowed();
           if (kind === 'private') await withTimeout(bot.sendPrivateMessage(Number(id), text(escapeCqText(msg))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
@@ -7939,10 +8989,10 @@ async function main() {
       if (!isLast) {
         const useLong = longProb > 0 && Math.random() < longProb;
         const delay = useLong ? randInt(longMin, longMax) : randInt(min, max);
-        sendChain = sendChain.then(() => sleep(delay));
+        chain = chain.then(() => sleep(delay));
       }
     }
-    return sendChain.then(() => sent);
+    return setSendChain(key, chain).then(() => sent);
   }
 
 
@@ -8373,11 +9423,12 @@ async function main() {
     const [kind, id] = key.split(':');
     const sent = [];
     const failed = [];
+    let chain = chainFor(key);
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       const useReply = i === 0 ? replyToMessageId : null;
       const useAt = i === 0 ? atUserId : null;
-      sendChain = sendChain
+      chain = chain
         .then(async () => {
           assertSendAllowed();
           await onebotSend(kind, id, msg, useReply, useAt);
@@ -8389,10 +9440,10 @@ async function main() {
         });
       if (i < delays.length) {
         const d = delays[i];
-        sendChain = sendChain.then(() => sleep(d));
+        chain = chain.then(() => sleep(d));
       }
     }
-    return sendChain.then(() => {
+    return setSendChain(key, chain).then(() => {
       if (failed.length > 0) {
         const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
         err.sent = sent.slice();
@@ -9024,6 +10075,39 @@ async function main() {
     return lines.join('\n');
   }
 
+  /**
+   * 「下次唤醒时，AI 到底会看到哪些记忆」——控制台预览用。
+   * 只读，不改任何状态；和真正拼提示词用的是同一个 formatMemoryV2，
+   * 所以这里看到什么，唤醒时就是什么（成员备注按设计不注入，单独标出来）。
+   */
+  function memoryPreview(keys = []) {
+    const ranked = keys
+      .filter((k) => /^(group|private):\d+$/.test(k))
+      .map((k) => ({ key: k, st: socialV2.conversations.get(k) }))
+      .filter((x) => x.st)
+      .sort((a, b) => Number(b.st.lastIncomingAt || 0) - Number(a.st.lastIncomingAt || 0))
+      .slice(0, 12);
+    const blocks = ranked.map(({ key, st }) => {
+      const text = formatMemoryV2(st);
+      const remarks = listMemberRemarks(memberStore, key, { limit: 50 });
+      return {
+        key,
+        text,
+        chars: text.length,
+        tokens: estimateMemoryTokens(text),
+        remarkCount: remarks.allTotal,
+        lastIncomingAt: Number(st.lastIncomingAt) || 0
+      };
+    });
+    return {
+      ok: true,
+      blocks,
+      totalChars: blocks.reduce((sum, b) => sum + b.chars, 0),
+      totalTokens: blocks.reduce((sum, b) => sum + b.tokens, 0),
+      note: '成员备注按设计不注入提示词（AI 需要时自己查），所以不计入上面的 token。'
+    };
+  }
+
   function appendMemoryV2(st, category, content, extra = {}) {
     if (!st) return;
     const text = redactKnownTokensOnly(String(content ?? '')).trim();
@@ -9094,6 +10178,185 @@ async function main() {
   }
 
   loadSocialV2State();
+
+  // ── 入站内容策略（越线请求不让 AI 思考）────────────────────────────────
+  // 命中就由桥接自己回一句固定短话（或静默），消息不进未读、不触发唤醒。
+  // 配置在 config.json 的 `moderation` 段；改完重启桥接生效。见 src/content-filter.js。
+  const contentGate = createContentGate(cfg.moderation);
+  if (contentGate.config.enabled && contentGate.config.patterns.length) {
+    log(`[moderation] 入站内容策略已启用：${contentGate.config.patterns.length} 条规则，命中后${contentGate.config.action === 'silent' ? '静默不回复' : '回固定话'}`
+      + (contentGate.config.cooldownMs ? `（同会话同规则冷却 ${Math.round(contentGate.config.cooldownMs / 1000)}s）` : ''));
+  } else {
+    log('[moderation] 入站内容策略未启用（config.json 的 moderation.enabled / patterns）');
+  }
+
+  // ── AI 记忆管理（控制台「AI 记忆」分区）────────────────────────────────
+  // 把散在各状态文件里的记忆收成一个统一清单 + 增删改查 + 自然遗忘 + 备份回滚。
+  // 所有读写都走**运行中的内存态**（getter/setter 传进去），改完立刻生效、不用重启；
+  // 破坏性操作先自动备份，控制台可一键回滚。详见 src/memory-admin.js 顶部说明。
+  // DSH 的长期记忆文件（AGENTS.md 等）只登记位置、不代管：桥接没有权限也不该替 AI 改它。
+  // 解析顺序：DSH_HOME（可能是 ~/.dsh 本身，也可能就是 HOME）→ HOME/.dsh。
+  // 别直接拼 `${home}/.dsh`：DSH_HOME 本来就常被设成 /root/.dsh，拼出来会变成 /root/.dsh/.dsh。
+  const dshRoot = (() => {
+    const explicit = String(process.env.DSH_HOME || '').trim();
+    if (explicit && /(^|[\\/])\.dsh[\\/]?$/.test(explicit)) return explicit.replace(/[\\/]+$/, '');
+    if (explicit) return path.join(explicit, '.dsh');
+    const home = String(process.env.HOME || process.env.USERPROFILE || '').trim();
+    return home ? path.join(home, '.dsh') : '';
+  })();
+  const memoryAdmin = createMemoryAdmin({
+    stateDir: STATE_DIR,
+    socialFile: SOCIAL_V2_FILE,
+    memberRemarksFile: MEMBER_REMARKS_FILE,
+    slangFile: SLANG_FILE,
+    knowledgeFile: KNOWLEDGE_FILE,
+    stickerFile: STICKER_FILE,
+    // DSH 的长期记忆文件只登记位置、不代管（上面 dshRoot 已把 DSH_HOME 归一成 ~/.dsh）。
+    agentsFile: dshRoot ? path.join(dshRoot, 'AGENTS.md') : '',
+    social: socialV2,
+    memberStore,
+    saveSocial: saveSocialV2State,
+    saveMembers: saveMemberStoreSafe,
+    getSlang: () => slangEntries,
+    setSlang: (list) => { slangEntries = list; saveSlangStore(); },
+    getKnowledge: () => knowledgeEntries,
+    setKnowledge: (list) => { knowledgeEntries = list; saveKnowledgeStore(); markKnowledgeDirty('控制台记忆管理'); },
+    getStickers: () => stickerEntries,
+    setStickers: (list) => { stickerEntries = list; saveStickerStoreSafe(); },
+    sessionMap: () => state.sessions || {},
+    log
+  });
+  // 从备份回滚之后，内存里的这些集合要跟着一起换掉，否则页面看到的还是旧数据。
+  function reloadMemoryState(files = []) {
+    if (files.includes('social-v2.json')) loadSocialV2State();
+    if (files.includes('member-remarks.json')) memberStore = loadMemberStore(MEMBER_REMARKS_FILE);
+    if (files.includes('slang.json')) slangEntries = loadSlang(SLANG_FILE);
+    if (files.includes('knowledge.json')) { knowledgeEntries = loadKnowledge(KNOWLEDGE_FILE); markKnowledgeDirty('记忆回滚'); }
+    if (files.includes('stickers.json')) stickerEntries = loadStickerStore(STICKER_FILE);
+  }
+
+  // AI 图片管理：AI 从网上抓下来落盘的图片（本地图库 / pixiv 样图 / B站帧缓存）。
+  // 与记忆同属「AI 的资产」，但删除走回收站而不是 JSON 快照——图片几十上百 MB，
+  // 每次动手都复制一份不现实（详见 src/image-admin.js 顶部说明）。
+  // 本地图库目录直接取 resolveImageConfig()，管理员在控制台改了路径，两边永远一致；
+  // config.json 里显式配了 imageAdmin.sources 就用它（e2e / 多机部署把图库指到别的盘）。
+  const imageAdminSources = (() => {
+    const defaults = defaultImageSources({ root: ROOT, stateDir: STATE_DIR, libraryDir: resolveImageConfig().libraryDir });
+    const custom = cfg.imageAdmin?.sources;
+    return Array.isArray(custom) && custom.length ? custom : defaults;
+  })();
+  const imageAdmin = createImageAdmin({
+    root: ROOT,
+    stateDir: STATE_DIR,
+    sources: imageAdminSources,
+    trashMaxBytes: Math.max(0, Number(cfg.imageAdmin?.trashMaxMB) || 500) * 1024 * 1024,
+    log,
+    // 图库文件是内存缓存的（loadImageLibrary 30s TTL）：这里删/还原之后立刻失效，
+    // 否则 AI 在自己的 TTL 窗口里还能「看见」一张已经删掉的图。
+    onMutate: ({ sources: touched = [] } = {}) => {
+      if (!touched.length || touched.includes('library')) imageLibraryCache = { at: 0, items: [] };
+    }
+  });
+  // AI 发出去的网络图在本机留一份（state/sent-images/，同时是「AI 图片」的一个受管来源）。
+  // 不这么做的话，「群里发过的那张图」本地再也找不回来——字节只在内存里过一遍就没了。
+  const sentImageDir = path.join(STATE_DIR, 'sent-images');
+  const sentImages = createSentImageStore({
+    dir: sentImageDir,
+    maxBytes: Math.max(0, Number(cfg.imageAdmin?.sentImagesMaxMB) || 300) * 1024 * 1024,
+    log
+  });
+
+  // ── 补抓历史发过的图 ────────────────────────────────────────────────
+  // 这次改动之前，图片字节只在内存里过一遍，本地什么都没留。能找回的线索只有两处：
+  //   ① 会话的 recentMessages 里自己发过的带图消息（有 URL + 会话 + 时间）；
+  //   ② state/bridge.log 的 `[image] ... https://...` 行（更早、已经滚出 recentMessages 的也在）。
+  // 重新下载走的是与发图完全相同的回退链（pixiv 会自己走代理/换档位），所以大概率能拿回来。
+  // 做成后台任务：一张图可能要几秒到几十秒，做成同步接口浏览器早就超时了。
+  const sentBackfill = {
+    running: false, startedAt: 0, finishedAt: 0,
+    total: 0, done: 0, fetched: 0, failed: 0, bytes: 0, errors: [], lastError: ''
+  };
+
+  /** 历史发图 URL 候选（按 URL 去重，带上能拿到的上下文）。 */
+  function sentImageUrlCandidates() {
+    const out = new Map();
+    const add = (url, meta = {}) => {
+      const clean = String(url ?? '').trim();
+      if (!/^https?:\/\//i.test(clean)) return;
+      if (!out.has(clean)) out.set(clean, { url: clean, key: '', at: 0, delivered: null, ...meta });
+    };
+    // ① 会话最近消息（顺序即时间，早的在前，重下时按时间从旧到新）
+    for (const [key, st] of socialV2.conversations) {
+      for (const m of Array.isArray(st?.recentMessages) ? st.recentMessages : []) {
+        if (!m?.isSelf || !Array.isArray(m.media)) continue;
+        for (const media of m.media) {
+          add(media?.url, { key, at: Number(m.time) || 0, delivered: m.undelivered === true ? false : true });
+        }
+      }
+    }
+    // ② 桥接日志（只读文件，不依赖运行中的内存态；日志滚动前的旧行也能拿到）
+    try {
+      const lines = fs.readFileSync(BRIDGE_LOG, 'utf8').split('\n').slice(-20000);
+      for (const line of lines) {
+        if (!line.includes('[image]')) continue;
+        const matched = /(https?:\/\/[^\s"'）)]+)/.exec(line);
+        if (matched) add(matched[1]);
+      }
+    } catch { /* 日志不存在也没关系，会话记录够用 */ }
+    return [...out.values()];
+  }
+
+  /**
+   * 启动后台补抓。同一时刻只允许一个任务；已经在跑就直接返回当前状态。
+   * @param {{limit?:number, budgetMs?:number}} [opts]
+   */
+  function startSentBackfill({ limit = 60, budgetMs = 10 * 60 * 1000 } = {}) {
+    if (sentBackfill.running) return sentBackfill;
+    const records = sentImages.records();
+    const knownUrls = new Set(records.map((r) => String(r.url || '')).filter(Boolean));
+    const knownArt = new Set(records.map((r) => String(r.artworkId || '')).filter(Boolean));
+    const todo = sentImageUrlCandidates().filter((c) => {
+      if (knownUrls.has(c.url)) return false;
+      const art = pixivArtworkIdFromAnyUrl(c.url);
+      return !(art && knownArt.has(String(art)));
+    });
+    Object.assign(sentBackfill, {
+      running: true, startedAt: Date.now(), finishedAt: 0,
+      total: Math.min(todo.length, Math.max(0, Number(limit) || 0)) || todo.length,
+      done: 0, fetched: 0, failed: 0, bytes: 0, errors: [], lastError: ''
+    });
+    log(`[sent-images] 开始补抓历史发过的图：候选 ${todo.length} 张，本次最多 ${sentBackfill.total} 张`);
+    (async () => {
+      const deadline = Date.now() + Math.max(10000, Number(budgetMs) || 600000);
+      for (const cand of todo.slice(0, sentBackfill.total)) {
+        if (Date.now() > deadline) { sentBackfill.lastError = '到时间预算了，剩下的下次再补'; break; }
+        try {
+          const resolved = await resolveImageBuffer(cand.url, { source: 'url' });
+          const saved = recordSentImage({ key: cand.key || '（历史）', resolved, url: cand.url, kind: 'backfill', delivered: cand.delivered, at: cand.at });
+          sentBackfill.fetched += 1;
+          sentBackfill.bytes += resolved.buffer.length;
+          if (saved) log(`[sent-images] 补回 ${cand.url.slice(0, 90)}（${Math.round(resolved.buffer.length / 1024)}KB）`);
+        } catch (error) {
+          sentBackfill.failed += 1;
+          const message = `${cand.url.slice(0, 90)}：${error?.message ?? error}`;
+          if (sentBackfill.errors.length < 8) sentBackfill.errors.push(message);
+          log(`[sent-images] 补抓失败 ${message}`);
+        } finally {
+          sentBackfill.done += 1;
+        }
+      }
+      sentBackfill.running = false;
+      sentBackfill.finishedAt = Date.now();
+      log(`[sent-images] 补抓结束：成功 ${sentBackfill.fetched} / 失败 ${sentBackfill.failed}（${Math.round(sentBackfill.bytes / 1024)}KB）`);
+      try { onMutateSentImages?.(); } catch { /* 刷新缓存失败不影响结果 */ }
+    })();
+    return sentBackfill;
+  }
+
+  /** 补抓落盘后让「AI 图片」的图库缓存失效（sentImages 不在 loadImageLibrary 里，这里只为将来复用）。 */
+  function onMutateSentImages() {
+    imageLibraryCache = { at: 0, items: [] };
+  }
 
   // 启动时先按本地已保存的模式兜底一次。
   // 之前 currentMode 一直停在初始的 'chat'，只有 DSH 可达（checkDsh → refreshMode）才会被纠正——
@@ -10061,7 +11324,9 @@ async function main() {
 
   // 记录机器人自己发出的图片/表情到上下文。
   // 必要性：自消息默认不会被网关回传，不主动记录的话，用户引用这张图时 AI 只能「看不到」。
-  function recordSelfMediaV2(key, { text, kind, messageId, media }) {
+  // `undelivered`：发送未确认送达（QQ 静默吞图）时标上，用来把它排除出「最近发过的图」——
+  // 没落地的图不该被防重复挡住：群友说「补一张」时 AI 得能再试一次（然后拿到如实报错）。
+  function recordSelfMediaV2(key, { text, kind, messageId, media, undelivered = false }) {
     try {
       const st = getSocialV2State(key);
       const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -10076,6 +11341,7 @@ async function main() {
         media: Array.isArray(media) ? media : [],
         hasMedia: Array.isArray(media) && media.length > 0,
         forwardIds: [],
+        ...(undelivered ? { undelivered: true } : {}),
         time: Date.now()
       });
       if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
@@ -10273,6 +11539,14 @@ async function main() {
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
     const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
+    // 这一条是拿真实事故换来的：模型写好了回复文本、以为已经发出去，转头去等待/潜水，
+    // 结果 QQ 那边一个字都没收到（reserved2 的文本不自动转发）。每轮都注入，且不依赖 preset，
+    // 免得挂载的是旧版 preset 时又回到「写了不回」。
+    const replyLine = '【发言必须走工具】你的文本输出永远只是思考、不会到达 QQ。要说话就必须调用发送工具'
+      + '（qq_send_message / qq_reply / qq_send_burst / qq_send_sticker / qq_send_image 之一）；'
+      + '**"不回"也不是沉默**——就算你决定不接话、要拒、要划走，也必须先发一条（哪怕一句短的），再 qq_mark_read / qq_set_wake_config。'
+      + '没调用任何发送工具就 mark_read / 设潜水 / 结束回合 = 对方等不到任何回话，是最严重的失误；'
+      + '收尾前自检一次：这一回合我真的发出去了吗？另外别拿 qq_wait_for_messages 代替回复——等待只用来判断对方说完没，想好了就直接发。\n\n';
     const lastMsg = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])].reverse().find((m) => m && !m.isSelf);
     const lastAiMin = st.lastAiReplyAt ? Math.max(0, Math.round((Date.now() - Number(st.lastAiReplyAt)) / 60000)) : null;
     const statusBits = [`未读 ${(st.unread || []).length} 条`];
@@ -10312,7 +11586,7 @@ async function main() {
           + repeatReminders.slice(0, 5).map((r) => `- ${r.question}（已问 ${r.hitCount} 次，${r.askerCount} 个人）`).join('\n') + '\n\n';
       }
     }
-    const base = roleLine + tokenLine + antiAiLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    const base = roleLine + tokenLine + antiAiLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -10363,8 +11637,13 @@ async function main() {
       // 只认「turn/collector 标记已超过 busyRecoveryMs 且当前不在长轮询」这一种，
       // 确认卡死就立刻清标记并继续往下投递，不再白等。
       const staleTurn = staleTurnMarkerV2(key, busyMarkers);
-      if (staleTurn) {
-        forceClearBusyV2(key, `stale ${staleTurn}`);
+      // 兜底 2：DSH 侧明确报告该会话空闲时，内存里的 collector / promptQueue.running /
+      // pendingWakeKey 只可能是残留（真在跑回合时 DSH 必然 running=true）。staleTurnMarkerV2
+      // 依赖 turn 起点，而桥接中途重启正好会丢掉它 —— 那种情况下这里必须救回来，
+      // 否则表现就是「AI 明明在线，却把每条消息都判成会话繁忙、永不回复」。
+      const staleByIdle = !staleTurn && await dshSessionIdleNow(state.sessions[key]);
+      if (staleTurn || staleByIdle) {
+        forceClearBusyV2(key, staleTurn ? `stale ${staleTurn}` : `DSH 会话空闲但忙标记残留（${busyMarkers.join('+')}）`);
         log(`[reserved2] 检测到残留忙标记（${busyMarkers.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
       } else {
         if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
@@ -10526,6 +11805,70 @@ async function main() {
     // 只有 turn 起点能证明“跑了多久”；只有 collector 而缺 turn 起点时不冒险打断。
     if (!started || Date.now() - started < timeoutMs) return '';
     return turnMarker;
+  }
+
+  /**
+   * 该会话在 DSH 侧是否确实空闲（没有正在跑的回合）。
+   *
+   * 用途：区分「真忙」与「忙标记残留」。桥接在回合中途重启、或 DSH 侧回合异常结束时，
+   * 内存里的 collector / promptQueue.running / pendingWakeKey 会永久留下，表现为
+   * 「会话繁忙，暂存唤醒原因」无限排队、AI 再也不回话。`staleTurnMarkerV2` 只能靠
+   * turn 起点证明卡死，而重启恰好会丢掉 turn 起点——此时这个只读探针是唯一能证明
+   * 「DSH 侧其实没人干活」的依据。
+   *
+   * 30 秒缓存；查询失败或字段缺失一律视为「不确定 → 不清理」，宁可多等看门狗，
+   * 也不能误清一个真在跑的回合。
+   */
+  let sessionIdleCache = { at: 0, ok: false, ids: new Set() };
+  async function dshSessionIdleNow(sessionId) {
+    if (!sessionId) return false;
+    const now = Date.now();
+    if (now - sessionIdCache.at > 30000) {
+      try {
+        const list = unwrap(await api.sessions.list({}), 'session.list');
+        const ids = new Set();
+        for (const item of list.items ?? []) {
+          if (item && item.sessionId && item.running === false) ids.add(String(item.sessionId));
+        }
+        sessionIdCache = { at: now, ok: true, ids };
+      } catch (error) {
+        sessionIdCache = { at: now, ok: false, ids: new Set() };
+        log(`[reserved2] 查询 DSH 会话状态失败（忙标记残留检测本次不清理）：${error?.message ?? error}`);
+      }
+    }
+    return sessionIdCache.ok && sessionIdCache.ids.has(String(sessionId));
+  }
+
+  /**
+   * 启动后清一次残留忙标记。
+   *
+   * 启动时 `state.sessions` 是刚从磁盘读回来的映射，而 v2TurnStartAt / collectors /
+   * promptQueues / pendingWakeKeys 全在内存里——所以这里其实没有「可残留的标记」。
+   * 真正的价值是**自检**：万一将来有别的路径在启动阶段写入了标记，或 DSH 侧
+   * 明确报告某会话空闲却仍被本地判定为忙，这里会立刻发现、清掉并留一条可读日志。
+   */
+  async function sweepResidualBusyV2OnStart() {
+    try {
+      const idleSid = new Set();
+      try {
+        const list = unwrap(await api.sessions.list({}), 'session.list');
+        for (const item of list.items ?? []) {
+          if (item && item.sessionId && item.running === false) idleSid.add(String(item.sessionId));
+        }
+      } catch (error) {
+        log(`[reserved2] 启动自检：查询 DSH 会话状态失败，跳过（下次收到消息时还会再判）：${error?.message ?? error}`);
+        return;
+      }
+      for (const key of socialV2.conversations.keys()) {
+        const markers = busyMarkersV2(key, getSocialV2State(key));
+        if (!markers.length) continue;
+        const sid = state.sessions[key];
+        if (!sid || !idleSid.has(String(sid))) continue;
+        forceClearBusyV2(key, `启动自检：DSH 报告空闲但忙标记残留（${markers.join('+')}）`);
+      }
+    } catch (error) {
+      log(`[reserved2] 启动自检失败（不影响运行）：${error?.message ?? error}`);
+    }
   }
 
   const WAKE_PRIORITY = {
@@ -10897,6 +12240,21 @@ async function main() {
           + (quotedMedia.length ? `（要看内容请调用 qq_get_message_images，messageId 传 ${quotedId}）` : '')
           + '\n';
       }
+      // ── 入站内容策略：越线请求在进队列之前就拦掉 ──────────────────────
+      // 拦下的消息不进未读、不触发唤醒、不写进会话上下文——模型那边连它存在都不知道，
+      // 自然不会有「思考 → 拒绝 → 对方还是没收到」这一串浪费。见 src/content-filter.js。
+      const moderation = contentGate.check(plainContent, { key });
+      if (moderation.blocked) {
+        if (moderation.reply) {
+          await sendToQQ(key, moderation.reply);
+          appendActivity(`${key} [reserved2] 已拦截越线请求并回固定话（命中「${moderation.matched}」）`
+            + (contentGate.config.logMatch ? `：${plainContent.slice(0, 80)}` : ''));
+        } else {
+          appendActivity(`${key} [reserved2] 已拦截越线请求（${moderation.throttled ? '冷却中' : '静默'}，命中「${moderation.matched}」）`
+            + (contentGate.config.logMatch ? `：${plainContent.slice(0, 80)}` : ''));
+        }
+        return;
+      }
       appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId, cardInfo);
       // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
@@ -10935,6 +12293,16 @@ async function main() {
         ? `${event.sender?.card || event.sender?.nickname || String(event.user_id)}：${textContent}`
         : textContent)
       + mediaHintFor(key, messageRef, mediaList);
+
+    // 一代模式（chat / reserved）同样先过内容策略：越线请求不该进模型。
+    // 管理员不例外——拦的是「这类请求」，不是「谁发的」。
+    const moderationLegacy = contentGate.check(plainContent, { key });
+    if (moderationLegacy.blocked) {
+      if (moderationLegacy.reply) await sendToQQ(key, moderationLegacy.reply);
+      appendActivity(`${key} 已拦截越线请求（命中「${moderationLegacy.matched}」${isOwner ? '，来自管理员' : ''}）`
+        + (contentGate.config.logMatch ? `：${plainContent.slice(0, 80)}` : ''));
+      return;
+    }
 
     appendActivity(`${key} ${isOwner ? '管理员' : '群友'} ${event.sender?.nickname || event.user_id}：${textContent.slice(0, 80)}`);
 
@@ -11239,6 +12607,12 @@ async function main() {
         for await (const envelope of api.events.mux({})) {
           const frame = envelope.payload;
           if (frame.type === 'session/event') {
+            // 工作车道会话：单独收集，回合结束后把结论回投聊天会话（不直接对 QQ 发言）。
+            // 必须放在 reverse 之前判断：工作车道的 sessionId 不在 reverse 里。
+            if (workSessions.has(frame.sessionId)) {
+              handleWorkLaneFrame(frame);
+              continue;
+            }
             const key = reverse.get(frame.sessionId);
             if (!key) {
               // 黑话学习会话：只收集 turn，不发送 QQ，并唤醒等待中的学习任务。
@@ -11647,6 +13021,10 @@ async function main() {
         // WebSocket 正常关闭和异常中断都会走到这里；必须清掉旧 turn 相关状态，
         // 否则重连后旧 collector/标记残留会导致回复重复累加或误判。
         collectors.clear(); // 清除旧 turn collector，避免重连后残留导致重复累加
+        // 工作车道同理：collector/任务表都清掉，否则重连后车道会被判成永久「忙」而再也接不了活。
+        // key 归属在 workReverse 里没丢，所以 DSH 侧真跑完的回合仍能正常回投结论。
+        workCollectors.clear();
+        workTasks.clear();
         social.silentTurns.clear(); // 清除未消费的摘要静默名额，避免重连后吞掉正常回复
         sendToolSucceededSessions.clear();
         pendingSendToolCalls.clear();
@@ -11706,6 +13084,7 @@ async function main() {
   }
   startDshWatch();
   startBusyWatchdogV2();
+  void sweepResidualBusyV2OnStart();
   startConsoleServer();
 
   await pumpMux();

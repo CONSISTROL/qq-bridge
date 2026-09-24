@@ -404,10 +404,20 @@ const CFG_SCHEMA = {
       { path: 'libraryDir', label: '本地图库目录', type: 'text', hint: '相对仓库根目录，默认 assets/stickers' },
       { path: 'maxBytes', label: '单图体积上限', type: 'number', factor: 1048576, unit: 'MB', step: 0.5, hint: '建议与发图功能保持一致' },
       { path: 'repeatGuardMs', label: '防重复发图窗口', type: 'number', factor: 60000, unit: '分钟', step: 5, hint: '同一张图（按 pixiv 作品 id / URL）在这段时间内不再发第二次：搜图结果里会滤掉，qq_send_image 也会直接拒绝。0 = 关闭' },
+      { path: 'deliverCheckMs', label: '图片送达确认时限', type: 'number', factor: 1000, unit: '秒', step: 5, hint: '发图后用 get_msg 确认 QQ 真的收下了：超时未确认会自动重发一次，仍不行就如实报失败（不再让 AI 拿「接口成功」当「已发出」）。QQ 图片审核会静默吞掉露骨图，这个检查就是为了不再假成功。0 = 关闭' },
+      { path: 'deliverCheckFastMs', label: '回合内最多等送达确认', type: 'number', factor: 1000, unit: '秒', step: 1, hint: '只等这一小段就把回合还给 AI：绝大多数图 1~2 秒内就能确认；没确认出来的转后台继续查，绝不为了等回执把整条会话卡住。只有「确实查到没送达」才会自动重发一次（探针没打通时不会重发，那正是重复图的来源）' },
       { path: 'maxPerMinute', label: '每分钟上限', type: 'number' },
       { path: 'maxPerHour', label: '每小时上限', type: 'number' },
       { path: 'imageReferer', label: '远程抓图 Referer', type: 'text', hint: 'B 站图床防盗链用' },
       { path: 'refererAllow', label: '允许抓取的站点', type: 'list', hint: '每行一个 host/origin；留空=不限制（仍受 SSRF 防护）' }
+    ]
+  },
+  work: {
+    title: '工作车道（长任务并行）',
+    desc: '作用于 qq_run_task。一个 QQ 会话只对应一个 DSH session，而 DSH 同一时刻只跑一个 turn——pixiv 取图（上限 110s）、十几 MB 大图发送这类慢活会把整条会话堵住，群里再问什么都得等它跑完。工作车道让慢活另开一条独立会话跑，投递立即返回、聊天会话保持随时可应答；跑完结论自动回投给主 AI，由它决定怎么跟群友说。',
+    fields: [
+      { path: 'enabled', label: '启用工作车道', type: 'bool' },
+      { path: 'maxSessions', label: '每个会话最多几条车道', type: 'number', hint: '同时能并行几个长任务。占满后新任务会排队（仍然不阻塞聊天），建议 2；上限 8' }
     ]
   },
   sticker: {

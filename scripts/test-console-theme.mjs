@@ -31,12 +31,14 @@ function check(name, fn) {
 console.log('控制台主题测试\n');
 
 // ── 0. 结构：外壳不内联样式，样式与脚本各自独立加载 ─────────────────
+//    引用必须是**相对路径**（不带开头的 /）：外壳被反代在子路径下时要按当前页面
+//    解析，根绝对 `/console/...` 会跑到反代自己的根上去（见 core/api.js 的 relativeUrl）。
 check('外壳仍是默认浅色 <html data-theme="light">', () => assert.match(html, /<html[^>]*data-theme="light"/));
 check('外壳外链独立样式表（不再内联 <style>）', () => {
-  assert.match(html, /<link rel="stylesheet" href="\/console\/style\.css">/);
+  assert.match(html, /<link rel="stylesheet" href="console\/style\.css">/);
   assert.ok(!html.includes('<style>'), '外壳里不该再有内联 <style>');
 });
-check('外壳以 ES module 加载入口脚本', () => assert.match(html, /<script type="module" src="\/console\/app\.js"><\/script>/));
+check('外壳以 ES module 加载入口脚本', () => assert.match(html, /<script type="module" src="console\/app\.js"><\/script>/));
 
 // ── 1. 结构：有两套主题变量块 ───────────────────────────────────────
 check('存在默认 :root 变量块', () => assert.ok(/:root\s*\{/.test(style)));

@@ -46,6 +46,42 @@ export function promptForToken() {
   return t.trim();
 }
 
+// 当前页面的挂载前缀（反代子路径）。取 `<base>` / 文档地址的目录部分：
+//   直连 3100            → '/'
+//   /local-web/http/127.0.0.1:3100/#/ops → '/local-web/http/127.0.0.1:3100/'
+// baseURI 而不是 location.pathname：反代会注入 `<base href="<前缀>/">`，
+// 而 location.pathname 在某些挂法下会少一个结尾斜杠。
+function mountPrefix() {
+  try {
+    const p = new URL(document.baseURI).pathname;
+    return p.endsWith('/') ? p : p + '/';
+  } catch (e) {
+    return '/';
+  }
+}
+
+// 控制台可能被反代在**子路径**下（例如 https://anihub.xin/local-web/http/127.0.0.1:3100/），
+// 那时根绝对地址 `/api/...` 会跑出前缀、打到反代自己的接口上（实测返回
+// {"error":{"code":"NOT_FOUND","message":"接口不存在"}}）。所以这里统一把开头的 `/`
+// 去掉，让浏览器按**当前页面**解析：直连 3100 是 `/api/...`，子路径反代是 `<前缀>/api/...`。
+//
+// ⚠ 但反代（AniHub 的 local-web 代理，见其 rewriteLocalJavaScript）会把发出去的 JS 里
+// 的 `'/api/...'` 字面量**预先改写成** `'<前缀>/api/...'`。这时若还按「去掉开头 / 再相对
+// 解析」，前缀会被拼第二遍，整站接口全 404：
+//   `'/api/restart'` →（反代改写）`'<前缀>/api/restart'` →（这里去 / 相对解析）
+//   `<前缀><前缀>/api/restart` → {"ok":false,"error":"not found"}
+// 实测表现：控制台页面本身正常（HTML/JS 都是单前缀），但每个 /api 调用都 404，
+// 「运维 → 重启桥接」只会提示 not found，且 nginx 日志里是一条双前缀的 404。
+// 所以先判断「是不是已经带着当前挂载前缀」，是就原样用（它本身就是站点根下的绝对地址）
+// —— 前提是路径不带兜底前缀时，两种反代行为（改写 / 不改写）都能落到 `<前缀>/api/...`。
+export function relativeUrl(path) {
+  const raw = String(path ?? '');
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('//')) return raw; // 完整 URL / 协议相对，原样用
+  const prefix = mountPrefix();
+  if (prefix !== '/' && (raw === prefix.slice(0, -1) || raw.startsWith(prefix))) return raw; // 反代已改写，别再拼一遍
+  return raw.replace(/^\/+/, '');
+}
+
 export async function api(path, method = 'GET', body, _retried = 0) {
   const headers = {};
   if (body !== undefined && body !== null) headers['content-type'] = 'application/json';
@@ -54,7 +90,7 @@ export async function api(path, method = 'GET', body, _retried = 0) {
 
   let res;
   try {
-    res = await fetch(path, {
+    res = await fetch(relativeUrl(path), {
       method,
       headers,
       body: body !== undefined && body !== null ? JSON.stringify(body) : undefined

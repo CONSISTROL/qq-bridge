@@ -10,6 +10,9 @@ const tests = [
   'test-audit-setup.mjs', 'test-audit-setup-guards.mjs',
   'test-md-to-plain.mjs', 'test-slang-learn.mjs', 'test-mux-reconnect.mjs',
   'test-dsh-token-discovery.mjs',
+  // stop.sh 的兜底清理：只认真实的 node 进程，不能按命令行子串误杀调用方
+  // （实测 `node --check src/bridge.js && ./restart.sh` 会把执行它的 shell 杀掉）。
+  'test-stop-guard.mjs',
 ];
 let failed = 0;
 for (const test of tests) {

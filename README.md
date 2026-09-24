@@ -33,8 +33,12 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
   - `snowluma-host`（桥接自带 `src/mcp-host-server.js`）：`snowluma_status`（默认只读探活）；`start_snowluma` / `stop_snowluma` 需显式开启 `snowluma.allowProcessControl: true` 且仅在 `closed-agent` 模式可用
   - `web-search-safe`（桥接自带 `src/mcp-web-search-safe.js`）：只读 `web_search` / `web_fetch`（带 SSRF 防护），供 agent 查网络用语/资料
 - **会话模型**：每个 QQ 会话（私聊/群）对应一个独立的 DSH 会话，统一归组到「QQ 聊天」工作区（不再散落未分组）；映射持久化在 `state/sessions.json`
+- **工作车道（长任务并行）**：DSH 的一个会话同一时刻只跑一个 turn，所以慢工具（pixiv 取图链上限 110s、十几 MB 的图发送、B 站视频）会把整条 QQ 会话堵住——用户在这段时间里问什么都得等它跑完。桥接为此给每个 QQ 会话额外开**独立的「工作车道」会话**：AI 用 `qq_run_task` 把整条长任务投进去，**立即返回**，聊天会话马上就能继续接别的话；工作车道用同一套 preset 与 `qq_*` 工具（所以它能自己把图发出去），跑完把结论回投给聊天会话，由主 AI 决定怎么跟群友说。`config.json` 的 `socialV2.work`（`enabled` / `maxSessions`，默认 2 条车道）控制开关与并行度，超出上限的任务排队但仍不阻塞聊天。车道会话随聊天会话一起退役/归档，控制台「工具」行有开关与 ⚙ 参数
 - **性格定制**：QQ 会话默认使用 `qq-chat` agent preset（`~/.dsh/.agent-presets/qq-chat/agent.cordis.yml`），`reserved2` 使用 `qq-chat-v2`（`~/.dsh/.agent-presets/qq-chat-v2/agent.cordis.yml`）；人格与默认 DSH 一致（coding agent），仅附加 QQ 场景规则；**角色扮演**是可选机制——由控制台或管理端设置 `state/current-role.json` 注入（群友无法更改）
 - **本地控制台**：桥接自带 Web 控制台 `http://127.0.0.1:3100`——切换运行模式（chat / closed-agent / reserved / reserved2）、设置角色、静默开关、查看活动日志、修改管理员/控制台令牌，全部即时生效；访问需要令牌（`config.json` 的 `consoleToken`，未配置时自动生成并打印在启动日志；控制台内可手动修改或重新生成）。**令牌只需输入一次**：验证通过后桥接会给这个浏览器记一个 HttpOnly Cookie（30 天），之后刷新/重新打开都不再要求输入，控制台内可「忘记本机令牌」
+- **AI 记忆管理**：控制台左侧「AI 记忆」分区把 AI 的记忆收成一个可管理的入口——七类记忆（会话记忆 / 群成员备注 / 对话上下文与转录 / 黑话库 / 群知识库 / 收藏表情笔记 / DSH 侧长期记忆文件）各有多少条、约吃多少 token；能逐条改删、**钉住**重要的（批量清空与自然遗忘都会跳过）、按规则**自然遗忘**，并在任何破坏性操作前自动**备份、可一键回滚**；页面上还有「下次唤醒时 AI 会看到什么」的原文预览。详见 `docs/PROJECT_GUIDE.md` §5.6
+- **AI 图片管理**：控制台左侧「AI 图片」分区管的是 AI 从网上抓下来、落在本机的图——本地图库（`assets/stickers`）、pixiv 抓取样例（`state/pixiv-picks`）、B站视频帧缓存（`state/video-cache`）、**AI 发出去的网络图**（`state/sent-images`，发图/存表情时顺手落一份，以前只留在内存里、事后根本找不回来）各有几张、占多少盘，缩略图网格里能看图、搜索、逐张删、按来源清空，也能按「保留天数 / 总容量上限」**自然清理**；**删除一律先进回收站**（`state/image-trash/`，能整批或逐张还原，图库索引条目一起还原），确认不要了再彻底删除。改动之前发出去的图用「**补抓历史发过的图**」从会话记录与桥接日志里重新捞回（后台任务 + 进度显示）。控制台专属（带 agent token 一律 403），路径穿越与指向目录外的软链都会被拒。详见 `docs/PROJECT_GUIDE.md` §5.8
+- **入站内容策略（越线请求不让 AI 思考）**：`config.json` 的 `moderation` 段让这类请求**在进模型之前**就被桥接拦下——消息不进未读、不触发唤醒、不写进会话上下文，由桥接自己回一句固定短话（或静默）；AI 连「发生过这件事」都不知道，也就不会为它花一次推理。词表/正则、动作、回复文本、同会话冷却都可配。详见 `docs/PROJECT_GUIDE.md` §5.7
 - **运行模式**：
   - `chat`：白名单群 + 白名单私聊 → qq-chat 安全聊天
   - `closed-agent`：仅私聊 owner（config.json 的 ownerQQ，可在控制台设置）→ 完整工具（默认用 DSH 自己声明的默认 preset，即 `standard`；可在控制台「closed-agent preset」下拉改为任意 DSH preset），可在 QQ 上操控 DSH
@@ -235,6 +239,8 @@ qq-bridge/
 ## 已知限制
 
 - agent 回复在回合结束时一次性发送（不做流式逐字转发）；回复超过 4000 字自动分段
+- **一个 QQ 会话的「聊天」仍然一次只跑一个 turn**：工作车道解决的是「慢活挡住整条会话」，但同一个会话里两句话仍然按顺序处理（这是 DSH 会话模型的固有行为）。工作车道需要 DSH 重启一次才会出现在工具列表里（MCP server 是 DSH 启动时拉起的子进程）
+- **大图发送依赖 WS 通道**：base64 图片走 WS，写类动作的等待上限按 payload 体积放宽（约 512KB/s 估算，上限 180s）。超时**不再回退 HTTP 重发**——超时不等于失败，盲目重发正是重复发图的历史根因；此时桥接会如实返回「发送结果不确定」，并临时挡住同一张图的自动重试
 - 图片及部分表情可以通过安全下载接入多模态模型；语音/视频以及无法取得图片字节的消息仍使用占位文本
 - agent 的 Markdown 回复会转成纯文本（链接保留 `文字 (url)` 形式）
 - `@snowluma/sdk` 的 npm 发布版存在 ESM 扩展名 bug，本仓库通过 postinstall 补丁修复（见 `scripts/patch-snowluma-sdk.mjs`）

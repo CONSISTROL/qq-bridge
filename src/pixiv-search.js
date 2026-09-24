@@ -120,9 +120,37 @@ export function pixivArtworkIdFromAnyUrl(input) {
   return byArtwork ? byArtwork[1] : '';
 }
 
-/** bobopic 的缩略图直链（740px 左右、几十 KB）：原图超时/超体积时的最后兜底。 */
+/**
+ * pixiv 图片地址的清晰度档位：`original`（原图）> `large`（1200px 档）> `thumb`（方形裁切/小缩略图）。
+ * 认不出返回 ''。
+ *
+ * 为什么要分档：pixiv 搜索结果里的 `thumbUrl` 是 **250×250 的方形裁切图**
+ * （`i.pximg.net/c/250x250_80_a2/..._square1200.jpg`）。踩过一次：AI 拿 `thumbUrl` 来
+ * `qq_send_image`，桥接「尊重 AI 给的直链」把它当成功原样发出去，群里收到的是一张
+ * 250×250 方图——用户看到的症状是「返回的图像分辨率不对」。
+ * 所以取图前必须先认档位：缩略图永远不许插到原图 / 1200px 前面。
+ */
+export function pixivRenditionOf(input) {
+  const text = String(input ?? '').trim();
+  if (!text) return '';
+  // pixiv 缩略图代理：/c/250x250_80_a2/…、/c/540x540_70/… 尺寸由这段决定，一律算缩略图
+  if (/\/c\/\d+x\d+/i.test(text)) return 'thumb';
+  // bobopic 榜单镜像的缩略图（`img.pixivdaily.com/small/<id>.jpg-220`）
+  if (/img\.pixivdaily\.com\/[a-z0-9]+\//i.test(text)) return 'thumb';
+  // 尺寸后缀写在文件名里的（`_master1200` / `_custom1200` / `_square1200`）＝ 1200px 档
+  if (/(?:_master1200|_custom1200|_square1200)(?:\.\w+)?(?:[?#]|$)/i.test(text)) return 'large';
+  if (/img-original\//i.test(text)) return 'original';
+  if (/img-master\//i.test(text)) return 'large';
+  return '';
+}
+
+/**
+ * bobopic 的缩略图直链（220px 左右、几 KB）：原图全都拿不到时的最后兜底。
+ * 注意 `-220` 这个后缀是必须的：不带后缀的 `small/<id>.jpg` 现在返回 **404**
+ * （2026-09 实测），而榜单页里真实的 src 就是 `.../<id>.jpg-220`。
+ */
 export function pixivThumbUrl(id) {
-  return `${IMG_ORIGIN}/small/${String(id ?? '').trim()}.jpg`;
+  return `${IMG_ORIGIN}/small/${String(id ?? '').trim()}.jpg-220`;
 }
 
 /**
@@ -134,7 +162,7 @@ export async function searchPixivByTag(keyword, { limit = 6, rating = 'safe', wo
   if (!kw) throw new Error('关键词不能为空');
   const directId = artworkIdFromInput(kw);
   if (directId) {
-    const item = { id: directId, url: PIXIV_PROXY(directId), thumbUrl: `${IMG_ORIGIN}/small/${directId}.jpg`, title: '', tags: [], width: 0, height: 0, provider: 'pixiv', source: 'id', detailUrl: `https://www.pixiv.net/artworks/${directId}` };
+    const item = { id: directId, url: PIXIV_PROXY(directId), thumbUrl: pixivThumbUrl(directId), title: '', tags: [], width: 0, height: 0, provider: 'pixiv', source: 'id', detailUrl: `https://www.pixiv.net/artworks/${directId}` };
     const filtered = filterByRating([item], rating, words);
     return { mode: 'id', query: kw, pageUrl: '', ...filtered, keptCount: filtered.items.length, items: filtered.items.slice(0, limit) };
   }

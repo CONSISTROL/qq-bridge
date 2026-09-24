@@ -16,7 +16,8 @@
     } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略 */ }
   })();
 </script>
-<link rel="stylesheet" href="/console/style.css">
+<!-- 资源路径必须是相对当前页面的（不能以 / 开头）：控制台可能被反代在子路径下 -->
+<link rel="stylesheet" href="console/style.css">
 </head>
 <body>
   <div class="layout">
@@ -45,6 +46,6 @@
     </main>
   </div>
 
-  <script type="module" src="/console/app.js"></script>
+  <script type="module" src="console/app.js"></script>
 </body>
 </html>

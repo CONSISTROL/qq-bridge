@@ -62,6 +62,10 @@ qq-bridge/
 │   ├── slang-learner.js        # 黑话/网络用语学习模块
 │   ├── knowledge-store.js      # 群知识库（问题→答案，复用黑话的向量检索链路）
 │   ├── member-remarks.js       # 群成员备注库（AI 私有记忆，纯函数）
+│   ├── memory-admin.js         # AI 记忆管理（统一清单/增删/钉住/自然遗忘/备份回滚）
+│   ├── image-admin.js          # AI 图片管理（本机图片清单/删除/自然清理/回收站还原）
+│   ├── sent-images.js          # AI 发出去的网络图落盘（发送历史，供控制台回看/管理）
+│   ├── content-filter.js       # 入站内容策略（越线请求不进模型，纯函数）
 │   ├── image-allow.js          # 图片来源白名单 / Referer 判定（纯函数）
 │   ├── card-parse.js           # QQ 卡片消息（json/xml/share）解析（纯函数）
 │   ├── html-text.js            # HTML 正文/元信息抽取 + SPA 识别（纯函数）
@@ -82,6 +86,8 @@ qq-bridge/
 │           ├── social2.*       # 07 二代仿真模式（含工具级配置弹窗）
 │           ├── slang.*         # 08 黑话库 + 08b 本地向量检索
 │           ├── knowledge.*     # 09 群知识库（问题→答案）+ 检索调试
+│           ├── memory.*        # 10 AI 记忆 （七类记忆的清单/增删/钉住/备份回滚）
+│           ├── images.*        # 11 AI 图片 （本机图片的清单/删除/自然清理/回收站）
 │           ├── persona.*       # 05 人格 + 11 静默开关
 │           ├── security.*      # 10 白名单 + 12 安全通知 + 12b 控制台令牌
 │           ├── ops.*           # 13 测试发送 + 14 桥接控制
@@ -284,6 +290,120 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 必须 `socialV2.tools.setMemberCard=true` 才会注册，且同一人 15 秒冷却。它适合「正名」，不该拿来当记忆。
 控制台的「全部开启」按钮**不会**顺手打开它——这类默认关闭的高危工具只能一个个手动开。
 
+### 5.6 AI 记忆管理（控制台「AI 记忆」分区）
+
+AI 的记忆**不是一个文件**，而是七类东西拼起来的。它们各自的写入方、存放位置与「AI 什么时候会看到」都不一样：
+
+| # | 记忆 | 存放 | 谁写 | AI 什么时候看到 | 条数上限 |
+|---|---|---|---|---|---|
+| 1 | 进行中的话题 / 想说没说的话 / 对群友的印象 | `state/social-v2.json` 的 `activeTopics` / `pendingThoughts` / `memberImpressions` | AI（`qq_memory_append`） | **每次唤醒都注入提示词**（`formatMemoryV2`） | 各 20 / 20 / 名字数不限 |
+| 2 | 群成员备注（谁是谁） | `state/member-remarks.json` | AI（`qq_set_member_remark`）或控制台 | 不注入；AI 想认人时自己 `qq_get_member_remarks` 查 | 单会话 300 人 |
+| 3 | 对话上下文与原始转录 | `state/social-v2.json` 的 `recentMessages`/`unread` + `~/.dsh/sessions/<工作区>/<会话 id>/` | 桥接 / DSH | 唤醒时按需给 AI 看；转录由 DSH 自己管理 | recent 200 / unread 100 |
+| 4 | 黑话库（词 → 含义） | `state/slang.json` + `state/slang-vectors.json` | DSH 提取 + AI 提交 + 控制台确认 | 确认过的进提示词/语义检索 | — |
+| 5 | 群知识库（问题 → 答案） | `state/knowledge.json` + `state/knowledge-vectors.json` | AI（`qq_knowledge_submit`） | 有人问到相似问题时检索注入 | — |
+| 6 | 收藏表情与其含义笔记 | `state/stickers.json`（表情本身在 QQ 账号上） | AI（`qq_sticker_note`） | 选表情时参考 | — |
+| 7 | 长期记忆文件（`~/.dsh/AGENTS.md` 等） | DSH 工作区 | AI 自己 | DSH 每轮都读 | — |
+
+**第 7 类桥接不代管**（没有权限也不该替 AI 改），控制台只登记它的位置、行数与体积——想改请去 DSH 工作区。
+
+管理入口是控制台左侧「AI 记忆」分区（`🧷`），对应 `src/memory-admin.js` + `/api/memory*`（**只允许控制台**：
+带 `x-agent-token` 的请求一律 403，AI 自己的记忆工具走 `/api/socialV2/memory-*`）。它能做的事：
+
+- **清单**：七类记忆各有多少条、约吃多少 token；区分「每次唤醒注入 / 语义检索注入 / AI 主动查」，页面上还有「下次唤醒时 AI 会看到什么」的原文预览（和真正拼提示词是同一段代码 `formatMemoryV2`）。
+- **逐条查 / 改 / 删**：按类型 + 会话 + 关键词过滤；行内「忘掉」删单条，「忘掉选中」批量删，「清空这一类 / 清空该会话全部记忆」整片清。**逐条删除不受钉住保护**（那是你点名要删的那一条），批量清空/清空一整类默认跳过钉住的，只有勾上「清空时连钉住的一起」才会带上。
+- **钉住（pin）**：写进 `state/memory-pins.json`，之后所有「清空 / 自然遗忘」都跳过它——钉住是安全承诺，所以话题/想法的钉子用**稳定 pinId（数组下标）**而不是会改写的原文；条目本身没了的时候钉子自动摘除。
+- **自然遗忘**：按规则清理「本来就该自己消失」的东西——过期想法（默认 2h）、搁置话题（默认 24h）、长期没用过的表情笔记（默认 90 天），阈值可在页面上改。钉住的一律跳过；黑话库/知识库不会被它误伤。
+- **备份 / 回滚**：任何清空或遗忘之前自动打一份快照（`state/backups/memory-YYYYMMDD-HHMMSS/`，最多留 30 份，含 `social-v2.json` / `member-remarks.json` / `slang.json` / `knowledge.json` / `stickers.json`）；也可以随时手动「立即备份」。回滚会先给「当前状态」再打一份，所以回滚本身也可回滚；回滚前逐份校验 JSON，坏备份整份拒绝、绝不半途覆盖。`forget-user.sh` 建的备份同样会列在这里（标为「外部备份」）。
+- **API**：`GET /api/memory`、`GET /api/memory/items`、`GET /api/memory/preview`、`GET /api/memory/backups`、`POST /api/memory/{pin,remove,clear,forget,backup,restore}`。
+- **自检**：`npm run test:memory`（纯函数层，临时目录）与 `npm run test:memory:e2e`（起一个隔离桥接打真实 HTTP）。
+
+「要清干净某个人的全部痕迹」仍然用 `forget-user.sh`（它多做了会话解绑、DSH 转录删除、归档这些桥接之外的事）；
+控制台的这个分区负责的是「AI 记住了什么、逐条怎么改、怎么防手滑」。
+
+### 5.7 入站内容策略（越线请求不让 AI 思考）
+
+`src/content-filter.js` + `config.json` 的 `moderation` 段。**在消息进队列之前**判定：
+命中就由桥接自己回一句固定短话（或静默），消息**不进未读、不触发唤醒、不写进会话上下文**——
+模型连"发生过这件事"都不知道，也就不会有「思考 → 生成拒绝 → 对方还是没收到」那一串浪费。
+
+为什么需要它（真实事故）：有人在私聊里反复发同一类越线请求，模型每轮都完整思考一遍、
+生成一句拒绝，然后因为 reserved2 的文本不自动转发而一个字都没发出去，对方以为它不理人。
+提示词层的硬红线只能管"它怎么答"，管不了"它要不要为这件事花一次推理"——这一层才管得住。
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 总开关 |
+| `action` | `reply` | `reply` = 回一句固定话；`silent` = 完全不回（连提示都没有） |
+| `replyText` | `这个我不接，换一个吧` | `action=reply` 时由**桥接**发出去的原文（不经过模型） |
+| `matching` | `substring` | `substring` = 包含即命中；`regex` = 整串按正则（写错的正则会被跳过，不会误杀） |
+| `patterns` | 见 `DEFAULT_MODERATION` | 词/正则表；**显式传空数组 = 不拦**，不传 = 用默认表 |
+| `extraPatterns` | `[]` | 追加词（角色名一类歧义词写这里） |
+| `logMatch` | `false` | 是否把命中的原话写进活动日志（默认只记命中词，不落原话） |
+| `cooldownMs` | `0` | 同一会话同一规则命中后的固定回复冷却（防刷屏） |
+
+默认词表是**保守**的：只收「明确越线」的词（`萝莉`/`幼女`/`正太`/`中出`/`未成年`…），
+字符名一类歧义词不默认拦（否则「来张可莉的图」这种正常请求会被误杀）。要拦由管理员写进
+`extraPatterns`。判定是字面级的，不追求语义理解——宁可漏杀，也不误杀正常聊天。
+
+这一层和 preset 里的硬红线是**纵深关系**：拦下来的是"不让它想"，漏过去的仍然由模型按红线拒。
+两处都要有，缺一个都会出现前面那种事故。改 `config.json` 后需要重启桥接生效。
+
+自检：`npm run test:moderation`（纯函数 + 隔离桥接真跑一遍入站：确认消息没进未读、没触发唤醒、桥接回了固定话）。
+
+### 5.8 AI 图片管理（控制台「AI 图片」分区）
+
+AI 不只是「记住」东西，还会**往本机落图**。这些图以前只有「写」没有「管」——控制台看不到占了多少盘，
+想删只能进 shell 里 `rm`。控制台左侧「AI 图片」分区（`🖼️`）把它们收成一个可管理的入口，
+对应 `src/image-admin.js` + `/api/ai-images*`（**只允许控制台**：带 `x-agent-token` 一律 403——
+AI 可以看图、发图，但不该能删管理员的图库）。
+
+| 来源 | 默认目录 | 谁写进去 | 删掉会怎样 |
+|---|---|---|---|
+| 本地图库 | `assets/stickers`（跟 `socialV2.image.libraryDir` 走） | `scripts/fetch-bili-images.mjs` / `fetch-style-stickers.mjs` 等抓图脚本 | AI 选图/存表情少一张；`index.json` 条目会同步摘掉，还原时一起回来 |
+| pixiv 抓取样例 | `state/pixiv-picks` | 抓 pixiv 榜单时的落盘样图 | 不影响 AI 发图，只是本地少个参考 |
+| B站视频帧缓存 | `state/video-cache` | `qq_video_frames` 下载的雪碧图 | 下次看同一期视频重新下载（它自己也有 200MB LRU 上限） |
+| AI 发出去的网络图 | `state/sent-images` | 桥接在发图 / 存表情时顺手落一份（`src/sent-images.js`） | 只影响本地回看；QQ 里已经发出去的消息不受影响 |
+
+能做的事：
+
+- **清单**：每类来源有多少张、占多少盘、最近一张是什么时候；图库还会标出「索引失联」（index.json 里有、磁盘上没有）
+  与「未入索引」（磁盘上有、index.json 没记）；回收站占用单列。
+- **缩略图网格**：直接看图（走 `/api/ai-images/file?source=&name=`，同样是控制台鉴权 + 浏览器 Cookie），
+  点开可看原图；搜索文件名/标题/出处，按时间或体积排序。
+- **逐张删 / 按来源清空**：勾选删除或整目录清空。
+- **自然清理**：先按「保留天数」清太旧的，再按「总容量上限」从最旧的开始补删到预算内（两条规则 0 = 不启用，
+  至少开一条，否则拒绝执行——避免「点了没反应」）。
+- **回收站**（`state/image-trash/`）：**删除 = 移动到回收站**，不是 `unlink`。批次带 manifest，
+  能整批或逐张还原（还原时把当初摘掉的图库索引条目一起放回去）；目标目录已有同名文件时跳过、不覆盖。
+  「彻底删除」才是真的抹盘。回收站超上限（`imageAdmin.trashMaxMB`，默认 500MB）时从最旧的批次开始丢，
+  **最新那批永远留着**——否则上限一紧就成了「刚删就没了」，回收站变摆设。
+- **发送即落盘（`state/sent-images/`）**：`qq_send_image` / `qq_save_sticker` 的链路是「下载 → 校验 → base64 → 网关」，
+  字节只在内存里过一遍。以前这意味着**群里发过的那张图本地再也找不回来**（会话记录里只剩一条会过期的 URL），
+  于是有了「找不到之前发的那张图」这种事。现在解析出字节时就落一份，`index.json` 里记来源 URL、哪个会话、档位、
+  是否真的送达（QQ 审核静默吞掉的那张会标 `delivered:false`）；同一张（sha256 相同）只存一次，超上限
+  （`imageAdmin.sentImagesMaxMB`，默认 300MB）从最旧的开始丢。
+- **补抓历史发过的图**：本次改动之前发出去的图没有字节可留，只能把 URL 捞回来重下——
+  候选来自会话的 `recentMessages`（自己发过的带图消息）与 `state/bridge.log` 的 `[image] ... https://...` 行，
+  重新下载走的是与发图完全相同的回退链（pixiv 会自己走代理、必要时换档位）。做成**后台任务**
+  （一张图可能要几秒到几十秒，同步接口早超时了）：`POST /api/ai-images/backfill` 启动、`GET` 看进度，页面轮询显示。
+- **缓存联动**：删/还原图库文件后桥接立刻让 `loadImageLibrary` 的 30s 缓存失效，
+  否则 AI 在自己的 TTL 窗口里还会「看见」一张已经不存在的图。
+- **安全边界**：只认注册过的来源；文件名必须是纯文件名 + 图片后缀；路径解析后必须仍在来源目录内
+  （符号链接按 realpath 再核一次，指向目录外的软链既不能预览也不能删）；
+  来源目录不存在、名字带 `../`、未知来源都会明确报错而不是「什么都没发生」。
+- **配置**（`config.json` 的 `imageAdmin`，可选）：`trashMaxMB`（回收站上限）、`sentImagesMaxMB`（发送历史上限）、
+  `sources`（覆盖受管来源，多机部署/测试时把目录指到别处；留空即用上表默认）。
+- **API**：`GET /api/ai-images`、`GET /api/ai-images/items`、`GET /api/ai-images/file`、`GET /api/ai-images/trash`、
+  `GET|POST /api/ai-images/backfill`、`POST /api/ai-images/{remove,clear,forget,restore,purge}`。
+- **控制台必须能用子路径反代**（实测踩过）：控制台里的地址一律**相对当前页面**（`api/...` / `console/...`，
+  绝不能以 `/` 开头）。有人把控制台挂在 `https://anihub.xin/local-web/http/127.0.0.1:3100/` 下访问时，
+  根绝对地址会跑出那个前缀、打到反代自己的根上，返回的正是 `{"error":{"code":"NOT_FOUND","message":"接口不存在"}}`
+  ——而「点击缩略图」当时用的就是服务端拼出来的根绝对地址，于是张张点不开。
+- **自检**：`npm run test:images`（纯函数层，临时目录）与 `npm run test:images:e2e`（起隔离桥接打真实 HTTP）。
+
+> 与「AI 记忆」的区别：记忆是 JSON，删错能整份快照回滚；图片动辄几十上百 MB，每次动手都复制一份不现实，
+> 所以这里用回收站而不是 `state/backups/`。两者都在「语料」分组里，一左一右。
+
 ---
 
 ## 6. 配置全解
@@ -338,7 +458,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
-- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 群知识库 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
+- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 群知识库 / AI 记忆 / AI 图片 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
 - 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
 
 ### 控制台前端结构（改 UI 前先读）
@@ -352,6 +472,11 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
   扩展名白名单、**不需要令牌**（`<script type="module">` 带不了自定义请求头）；
   数据接口 `/api/*` 与外壳 `/` 仍然全部要令牌。
 - 新增分区 = 写 `views/xxx.js` + `views/xxx.html`，在 `app.js` 里 import 并加进 `VIEWS`。
+- **地址一律相对当前页面**（`api/...`、`console/views/x.html`、`index.html` 里的 `console/app.js`），
+  **不要写 `/api/...` 这种根绝对地址**：控制台常被反代在子路径下（如
+  `https://anihub.xin/local-web/http/127.0.0.1:3100/`），根绝对地址会跑出前缀、打到反代自己的根上。
+  `core/api.js` 的 `api()` 与 `core/fragments.js` 已经统一去掉开头的 `/`；服务端拼给前端的地址
+  （比如图片缩略图 `thumb`）也要按相对路径给。
 - 鉴权：外壳 `/` 与 `/api/*` 要令牌；首次用 `?token=`（或请求头）通过后，桥接下发的
   `qq_console_token` Cookie 就是后续导航/刷新的凭据，前端因此不需要把令牌塞进 URL。
   前端 `core/api.js` 仍会带 `x-console-token`（localStorage 那份），两边任一有效即可。
@@ -394,6 +519,9 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `scripts/test-console-dirty.mjs` | 未保存追踪回归（自动填充/程序写入不算改动、用户操作才算、离开守卫） |
 | `scripts/test-mcp-safe.mjs` | MCP 安全工具自检 |
 | `scripts/test-member-remarks.mjs` | 群成员备注自检（纯函数 + 隔离实例真发 `set_group_card` 到假 OneBot） |
+| `scripts/test-content-filter.mjs` | 入站内容策略自检：纯函数 + 隔离桥接确认「消息没进未读、没触发唤醒、桥接回了固定话」 |
+| `scripts/test-memory-admin.mjs` | AI 记忆管理自检：`npm run test:memory` 纯函数层（清单/增删/钉住/自然遗忘/备份回滚/路径穿越），`npm run test:memory:e2e` 追加真实桥接的 `/api/memory*` 接口回归 |
+| `scripts/test-image-admin.mjs` | AI 图片管理与发送历史自检：`npm run test:images` 纯函数层（清单/搜索/删除→回收站/还原/清空/彻底删除/自然清理/容量淘汰/符号链接与路径穿越/发送落盘去重与淘汰），`npm run test:images:e2e` 追加真实桥接的 `/api/ai-images*`（含补抓进度接口）回归 |
 | `scripts/test-card-parse.mjs` | 卡片消息解析自检（真实卡片 payload + json/xml/share/合并转发） |
 | `scripts/test-html-text.mjs` | web_fetch 的正文抽取 / SPA 识别自检（含误报防护） |
 | `scripts/test-browser-render.mjs` | web_render 自检（过滤代理 SSRF 边界 + 本地假 SPA 渲染） |

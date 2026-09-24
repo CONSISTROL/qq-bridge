@@ -36,9 +36,11 @@ const ok = (name, cond, extra = '') => {
 //    控制台已从单文件拆成「外壳 + core/ + views/*.html」，这里守住三件事：
 //    外壳能加载、每个分区片段都在、/console/* 的静态路由不带令牌也能取到
 //    （浏览器给 <script type="module"> 加不了自定义头，所以这条是硬要求）。
+//    路径断言必须是**相对形式**：外壳被反代在子路径下时要按当前页面解析，
+//    根绝对 `/console/...` 会跑到反代自己的根上去（见 core/api.js 的 relativeUrl）。
 const page = await fetch(BASE + '/', { headers: authHeaders });
 const html = await page.text();
-ok('控制台外壳加载', page.status === 200 && html.includes('QQ 桥接控制台') && html.includes('/console/app.js'), `长度 ${html.length}`);
+ok('控制台外壳加载', page.status === 200 && html.includes('QQ 桥接控制台') && html.includes('console/app.js'), `长度 ${html.length}`);
 
 const anon = await fetch(BASE + '/');
 ok('外壳匿名访问被拒（401）', anon.status === 401, `HTTP ${anon.status}`);
@@ -145,7 +147,8 @@ if (!TOKEN) {
   ok('进站页：没有本地令牌 → 弹输入框', noSaved.prompted === 1 && noSaved.replaced.length === 0, JSON.stringify(noSaved));
   const savedHit = runEntryPage({ saved: TOKEN, search: '' });
   ok('进站页：有本地令牌 → 自动带令牌重试，不再弹框',
-    savedHit.prompted === 0 && savedHit.replaced[0] === '/?token=' + TOKEN, JSON.stringify(savedHit));
+    // './?token='（相对当前目录）而不是 '/?token='：控制台可能被反代在子路径下
+    savedHit.prompted === 0 && savedHit.replaced[0] === './?token=' + TOKEN, JSON.stringify(savedHit));
   const savedMiss = runEntryPage({ saved: TOKEN, search: '?token=stale-value' });
   ok('进站页：令牌试过仍失败 → 回到输入框（不会无限重定向）',
     savedMiss.prompted === 1 && savedMiss.replaced.length === 0, JSON.stringify(savedMiss));

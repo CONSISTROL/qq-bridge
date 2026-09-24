@@ -1,0 +1,71 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">10</span>AI 记忆：它记住了什么，以及怎么改</h2>
+      <div class="meta">
+        AI 的记忆不是一份文件，而是几类东西拼起来的。<b>这一页是把它们收在一起的总入口</b>：看得见每类有多少条、吃多少上下文，能逐条改/删、能钉住重要的、能一键备份与回滚。
+        其中「会话记忆」每次唤醒都会注入提示词（直接影响它的言行），另外几类按需检索或由 AI 主动来查。
+      </div>
+      <div class="meta" id="memSummary">加载中…</div>
+      <span class="meta" id="memMsg"></span>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px"><b>记忆构成</b>（点一行就切到下面看这一类）</div>
+      <div id="memGroups" class="slang-scroll">加载中…</div>
+
+      <div class="divider"></div>
+      <div class="slang-tabs" id="memTabs"></div>
+
+      <div class="row" style="margin-top:8px">
+        <select id="memKeyFilter" style="width:200px"><option value="">全部会话</option></select>
+        <input type="text" id="memSearch" placeholder="搜索记忆内容（话题 / 名字 / 词条 / 问题 / 备注）" style="flex:1">
+        <select id="memLimit" style="width:110px">
+          <option value="100">显示 100</option>
+          <option value="300" selected>显示 300</option>
+          <option value="1000">显示 1000</option>
+        </select>
+        <button id="memRefresh" class="small">刷新</button>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <button id="memPinSelected" class="small">钉住选中</button>
+        <button id="memUnpinSelected" class="small">取消钉住</button>
+        <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="memIncludePinned"> 清空时连钉住的一起</label>
+        <button id="memDeleteSelected" class="small danger">忘掉选中</button>
+        <button id="memClearKind" class="small danger">清空这一类</button>
+        <button id="memClearSession" class="small danger">清空该会话全部记忆</button>
+      </div>
+      <div class="meta" style="margin-top:4px">
+        <b>钉住 = 明确不想忘</b>：钉住的条目在「清空 / 自然遗忘」里会跳过，只有勾上左边那个复选框才会一起清掉。
+        「忘掉选中 / 清空」动手前都会自动备份，删错了可以在下面回滚。<b>逐条删除不受钉住保护</b>——那是你点名要删的那一条。
+      </div>
+
+      <div id="memList" class="slang-scroll" style="margin-top:8px">加载中…</div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px"><b>自然遗忘</b>：按规则清掉「本来就该自己消失」的记忆，而不是一刀切（优先清过期的想法、搁置的话题、很久没用的表情笔记；黑话/知识库不会被动）</div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">想法过期（小时）<input type="number" id="memThoughtTtl" value="2" min="0" step="1" style="width:70px"></label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">话题搁置（小时）<input type="number" id="memTopicIdle" value="24" min="0" step="1" style="width:70px"></label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">表情闲置（天）<input type="number" id="memStickerIdle" value="90" min="0" step="1" style="width:70px"></label>
+        <button id="memForget" class="small">执行自然遗忘</button>
+        <span class="meta" id="memForgetMsg"></span>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px"><b>备份与回滚</b>：这一页不动你的记忆；备份是给「状态文件被写坏 / 被 /reset 之类连带清掉」兜底的退路（最多留 30 份，回滚前还会先给当前状态再存一份，所以回滚本身也可回滚）。目录：<code>state/backups/</code></div>
+      <div class="row">
+        <input type="text" id="memBackupReason" placeholder="备份原因（可选，如：改配置前先存一份）" style="flex:1">
+        <button id="memBackup" class="small">立即备份</button>
+        <button id="memReload" class="small">重新读盘</button>
+        <span class="meta" id="memBackupMsg"></span>
+      </div>
+      <div id="memBackups" class="slang-scroll" style="margin-top:8px">加载中…</div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px"><b>下次唤醒时 AI 会看到的记忆</b>（和真正拼提示词用的是同一段代码，所以这里显示什么，它就看到什么）</div>
+      <div class="row">
+        <select id="memPreviewKey" style="width:200px"><option value="">活跃的会话</option></select>
+        <button id="memPreviewLoad" class="small">刷新预览</button>
+        <span class="meta" id="memPreviewMsg"></span>
+      </div>
+      <div id="memPreview" class="slang-scroll" style="margin-top:8px">（空）</div>
+    </section>

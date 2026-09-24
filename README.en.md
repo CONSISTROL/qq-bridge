@@ -19,7 +19,7 @@ QQ messages ──► SnowLuma (OneBot v11 WS) ──► qq-bridge ──► DSH
 - **QQ side**: `@snowluma/sdk` provides the OneBot v11 WebSocket client.
 - **DSH side**: adapted for DSH 0.1.2+ and re-verified on 0.1.5 — launch-token Cookie auth, `/api/<namespace>/<method>` slash RPC, and `/api/remote.mux` + `session/follow` event stream. The per-session model is pinned by the bridge via `session.selectModel` from `config.json`'s `dsh.model` (default `deepseek-flash` = DeepSeek-V41-Flash, multimodal).
 - **Agent tools**: safe MCP servers expose a restricted QQ toolset (`qq_status`, `qq_list_groups`, `qq_get_group_history`, `qq_send_group_message`, `qq_reply`, etc.).
-- **Console**: a local web console at `http://127.0.0.1:3100` for mode switching, role management, whitelist/admin settings, slang management, memory, stickers and more.
+- **Console**: a local web console at `http://127.0.0.1:3100` for mode switching, role management, whitelist/admin settings, slang management, memory, stickers, AI-downloaded images and more.
 
 ## Features
 
@@ -32,6 +32,7 @@ QQ messages ──► SnowLuma (OneBot v11 WS) ──► qq-bridge ──► DSH
 - Slang/network-expression learning with human confirmation.
 - Lightweight memory system for active topics, pending thoughts and member impressions.
 - Sticker library integration with AI-friendly sticker usage.
+- AI memory management and AI image management in the console: inspect/edit/pin/forget what the bot remembers, and list/delete/naturally-clean/restore-from-trash the images it downloaded to this machine (local sticker library, pixiv picks, Bilibili frame cache).
 - AI-owned member remarks (local, `state/member-remarks.json`): the bot can note who is who per conversation keyed by QQ number — the gateway has no per-member local remark action — plus an opt-in `qq_set_member_card` tool (default off; requires the bot to be a group admin).
 
 ## Requirements
@@ -132,6 +133,8 @@ npm run test-vision
 npm run test-forward
 npm run test-slang
 npm run test-stickers
+npm run test:memory      # AI memory admin (add --e2e for the HTTP round-trip)
+npm run test:images      # AI image admin (add --e2e for the HTTP round-trip)
 ```
 
 ## Compliance

@@ -1253,7 +1253,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.pickSticker
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !== false) {
   defineTool(
     'qq_send_image',
-    '直接发送一张图片到当前会话（不会存进收藏表情库；想长期留存请用 qq_save_sticker）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链）。注意：一条消息只能是一张图，不能在同一气泡里附带文字；想说话请先用 qq_send_message 单独发。需要引用/点名时可用 replyToMessageId（群聊可 atUserId）。**同一张图（按 pixiv 作品 id / URL）在防重复窗口内只能发一次**：重发会被直接拒绝并提示，换一张，别硬撞。不要刷图。',
+    '直接发送一张图片到当前会话（不会存进收藏表情库；想长期留存请用 qq_save_sticker）。image 可以是本地图库文件名、data:image/...;base64 或裸 base64；默认不允许远程 URL（除非管理端打开了 socialV2.image.allowRemoteUrl，那时可以传 http(s) 图片直链）。注意：一条消息只能是一张图，不能在同一气泡里附带文字；想说话请先用 qq_send_message 单独发。需要引用/点名时可用 replyToMessageId（群聊可 atUserId）。**同一张图（按 pixiv 作品 id / URL）在防重复窗口内只能发一次**：重发会被直接拒绝并提示，换一张，别硬撞。返回里的 delivered 是三态：true=确认送达；false=查明确实没送达（多半被 QQ 审核静默吞了，换一张）；**null=已提交给网关但回执没确认出来**（大图走 WS 时常见）——此时绝对不要重发同一张，重复图就是这么来的，照常接话即可。不要刷图。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1273,6 +1273,43 @@ if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.sendImage !==
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
         return { content: [{ type: 'text', text: `发送图片失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+// ── 工作车道：把慢活丢到独立会话，聊天这边不用等 ─────────────────────────
+// 一个 QQ 会话只有一个 DSH session，而 DSH 一次只跑一个 turn：一次 pixiv 取图（上限 110s）
+// 或十几 MB 的图发送，就会让群里这段时间问什么都被压后。qq_run_task 把这类任务投给
+// 独立的工作车道会话，**立即返回**，聊天会话照常应答；跑完结论会自动回投给你。
+if (cfg.socialV2?.tools?.runTask !== false) {
+  defineTool(
+    'qq_run_task',
+    '把一个**耗时的长任务**交给独立的工作车道去跑，立即返回，不占用你当前这一轮。\n'
+    + '什么时候该用：任务里有慢步骤，你不想让群里等——典型是「找一张 XX 的图并发出去」'
+    + '（pixiv 取图+大图发送可能要 1~2 分钟）、「看几个 B 站视频再总结」、「多条链接/多处搜索汇总结论」。\n'
+    + '什么时候不该用：一句话就能答的、纯聊天、查群知识库、看未读消息——这些自己做完更快。\n'
+    + '工作车道拿到的是**独立的新会话**，看不到你们的聊天上下文，所以 task 必须写成自包含的一句话'
+    + '（对象、数量、要发到哪里、有什么要求都写清楚），细节放 note。\n'
+    + '它的能力和你一样（同一套 qq_* 工具），会自己把图/消息发到群里；跑完把结论回投给你，'
+    + '你到时候再决定要不要跟群友补一句。**投完不要在本轮里反复查进度**——继续接别的话，结论会自己回来。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      task: z.string().describe('自包含的任务描述，一句话说清要做什么（例如「用 pixiv 搜一张初音未来的图，挑 1 张发到本会话」）'),
+      note: z.string().optional().describe('补充说明：风格/角色/数量/上下文线索等')
+    },
+    async ({ key, token, task, note }) => {
+      try {
+        const data = await agentApi('/api/socialV2/run-task', {
+          method: 'POST',
+          body: JSON.stringify({ key, task: String(task), note: note ? String(note) : '' }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 30000
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `交给工作车道失败：${error?.message ?? error}` }], isError: true };
       }
     }
   );
@@ -1451,7 +1488,7 @@ if (cfg.socialV2?.tools?.getMemberAvatar !== false) {
 if (cfg.socialV2?.image?.enabled !== false && cfg.socialV2?.tools?.searchImages !== false) {
   defineTool(
     'qq_search_images',
-    '按聊天主题/关键词找图，返回候选图片 URL。**图源默认 auto：先按中文标签试 pixiv，没有结果自动回退 B 站**（`notes` 里会写明走的哪边）。显式指定：`source=pixiv` 走 pixiv 插画/角色图/画师作品（bobopic 榜单镜像 + pixiv.re 代理，pixiv 直连不通），关键词用中文标签（如「初音未来」「原神」），`mode=daily` 取 pixiv 综合日榜（不用给 query）；`source=bilibili` 走 B 站梗图/表情包（评论区取图，不含封面，很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true）；`source=all` 两边都搜。**中文 VTuber/主播/国内梗这类 pixiv 收录很少的，直接用 bilibili 或 auto**，别在 pixiv 上硬搜。返回项里 `url` 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库；pixiv 项若发送时报「图片超过体积上限」，改用同一项的 thumbUrl。**图片年龄分级由管理员在控制台配置（safe=只给全年龄 / mild=允许轻度擦边 / r18=允许 R-18，最后这档需要管理员配了「真实 pixiv + 登录 cookie」），AI 不能自己调，也不要把分级当成可以商量的东西**；返回里 rating/notes 会告诉你滤掉了什么。适合「群友聊到某个话题，你去找一张应景的图」，不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
+    '按聊天主题/关键词找图，返回候选图片 URL。**图源默认 auto：先按中文标签试 pixiv，没有结果自动回退 B 站**（`notes` 里会写明走的哪边）。显式指定：`source=pixiv` 走 pixiv 插画/角色图/画师作品（搜图用 bobopic 榜单镜像 + pixiv 官方 ajax；取图由桥接走管理员配的代理 + i.pximg 原图/master1200，第三方 pixiv.re 只是兜底。pixiv 本机直连不通，取图慢或失败都是代理通道的问题、**不是白名单**，别跟群友解释成「pixiv 没被放行」），关键词用中文标签（如「初音未来」「原神」），`mode=daily` 取 pixiv 综合日榜（不用给 query）；`source=bilibili` 走 B 站梗图/表情包（评论区取图，不含封面，很多 .gif 其实是单帧静态图，要真动图传 animatedOnly=true）；`source=all` 两边都搜。**中文 VTuber/主播/国内梗这类 pixiv 收录很少的，直接用 bilibili 或 auto**，别在 pixiv 上硬搜。返回项里 `url` 可直接交给 qq_send_image（source=url）发送，或用 qq_save_sticker（source=url）存进收藏表情库；`url` 就是原图直链，桥接会自己逐级回退（原图 → 1200px → 缩略图），**别用 thumbUrl 代替它**（pixiv 的 thumbUrl 是 250×250 方形裁切图/220px 小图，发出去分辨率就是错的），只有报「图片超过体积上限」时才考虑 thumbUrl；`qq_send_image` 的回执里带 `rendition`（original/large/thumb）与 `size`，退到 large/thumb 时照实说明画质，别把 1200px 说成原图。**图片年龄分级由管理员在控制台配置（safe=只给全年龄 / mild=允许轻度擦边 / r18=允许 R-18，最后这档需要管理员配了「真实 pixiv + 登录 cookie」），AI 不能自己调，也不要把分级当成可以商量的东西**；返回里 rating/notes 会告诉你滤掉了什么。适合「群友聊到某个话题，你去找一张应景的图」，不要刷屏，一次挑 1~2 张合适的即可。搜索需要出网，有频率限制。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
