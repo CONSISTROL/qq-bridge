@@ -22,6 +22,7 @@ function fixture(name, patch = '') {
   const home = path.join(base, 'home');
   fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
   fs.copyFileSync(path.join(root, 'scripts/setup-dsh.mjs'), path.join(repo, 'scripts/setup-dsh.mjs'));
+  fs.copyFileSync(path.join(root, 'scripts/dsh-modules.mjs'), path.join(repo, 'scripts/dsh-modules.mjs'));
   fs.cpSync(path.join(root, 'dsh'), path.join(repo, 'dsh'), { recursive: true });
   fs.cpSync(path.join(root, 'plugins'), path.join(repo, 'plugins'), { recursive: true });
   fs.cpSync(parserRoot, path.join(repo, 'node_modules/js-yaml'), { recursive: true });
@@ -33,7 +34,10 @@ function fixture(name, patch = '') {
     dsh: { profile: { bundles: ['existing'] } },
   }));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'));
-  Object.assign(env, { PATH: path.dirname(process.execPath), DSH_HOME: home, HOME: home, USERPROFILE: home, QQ_BRIDGE_SKIP_DSH_INSTALL: '1' });
+  Object.assign(env, {
+    PATH: path.dirname(process.execPath), DSH_HOME: home, HOME: home, USERPROFILE: home,
+    QQ_BRIDGE_SKIP_DSH_INSTALL: '1', QQ_BRIDGE_DSH_PRESET_FORMAT: 'modern',
+  });
   const run = (profile = 'web', extraEnv = {}) => spawnSync(process.execPath, [path.join(repo, 'scripts/setup-dsh.mjs'), profile], {
     env: { ...env, ...extraEnv }, cwd: repo, encoding: 'utf8', timeout: 15000,
   });
@@ -43,6 +47,19 @@ function fixture(name, patch = '') {
 function test(name, fn) {
   try { fn(); console.log(`PASS ${name}`); }
   catch (error) { failures++; console.error(`FAIL ${name}: ${error.message}`); }
+}
+
+// 复刻 @deepseek-ai/dsh-plugin-package-inventory-deepseek 的 nearestManifest()：
+// 从插件模块所在目录向上找最近的 package.json（决定它被推导成哪个包）。
+function nearestManifest(modulePath) {
+  let current = path.dirname(modulePath);
+  const root = path.parse(current).root;
+  for (;;) {
+    const manifest = path.join(current, 'package.json');
+    if (fs.existsSync(manifest)) return manifest;
+    if (current === root) return undefined;
+    current = path.dirname(current);
+  }
 }
 
 try {
@@ -64,6 +81,73 @@ try {
     const pkg = JSON.parse(fs.readFileSync(path.join(f.home, 'profiles/web/package.json')));
     assert.equal(pkg.dependencies.existing, '1.0.0');
     assert.deepEqual(pkg.dsh.profile.bundles, ['existing', 'qq-mode-console']);
+  });
+
+  test('DSH 0.2 preset rows are declared once and keep the repository composition byte-for-byte', () => {
+    const f = fixture('modern-preset', '[]\n');
+    for (let i = 0; i < 2; i++) {
+      const result = f.run();
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
+    }
+    const entries = yaml.load(fs.readFileSync(f.patchFile, 'utf8')).flatMap((op) => op.insert || []);
+    for (const id of ['preset-qq-chat', 'preset-qq-chat-v2']) {
+      assert.equal(entries.filter((entry) => entry.id === id).length, 1, `${id} duplicate`);
+    }
+    for (const id of ['qq-chat', 'qq-chat-v2']) {
+      const row = entries.find((entry) => entry.id === `preset-${id}`);
+      assert.equal(row.name, '@deepseek-ai/dsh-agent-preset');
+      assert.equal(row.config.id, id);
+      const meta = yaml.load(fs.readFileSync(path.join(f.repo, 'dsh/agent-presets', id, 'preset.yml'), 'utf8').replace(/^\uFEFF/, ''));
+      assert.equal(row.config.name, meta.name);
+      assert.equal(row.config.order, meta.order);
+      const source = yaml.load(fs.readFileSync(path.join(f.repo, 'dsh/agent-presets', id, 'agent.cordis.yml'), 'utf8').replace(/^\uFEFF/, ''));
+      // 内联只允许改写相对插件路径（指向 profile 里的副本），其余必须逐字段一致。
+      const unstaged = (rows) => rows.map((r) => {
+        const copy = { ...r };
+        if (typeof copy.name === 'string' && copy.name.startsWith('./qq-bridge-presets/')) {
+          copy.name = `./${copy.name.split('/').slice(3).join('/')}`;
+        }
+        if (Array.isArray(copy.config)) copy.config = unstaged(copy.config);
+        return copy;
+      });
+      assert.deepEqual(unstaged(row.config.plugins), source, `${id} composition changed`);
+      const staged = path.join(f.home, 'profiles/web/qq-bridge-presets', id, 'qq-tool-restrict.mjs');
+      assert.ok(fs.existsSync(staged), `${id} staged plugin missing`);
+      assert.deepEqual(fs.readFileSync(staged), fs.readFileSync(path.join(f.repo, 'dsh/agent-presets', id, 'qq-tool-restrict.mjs')));
+      const restrict = row.config.plugins.find((r) => r.id === 'qq-tool-restrict');
+      assert.equal(restrict.name, `./qq-bridge-presets/${id}/qq-tool-restrict.mjs`);
+      // 回归：DSH 0.2 的 dsh_plugin_packages 会给相对路径插件向上找最近的 package.json
+      // 推导包身份，只要有 name 就必须有非空 version，否则整个请求以 REQUEST_EXTENSION 失败
+      // （症状：每个回合都回「DeepSeek request extension preparation failed」）。
+      const manifest = nearestManifest(fs.realpathSync(staged));
+      assert.ok(manifest, `${id} 暂存目录缺少 package.json，会向上找到 profile 的清单`);
+      assert.equal(path.dirname(manifest), path.dirname(staged), `${id} 的 package.json 必须就在暂存目录里`);
+      const identity = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+      assert.ok(typeof identity.name === 'string' && identity.name.length > 0, `${id} package.json 需要非空 name`);
+      assert.ok(typeof identity.version === 'string' && identity.version.length > 0, `${id} package.json 需要非空 version`);
+    }
+  });
+
+  test('legacy format installs only the directory presets and strips modern rows', () => {
+    const f = fixture('legacy-format', '[]\n');
+    assert.equal(f.run().status, 0);
+    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat-v2/);
+    const result = f.run('web', { QQ_BRIDGE_DSH_PRESET_FORMAT: 'legacy' });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const text = fs.readFileSync(f.patchFile, 'utf8');
+    assert.doesNotMatch(text, /preset-qq-chat/);
+    assert.match(text, /mcp-snowluma/);
+    for (const id of ['qq-chat', 'qq-chat-v2']) {
+      assert.ok(fs.existsSync(path.join(f.home, '.agent-presets', id, 'agent.cordis.yml')), `${id} not installed`);
+    }
+  });
+
+  test('auto detection stays usable when no DSH installation is reachable', () => {
+    const f = fixture('auto-detect', '[]\n');
+    const result = f.run('web', { QQ_BRIDGE_DSH_PRESET_FORMAT: '' });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.match(result.stdout, /preset 安装方式：modern/);
+    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat-v2/);
   });
 
   test('legacy root [] is repaired without altering literal strings', () => {

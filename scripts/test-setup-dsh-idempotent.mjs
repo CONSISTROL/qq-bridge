@@ -50,7 +50,8 @@ fs.symlinkSync(path.join(ROOT, 'plugins', 'qq-mode-console'), path.join(tmpHome,
 function runSetup(label) {
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'setup-dsh.mjs'), 'web'], {
     // 保留最小 PATH（进程启动需要），但把 dsh CLI 排除在外 → 跳过自动 pnpm 安装那一步
-    env: { ...process.env, DSH_HOME: tmpHome, PATH: path.dirname(process.execPath) },
+    // preset 安装方式固定为 modern：本用例的 DSH_HOME 落在仓库内，自动探测可能反查到仓库自身的 node_modules。
+    env: { ...process.env, DSH_HOME: tmpHome, PATH: path.dirname(process.execPath), QQ_BRIDGE_DSH_PRESET_FORMAT: 'modern' },
     encoding: 'utf8',
     cwd: ROOT,
   });
@@ -67,7 +68,7 @@ const finalPatch = fs.readFileSync(path.join(tmpHome, 'profiles', 'web', 'cordis
 
 // 断言 1：每个托管 id 恰好出现一次
 let failed = 0;
-for (const id of ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe']) {
+for (const id of ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe', 'preset-qq-chat', 'preset-qq-chat-v2']) {
   const n = finalPatch.split('\n').filter((l) => new RegExp(`^\\s*-\\s*id:\\s*${id}\\s*$`).test(l)).length;
   const ok = n === 1;
   if (!ok) failed += 1;
@@ -112,6 +113,39 @@ for (const p of ['qq-chat', 'qq-chat-v2']) {
   const ok = fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('prefix:');
   console.log(`${ok ? '✅' : '❌'} preset ${p} 已安装且使用 prefix 字段`);
   if (!ok) failed += 1;
+}
+
+// 断言 7：modern 行携带完整 preset 组成（与仓库源文件往返一致），且相对插件已落到 profile 内
+const unstaged = (rows) => rows.map((r) => {
+  const copy = { ...r };
+  if (typeof copy.name === 'string' && copy.name.startsWith('./qq-bridge-presets/')) {
+    copy.name = `./${copy.name.split('/').slice(3).join('/')}`;
+  }
+  if (Array.isArray(copy.config)) copy.config = unstaged(copy.config);
+  return copy;
+});
+for (const p of ['qq-chat', 'qq-chat-v2']) {
+  const row = (doc || []).flatMap((e) => e?.insert || []).find((x) => x.id === `preset-${p}`);
+  const source = yaml.load(fs.readFileSync(path.join(ROOT, 'dsh', 'agent-presets', p, 'agent.cordis.yml'), 'utf8').replace(/^\uFEFF/, ''));
+  const same = row !== undefined && JSON.stringify(unstaged(row.config.plugins)) === JSON.stringify(source);
+  console.log(`${same ? '✅' : '❌'} preset 行 ${p} 组成与仓库源文件一致`);
+  if (!same) failed += 1;
+  const staged = path.join(tmpHome, 'profiles', 'web', 'qq-bridge-presets', p, 'qq-tool-restrict.mjs');
+  const stagedOk = row !== undefined && fs.existsSync(staged)
+    && fs.readFileSync(staged).equals(fs.readFileSync(path.join(ROOT, 'dsh', 'agent-presets', p, 'qq-tool-restrict.mjs')));
+  console.log(`${stagedOk ? '✅' : '❌'} preset ${p} 的相对插件已复制到 profile`);
+  if (!stagedOk) failed += 1;
+  // 断言 8：暂存目录自带 name+version 的 package.json——否则 DSH 0.2 的
+  // dsh_plugin_packages 会向上找到 profile 的清单（有 name 无 version）并抛错，
+  // 每个回合都失败为「DeepSeek request extension preparation failed」。
+  const manifestPath = path.join(tmpHome, 'profiles', 'web', 'qq-bridge-presets', p, 'package.json');
+  let identity = null;
+  try { identity = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { /* 缺失或损坏 */ }
+  const identityOk = identity !== null
+    && typeof identity.name === 'string' && identity.name.length > 0
+    && typeof identity.version === 'string' && identity.version.length > 0;
+  console.log(`${identityOk ? '✅' : '❌'} preset ${p} 暂存目录的 package.json 有非空 name+version`);
+  if (!identityOk) failed += 1;
 }
 
 console.log(failed === 0 ? '\n✅ setup-dsh.mjs 幂等性测试通过' : `\n❌ ${failed} 项失败`);

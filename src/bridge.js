@@ -3567,6 +3567,18 @@ async function main() {
     }
   }
 
+  // preset 清单缓存未命中时的自愈刷新：节流 30 秒 / 同时只跑一个，避免每次唤醒都打 RPC。
+  // 场景：DSH 热加载了新的 preset（补装 qq-chat*、DSH 升级后重装），而桥接进程还拿着旧清单。
+  let presetListRefreshAt = 0;
+  let presetListRefreshing = false;
+  function maybeRefreshPresetListAfterMiss() {
+    const now = Date.now();
+    if (presetListRefreshing || now - presetListRefreshAt < 30000) return;
+    presetListRefreshAt = now;
+    presetListRefreshing = true;
+    refreshPresetList().finally(() => { presetListRefreshing = false; });
+  }
+
   /** 当前模式是否允许该会话进入 */
   function modeAllowed(key, kind, id, cfg, mode) {
     if (mode === 'closed-agent') {
@@ -3594,6 +3606,10 @@ async function main() {
     if (dshPresetIds.length === 0) return strict ? '' : wanted;
     if (dshPresetIds.includes(wanted)) return wanted;
     log(`⚠️ preset "${wanted}" 不在 DSH 可用清单（${dshPresetIds.join(', ')}）中`);
+    // 清单是启动时拉的缓存：DSH 热加载新 preset（如补装 qq-chat*）后这里不会自动更新，
+    // 会话就会一直 fail-closed、表现为「机器人突然不理人」。判定失败时顺手刷新一次缓存
+    // （节流，避免每次唤醒都打一次 RPC），下一次唤醒即可用上；本次仍按 fail-closed 返回。
+    maybeRefreshPresetListAfterMiss();
     if (strict) {
       log(`⛔ 群聊/仿真会话缺少 preset "${wanted}"，拒绝回退到 DSH 默认 preset（会把本地工具暴露给 QQ 群）；请运行 node scripts/setup-dsh.mjs 并重启 DSH`);
       return '';

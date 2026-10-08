@@ -13,7 +13,7 @@
    cd qq-bridge
    ```
 
-   > 默认分支 `main` 即当前版本 **v0.1.5**（适配 DSH 0.1.5-rc.1），clone 下来无需切换分支。
+   > 默认分支 `main` 即当前版本 **v0.1.5**（在 DSH 0.1.5-rc.1 上逐项实测；DSH 0.2 起 preset 改为插件行声明，脚本会自动识别并适配），clone 下来无需切换分支。
 
 2. **安装依赖**：
 
@@ -53,7 +53,11 @@
 
    脚本会完成：
 
-   - 安装 agent preset：`~/.dsh/.agent-presets/qq-chat`、`~/.dsh/.agent-presets/qq-chat-v2`
+   - 安装 agent preset：`qq-chat`、`qq-chat-v2`
+     - **DSH 0.2+**：声明成 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里的 `@deepseek-ai/dsh-agent-preset` 插件行（0.2 的 `dsh-agent-preset-registry` 不再扫描 `.agent-presets/` 目录），组成直接由 `dsh/agent-presets/<id>/agent.cordis.yml` 生成，`./` 引用的插件（`qq-tool-restrict.mjs`）复制到 `~/.dsh/profiles/<profile>/qq-bridge-presets/<id>/`，并在该目录写入一个带 **非空 name + version** 的 `package.json`
+       > 这个 `package.json` 不是可有可无：DSH 0.2 的 `dsh_plugin_packages` 请求扩展会给每个生效插件向上找「最近的 package.json」推导包身份，只要有 name 就必须有 version，否则整轮请求以 `DeepSeek request extension preparation failed`（`REQUEST_EXTENSION`）失败——症状是机器人每条都回这句错。缺了它就会向上找到 profile 自己的 `package.json`（只有 name、没有 version）。
+     - **DSH 0.1.x**：复制到 `~/.dsh/.agent-presets/qq-chat`、`~/.dsh/.agent-presets/qq-chat-v2`
+     - 两种方式都由脚本自动判定，也可用 `QQ_BRIDGE_DSH_PRESET_FORMAT=auto|modern|legacy` 强制
    - 在 `~/.dsh/profiles/web/cordis.patch.yml` 挂载：
      - `mcp-snowluma`（`src/mcp-snowluma-safe.js`，带 `toolCallTimeoutMs: 725000`）
      - `mcp-snowluma-host`（`src/mcp-host-server.js`）
@@ -63,8 +67,8 @@
    - 创建本地 `state/mode.json`（`mode: reserved2`）作为 DSH settings 不可用时的兜底
    - 尝试自动执行 `dsh plugin --profile web install`（当 `dsh` CLI 在 PATH 中可用时），注册 `qq-mode-console` 的 bundle 依赖；若 `dsh` 不在 PATH，缺失依赖时 DSH 会提示补跑
 
-   > 脚本可重复运行；它会覆盖 `~/.dsh/.agent-presets/qq-chat*`、更新 MCP 路径并重建失效的插件链接。
-   > MCP 条目通过 YAML 解析后**按顶层 `insert` 内的条目 id 增删**（不依赖标记注释），支持带引号的 id、共享 `insert` 与行内 YAML，并保留其他插件配置和嵌套数据。
+   > 脚本可重复运行；它会覆盖 `~/.dsh/.agent-presets/qq-chat*` 与 profile 里的 preset 区块、更新 MCP 路径并重建失效的插件链接。
+   > preset 与 MCP 条目都通过 YAML 解析后**按顶层 `insert` 内的条目 id 增删**（不依赖标记注释），支持带引号的 id、共享 `insert` 与行内 YAML，并保留其他插件配置和嵌套数据。
    > 脚本在写入前验证 YAML；无法解析时停止，不覆盖配置或 preset。只修复历史版本在文件开头遗留的多余 `[]`，不会删除正文中的空数组或文本。
    > YAML 格式与注释会在序列化时规范化；首次修改前的完整原文保存在同目录 `cordis.patch.yml.qq-bridge.bak`，后续运行不覆盖该备份。
    > 可用 `node scripts/test-audit-setup.mjs` 验证幂等性、配置保留、路径边界和 Windows CLI 调用；测试只使用独立的临时仓库和 DSH_HOME，不启动真实 DSH。
@@ -78,11 +82,13 @@
 
    必须重启 DSH（或让 DSH 重新加载 profile），新 preset 和 MCP 工具才会生效。
 
+   > DSH 0.2+ 的 HMR 会监听 profile 的 `cordis.patch.yml`，多数情况下改完脚本会自动热加载（`state/bridge.log` 里不再出现「不在 DSH 可用清单」即已生效）；只有热加载没接住时才需要重启。
+
    > 默认模式为 **`reserved2`（二代仿真）**，即“文本不自动转发、AI 通过工具自主收发”。如果你想改用 `chat` / `closed-agent` / `reserved`，在**桥接控制台**（默认 `http://127.0.0.1:3100`）顶部按钮切换即可 —— 桥接会同时写入 DSH 设置与本地 `state/mode.json`，**无需重启**（每 5 秒轮询即时生效）。本地文件保存模式兜底与 `closedAgentPreset`；正常情况下模式以 DSH 设置为准，请通过控制台切换。
 
 ## 验证是否装好
 
-离线安全回归：`node scripts/test-audit-setup.mjs` 与 `node scripts/test-audit-setup-guards.mjs`。后者直接执行两套 preset 的限制插件，验证本地工具、未声明工具与裸 `web_fetch` / `web_search` 被拒绝，而带 SSRF 防护的 `mcp__web-search-safe__*` 仍然可用。更新 preset 后需重新运行安装脚本并重启 DSH，现有 DSH 安装中的旧副本才会更新。
+离线安全回归：`node scripts/test-audit-setup.mjs` 与 `node scripts/test-audit-setup-guards.mjs`。后者直接执行两套 preset 的限制插件，验证本地工具、未声明工具与裸 `web_fetch` / `web_search` 被拒绝，而带 SSRF 防护的 `mcp__web-search-safe__*` 仍然可用。更新 preset 后需重新运行安装脚本（DSH 0.2+ 会热加载 profile patch；0.1.x 需重启 DSH），现有 DSH 安装中的旧副本才会更新。
 
 0. **一键自检**：`npm run verify:adaptation` —— 覆盖 preset persona schema、`~/.dsh` 同步、profile patch、版本身份一致性、preset fail-closed 护栏、桥接协议与运行中的 DSH 等共 45 项断言（其中 8 项是按文件循环展开的语法检查）。另有 `npm run verify:persona`（只查 persona 配置）与 `npm run test:mux-reconnect`（事件流重连回归，不需要 DSH）。
    > 若你的环境禁止以管道 stdio 拉子进程，脚本内 8 项 `node --check` 语法检查会报 `spawnSync … EPERM`。那是环境限制，可用 `node --check <文件>` 手动复核。

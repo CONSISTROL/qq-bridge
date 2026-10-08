@@ -3,6 +3,10 @@
 //
 // 功能：
 //   1. 安装两套 agent preset：qq-chat、qq-chat-v2
+//      - DSH 0.2+：在 profile 的 cordis.patch.yml 里声明成 @deepseek-ai/dsh-agent-preset
+//        插件行（0.2 的 preset registry 不再扫描 ~/.dsh/.agent-presets/ 目录）
+//      - DSH 0.1.x：仍按老办法复制到 ~/.dsh/.agent-presets/<id>/
+//      两条路都保留；用 QQ_BRIDGE_DSH_PRESET_FORMAT=auto|modern|legacy 可强制。
 //   2. 在 DSH profile 的 cordis.patch.yml 中挂载三个 MCP server：
 //      mcp-snowluma / mcp-snowluma-host / mcp-web-search-safe
 //   3. 在 profile package.json 中注册 qq-mode-console 插件
@@ -17,6 +21,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { dshModulesDir } from './dsh-modules.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -58,6 +63,176 @@ function yamlSingleQuote(s) {
 // 由桥接托管的 MCP 条目 id：脚本对这三个 id 拥有所有权，可安全地按 id 增删。
 const MANAGED_MCP_IDS = ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe'];
 
+// 由桥接托管的 agent preset：仓库 dsh/agent-presets/<id>/ 是唯一真源，
+// profile patch 里的行 id 固定为 preset-<id>，脚本对它们拥有所有权。
+const PRESET_IDS = Object.freeze(['qq-chat', 'qq-chat-v2']);
+const MANAGED_PRESET_IDS = Object.freeze(PRESET_IDS.map((id) => `preset-${id}`));
+const DSH_AGENT_PRESET_PACKAGE = '@deepseek-ai/dsh-agent-preset';
+const PRESET_STAGE_DIR = 'qq-bridge-presets';
+
+/** preset 在仓库里的源目录。 */
+function presetSourceDir(id) {
+  return path.join(REPO_ROOT, 'dsh', 'agent-presets', id);
+}
+
+/**
+ * 选择 preset 安装方式。
+ *
+ * - `modern`（DSH 0.2+）：preset 必须声明为 @deepseek-ai/dsh-agent-preset 插件行；
+ *   0.2 的 registry 明确「既不扫描目录也不接受 preset 路径」。
+ * - `legacy`（DSH 0.1.x）：复制到 ~/.dsh/.agent-presets/<id>/。
+ *
+ * 判定顺序：环境变量强制 → DSH 安装目录里有没有 dsh-agent-preset 包 →
+ * 定位不到安装目录时按 modern 走（宁可报错显眼，也不要静默装成 0.1.x 的样子）。
+ */
+function detectPresetFormat() {
+  const requested = String(process.env.QQ_BRIDGE_DSH_PRESET_FORMAT ?? 'auto').trim().toLowerCase() || 'auto';
+  if (requested === 'modern' || requested === 'legacy') {
+    log(`preset 安装方式：${requested}（QQ_BRIDGE_DSH_PRESET_FORMAT 指定）`);
+    return requested;
+  }
+  if (requested !== 'auto') {
+    fatal(`QQ_BRIDGE_DSH_PRESET_FORMAT 只接受 auto/modern/legacy，收到 ${JSON.stringify(requested)}`);
+  }
+  try {
+    const modules = dshModulesDir();
+    const marker = path.join(modules, ...DSH_AGENT_PRESET_PACKAGE.split('/'), 'package.json');
+    if (fs.existsSync(marker)) {
+      log(`preset 安装方式：modern（DSH 提供 ${DSH_AGENT_PRESET_PACKAGE}）`);
+      return 'modern';
+    }
+    // 只有确认「这确实是 DSH 安装目录」时才敢判定 legacy：dshModulesDir() 在
+    // DSH_HOME 落在别的工程目录下时可能反查到无关的 node_modules。
+    const looksLikeDsh = ['@deepseek-ai/dsh', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-agent-preset-registry']
+      .some((name) => fs.existsSync(path.join(modules, ...name.split('/'), 'package.json')));
+    if (looksLikeDsh) {
+      log(`preset 安装方式：legacy（DSH ${path.dirname(modules)} 未提供 ${DSH_AGENT_PRESET_PACKAGE}，按 0.2 之前处理）`);
+      return 'legacy';
+    }
+    log(`preset 安装方式：modern（${modules} 不像 DSH 安装目录，无法判定版本）`);
+    log('  若目标设备仍是 DSH 0.1.x，请改用：QQ_BRIDGE_DSH_PRESET_FORMAT=legacy node scripts/setup-dsh.mjs');
+    return 'modern';
+  } catch (error) {
+    const reason = String(error?.message ?? error).split('\n')[0];
+    log(`preset 安装方式：modern（定位不到 DSH 安装目录：${reason}）`);
+    log('  若目标设备仍是 DSH 0.1.x，请改用：QQ_BRIDGE_DSH_PRESET_FORMAT=legacy node scripts/setup-dsh.mjs');
+    return 'modern';
+  }
+}
+
+/** 读 preset 的展示元数据（preset.yml 的 name/description/order），缺失即忽略。 */
+function readPresetMeta(id) {
+  const file = path.join(presetSourceDir(id), 'preset.yml');
+  const meta = {};
+  if (!fs.existsSync(file)) return meta;
+  let doc;
+  try { doc = yaml.load(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
+  catch (error) { fatal(`failed to parse ${file}: ${error.message}`); }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return meta;
+  if (typeof doc.name === 'string' && doc.name) meta.name = doc.name;
+  if (typeof doc.description === 'string' && doc.description) meta.description = doc.description;
+  if (doc.order !== undefined && doc.order !== null) meta.order = doc.order;
+  return meta;
+}
+
+/** 读 preset 的组成（agent.cordis.yml 的顶层插件行数组）。 */
+function loadPresetComposition(id) {
+  const file = path.join(presetSourceDir(id), 'agent.cordis.yml');
+  if (!fs.existsSync(file)) fatal(`preset composition not found: ${file}`);
+  const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  // !!js 是 Loader 的表达式节点，YAML 解析/再序列化会丢语义，所以显式拒绝而不是静默改写。
+  if (/!!js\b/.test(raw)) {
+    fatal(`${file} 含 !!js 表达式，内联进 profile patch 会丢失语义；请改写为普通 YAML，或改用 legacy 安装`);
+  }
+  let rows;
+  try { rows = yaml.load(raw); }
+  catch (error) { fatal(`failed to parse ${file}: ${error.message}`); }
+  if (!Array.isArray(rows) || rows.length === 0) fatal(`${file} 必须是顶层插件行数组（非空）`);
+  return rows;
+}
+
+/**
+ * 把 preset 里 `./xxx.mjs` 形式的相对插件复制到 profile 目录下并改写路径。
+ *
+ * 插件行被内联进 profile 的 cordis.patch.yml 后，Loader 以该 patch 文件所在目录
+ * 为 baseUrl 解析 `./`，所以相对文件必须真的躺在 profile 目录里。
+ */
+function stageRelativePlugins(rows, id, profileDir) {
+  const stageRoot = path.join(profileDir, PRESET_STAGE_DIR, id);
+  let staged = 0;
+  const walk = (list) => {
+    for (const row of list) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      if (typeof row.name === 'string' && row.name.startsWith('./')) {
+        const rel = row.name.slice(2).replace(/\\/g, '/');
+        if (!rel || rel.startsWith('/') || rel.split('/').includes('..')) {
+          fatal(`preset ${id} 引用了非法插件路径：${row.name}`);
+        }
+        const from = path.join(presetSourceDir(id), ...rel.split('/'));
+        if (!fs.existsSync(from)) fatal(`preset ${id} 引用的插件不存在：${from}`);
+        const to = path.join(stageRoot, ...rel.split('/'));
+        ensureDir(path.dirname(to));
+        fs.copyFileSync(from, to);
+        row.name = `./${PRESET_STAGE_DIR}/${id}/${rel}`;
+        staged++;
+        log(`preset 插件已复制到 profile：${to}`);
+      }
+      // group 行把子插件放在 config 数组里，同样要处理。
+      if (Array.isArray(row.config)) walk(row.config);
+    }
+  };
+  walk(rows);
+  if (staged > 0) writeStageManifest(stageRoot, id);
+}
+
+/**
+ * 给暂存目录写一个带 name + version 的 package.json。
+ *
+ * DSH 0.2 的 `dsh_plugin_packages` 请求扩展（@deepseek-ai/dsh-plugin-package-inventory-deepseek）
+ * 会给每个生效插件推导包身份：相对路径插件会向上找「最近的 package.json」，只要有 name 就必须
+ * 同时有**非空 version**，否则它抛错 → `REQUEST_EXTENSION` → 每个回合都以
+ * 「DeepSeek request extension preparation failed」失败。若不写这个文件，向上找到的会是
+ * profile 自己的 package.json（DSH 生成，只有 name 没有 version），正好踩中。
+ */
+function writeStageManifest(stageRoot, id) {
+  ensureDir(stageRoot);
+  let version = '0.0.0';
+  try {
+    const repo = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+    if (typeof repo.version === 'string' && repo.version) version = repo.version;
+  } catch { /* 仓库 package.json 不可读时用占位版本，非空即可 */ }
+  const text = `${JSON.stringify({ name: `qq-bridge-agent-preset-${id}`, version, private: true }, null, 2)}\n`;
+  const manifestPath = path.join(stageRoot, 'package.json');
+  let current = '';
+  try { current = fs.readFileSync(manifestPath, 'utf8'); } catch { /* 首次写入 */ }
+  if (current === text) return;
+  fs.writeFileSync(manifestPath, text, 'utf8');
+  log(`preset 暂存目录已写入 package.json（DSH 推导插件包身份要求 name+version）：${manifestPath}`);
+}
+
+/** 生成 profile patch 里的 preset 托管区块（legacy 方式下不写入）。 */
+function presetEntries(profileDir, format) {
+  if (format !== 'modern') return '';
+  const inserts = [];
+  for (const id of PRESET_IDS) {
+    const plugins = loadPresetComposition(id);
+    stageRelativePlugins(plugins, id, profileDir);
+    inserts.push({
+      insert: [{
+        id: `preset-${id}`,
+        name: DSH_AGENT_PRESET_PACKAGE,
+        config: { id, ...readPresetMeta(id), plugins },
+      }],
+    });
+  }
+  let out = '# === qq-bridge agent preset BEGIN ===\n';
+  out += '# 由 scripts/setup-dsh.mjs 维护；这段区块会被整体替换，请勿手工编辑内部条目。\n';
+  out += `# DSH 0.2 起 preset 必须声明为 ${DSH_AGENT_PRESET_PACKAGE} 行；本区块由 ${path.join('dsh', 'agent-presets')}/<id>/agent.cordis.yml 生成。\n`;
+  out += yaml.dump(inserts, { lineWidth: -1, noRefs: true });
+  out += '# === qq-bridge agent preset END ===\n';
+  return out;
+}
+
 function mcpEntries() {
   const node = process.execPath;
   const servers = {
@@ -84,7 +259,7 @@ function mcpEntries() {
   return out;
 }
 
-function prepareCordisPatch() {
+function prepareCordisPatch(format) {
   const profileDir = path.join(DSH_HOME, 'profiles', PROFILE);
   const patchFile = path.join(profileDir, 'cordis.patch.yml');
   const original = fs.existsSync(patchFile) ? fs.readFileSync(patchFile, 'utf8') : '';
@@ -100,7 +275,8 @@ function prepareCordisPatch() {
   try { doc = yaml.load(lines.join('\n')) ?? []; }
   catch (error) { fatal(`failed to parse ${patchFile}; file unchanged: ${error.message}`); }
   if (!Array.isArray(doc)) fatal(`${patchFile} must contain a YAML array; file unchanged`);
-  let removed = 0;
+  let removedMcp = 0;
+  let removedPreset = 0;
   const kept = [];
   for (const operation of doc) {
     if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
@@ -109,18 +285,21 @@ function prepareCordisPatch() {
     if (!Object.hasOwn(operation, 'insert')) { kept.push(operation); continue; }
     if (!Array.isArray(operation.insert)) fatal(`insert must be an array in ${patchFile}; file unchanged`);
     const entries = operation.insert.filter((entry) => {
-      if (!MANAGED_MCP_IDS.includes(entry?.id)) return true;
-      removed++;
-      return false;
+      if (MANAGED_MCP_IDS.includes(entry?.id)) { removedMcp++; return false; }
+      if (MANAGED_PRESET_IDS.includes(entry?.id)) { removedPreset++; return false; }
+      return true;
     });
     // Retain shared insert parents and their selectors/other operation fields.
     if (entries.length || Object.keys(operation).length > 1) kept.push({ ...operation, insert: entries });
   }
-  const text = (kept.length ? `${yaml.dump(kept, { lineWidth: -1, noRefs: true })}\n` : '') + mcpEntries();
-  return { patchFile, original, text, removed };
+  // preset 区块在 mcp 区块之前：先声明 preset，再挂 MCP。
+  const text = (kept.length ? `${yaml.dump(kept, { lineWidth: -1, noRefs: true })}\n` : '')
+    + presetEntries(profileDir, format)
+    + mcpEntries();
+  return { patchFile, original, text, removedMcp, removedPreset };
 }
 
-function patchCordis({ patchFile, original, text, removed }) {
+function patchCordis({ patchFile, original, text, removedMcp, removedPreset }) {
   ensureDir(path.dirname(patchFile));
   // Parsing/serialization normalizes formatting; keep the original text (including comments).
   if (original && original !== text) {
@@ -134,7 +313,8 @@ function patchCordis({ patchFile, original, text, removed }) {
   } finally {
     fs.rmSync(temporary, { force: true });
   }
-  log(`cordis.patch.yml: MCP 条目已同步（清理旧条目 ${removed} 条，写入 ${MANAGED_MCP_IDS.length} 条）`);
+  log(`cordis.patch.yml: MCP 条目已同步（清理旧条目 ${removedMcp} 条，写入 ${MANAGED_MCP_IDS.length} 条）`);
+  if (removedPreset > 0) log(`cordis.patch.yml: preset 条目已清理 ${removedPreset} 条`);
 }
 
 function ensurePluginLink() {
@@ -264,7 +444,10 @@ function autoInstallProfileBundles() {
 }
 
 // Validate the existing YAML before changing any presets or configuration.
-const cordisPatch = prepareCordisPatch();
+const presetFormat = detectPresetFormat();
+const cordisPatch = prepareCordisPatch(presetFormat);
+// 老式目录复制始终保留：DSH 0.1.x 靠它加载 preset，0.2+ 靠它给桥接的 preset 组成戳
+// （src/preset-stamp.js 以 .agent-presets/<id>/ 的文件哈希判断会话是否要重建）当基准。
 copyPreset('qq-chat');
 copyPreset('qq-chat-v2');
 patchCordis(cordisPatch);
@@ -272,4 +455,8 @@ const pluginLink = ensurePluginLink();
 patchProfilePackage(pluginLink);
 ensureLocalModeFile();
 autoInstallProfileBundles();
-log('Done. Please restart DSH (or reload the profile) for the new presets/MCP to take effect.');
+if (presetFormat === 'modern') {
+  log('Done. profile patch 已更新；DSH 的 HMR 会监听 cordis.patch.yml 并热加载，若未生效请重启 DSH。');
+} else {
+  log('Done. Please restart DSH (or reload the profile) for the new presets/MCP to take effect.');
+}
