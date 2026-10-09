@@ -41,6 +41,12 @@ export const EXPLICIT_TAGS = Object.freeze([]);
  * 这些词在 pixiv 上是**构图 / 场景 / 玩梗**标签（「寝」「お風呂」「俯视」），
  * 整标签命中就判擦边会大面积误杀正经插画。
  * 注意：限制级（EXPLICIT_TAGS）不在此列。
+ *
+ * 2026-09-25 策略（与 `content-filter.js`、preset 第 5 条一致）：**ACG 体裁/标签词不当越线信号**。
+ * `萝莉` / `合法萝莉` / `ロリ` / `loli` / `正太` 这类是 pixiv 上的正常标签，请求它们等于普通搜图；
+ * 分级（safe / mild / r18）与 `explicitExtra` 才是唯一门槛，**提示词层不做内容审查、不做年龄判断**。
+ * 因此这些词既不该进 `mild` 默认表（会被 safe 档误杀），也不该进 `content-filter` 的默认拦截表。
+ * 管理员仍可按群把无歧义的越线词写进 `ratingWords.explicitExtra` / `moderation.extraPatterns`。
  */
 export const DEFAULT_TOLERATED_TAGS = Object.freeze([
   '水泳', 'お風呂', '風呂', '寝', '趴', '俯视', 'lsp', '福利', '素足', '裸足', '紧身', 'むね'

@@ -15,13 +15,15 @@ import * as slang from './views/slang.js';
 import * as knowledge from './views/knowledge.js';
 import * as memory from './views/memory.js';
 import * as images from './views/images.js';
+import * as stickers from './views/stickers.js';
 import * as persona from './views/persona.js';
 import * as security from './views/security.js';
 import * as ops from './views/ops.js';
 import * as tools from './views/tools.js';
+import * as mc from './views/mc.js';
 
-const VIEWS = [overview, social1, social2, slang, knowledge, memory, images, persona, security, ops, tools];
-const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '系统'];
+const VIEWS = [overview, social1, social2, slang, knowledge, memory, images, stickers, persona, security, ops, tools, mc];
+const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 
 for (const view of VIEWS) defineView(view);

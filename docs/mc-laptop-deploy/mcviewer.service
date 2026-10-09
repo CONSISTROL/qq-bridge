@@ -1,0 +1,28 @@
+[Unit]
+Description=MC 无头 WebGL 渲染（Chrome kiosk 打开 prismarine-viewer，供 X11 抓屏推流）
+Documentation=file:/home/wx/mc/README.md
+After=xvfb.service mcbot.service
+Wants=xvfb.service
+Requires=xvfb.service
+After=mcbot.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=wx
+Group=wx
+WorkingDirectory=/home/wx
+# DISPLAY / 等待逻辑都在启动器里（systemd 的 Environment= 实测不生效）
+Environment=MC_VIEWER_DISPLAY=:99
+ExecStart=/usr/local/bin/mc-viewer-launch.sh
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcviewer
+
+[Install]
+WantedBy=multi-user.target

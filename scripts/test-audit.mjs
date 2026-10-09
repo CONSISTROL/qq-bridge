@@ -10,6 +10,14 @@ const tests = [
   'test-audit-setup.mjs', 'test-audit-setup-guards.mjs',
   'test-md-to-plain.mjs', 'test-slang-learn.mjs', 'test-mux-reconnect.mjs',
   'test-dsh-token-discovery.mjs',
+  // 主题探索的纯逻辑（提示词/解析容错/队列预算去重）
+  'test-topic-explore.mjs',
+  // 豆包接入的纯逻辑（提问词/回答解析/证据分级/**交叉验证护栏**）
+  'test-doubao.mjs',
+  // 出站口播清洗（「行，」「总结：」这类确定性 AI 标签，靠提示词压不住）
+  'test-speech-style.mjs',
+  // 机器人资料的纯逻辑（内容校验/广告识别/变更历史/回滚取值）
+  'test-self-profile.mjs',
   // stop.sh 的兜底清理：只认真实的 node 进程，不能按命令行子串误杀调用方
   // （实测 `node --check src/bridge.js && ./restart.sh` 会把执行它的 shell 杀掉）。
   'test-stop-guard.mjs',

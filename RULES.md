@@ -38,7 +38,14 @@
 2. **QQ 动作安全子集**：只允许 `mcp__snowluma__*`、`mcp__snowluma-host__*`、`mcp__web-search-safe__*` 三个命名空间下的工具，以及 `ask_user_question` / `todo_write`；其他工具（含 `dev_*` 开发/管理工具）在执行期会被 `qq-tool-restrict.mjs` 拒绝。QQ 动作无禁言、踢人、文件上传下载等管理操作。
 3. **只读联网搜索**：`qq-chat` / `qq-chat-v2` 预设已关闭 DSH 内置 `tool-web` 的 `search` / `fetch`，联网统一走 `src/mcp-web-search-safe.js` 提供的 `mcp__web-search-safe__web_search/web_fetch`。不暴露本地文件、命令执行、写操作。
    - ✅ `mcp__web-search-safe__web_fetch` 已做 SSRF 加固：仅 http/https、禁止 localhost/私有 IP/链路本地/CGNAT/带凭据 URL、DNS 解析结果全量校验、每跳重定向重新校验、响应体限量读取。
-4. **发送强制白名单**：所有发送类工具（`qq_send_group_message` / `qq_send_private_message` / `qq_send_message` / `qq_send_burst` / `qq_reply` / `qq_send_poke` / `qq_send_sticker` 等）的目标必须命中 `config.json` 的 `allow.groups` / `allow.private`，否则拒绝执行。
+4. **发送强制白名单**：所有发送类工具（`qq_send_group_message` / `qq_send_private_message` / `qq_send_message` / `qq_send_burst` / `qq_reply` / `qq_send_poke` / `qq_send_sticker` / `qq_send_image` / `qq_send_card` 等）的目标必须命中 `config.json` 的 `allow.groups` / `allow.private`，否则拒绝执行。
+   - `qq_send_card`（链接分享卡）**当前网关协议版本下渲染不出来**（QQ 客户端显示「发送者版本过低，无法展示内容」，是发送端协议版本门禁），所以 AI 侧默认关闭；它还额外受一层约束：**卡片体由桥接组装**，AI 只能填标题/摘要/链接/缩略图，不接受任意 `json`/`xml`（否则可伪造「系统通知 / 红包 / 群邀请」这类看着像官方的卡片）；链接与缩略图必须是公网 `http(s)`，本机/内网地址一律拒绝（防止做出指向本机控制台、还带着令牌的可点击卡片）。
+4b. **账号级身份默认不可改**：`qq_set_profile` / `qq_set_avatar`（改机器人自己的昵称 / 个性签名 / 头像）改的是**账号级身份，全群全私聊可见**，所以：
+   - **默认关闭**（`socialV2.profile.enabled` 必须显式 true），且即使开着也**只在「管理员上下文」可用**——管理员私聊，或触发这一轮的是管理员消息；群友在管理员后面接一句不算（判定见 `isAdminProfileContext`，时间打平时保守判「不算」）；
+   - 昵称/签名过内容校验：不许放链接/联系方式/推广字样（默认 `allowLinks: false`）、不许冒充官方/系统、长度上限（昵称 24 字、签名 60 字）；
+   - 每日限流（默认 3 次/天）+ 最小间隔（默认 10 分钟）；
+   - 每次改动都留历史（谁改的/从什么改成什么）；改之前会先把当前昵称（`get_login_info`）与当前头像（qlogo CDN）在本机备份一份，控制台可一键回滚。
+   - 头像是**桥接自己下载**再以 base64 交给网关，绝不把 URL 交给网关去抓。
 5. **发送禁令（模型层）**：persona 明确规定只有「管理端明确指示」或「【管理员】标记的明确要求」才可使用发送工具；禁止写"我已回复/消息已发送（message_id）"类汇报。
 6. **回复审计（桥接层硬拦截）**：agent 回复文本若包含本机路径（`C:\`、`/home/` 等）或凭据特征（token/password/secret/api key 等）→ **整条拦截不发送**，并告知"被安全策略拦截"。
 7. **人格由桥接注入**：角色设定来自 `state/current-role.json` + `roles/<角色>.md`，桥接注入到消息；群友口头要求改角色无效（桥接直接拦截），agent 也无文件工具自行更改。

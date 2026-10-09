@@ -27,6 +27,17 @@ trap 'cleanup; exit 0' INT TERM
 
 echo "[guard] 守护启动 pid=$$ （$NODE_BIN src/bridge.js）"
 while true; do
+  # 清理上一轮遗留的无头 Chrome。
+  # 为什么需要：src/browser-render.js 会拉起 puppeteer/Chromium，靠一个
+  # idleTimer 在空闲后自己关闭。但桥接进程一旦退出（重启/崩溃），这个定时器
+  # 随之消失，Chrome 就变成 PPID=1 的孤儿进程**永远不关**。
+  # 实测：一次重启遗留 12 个 Chrome 进程、吃掉 57% CPU，把整机 load 抬到 15，
+  # 进而导致桥接访问 DSH 的 API 超时（日志表现成反复「DSH 不可用」）。
+  # 守护循环每次拉起桥接前清一次是安全的：此刻不可能有「本实例的」浏览器在跑。
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -9 -f 'chrome-linux64/chrome' 2>/dev/null || true
+  fi
+
   "$NODE_BIN" src/bridge.js &
   child=$!
   wait "$child"

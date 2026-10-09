@@ -1,0 +1,77 @@
+    <section class="card span-all">
+      <h2><span class="sec-no">12</span>表情包：QQ 收藏夹的镜像与管理</h2>
+      <div class="meta">
+        这里同步并管理 <b>QQ 账号本身的收藏表情</b>（就是你在 QQ 里「收藏」的那批）。两套备注分清楚：
+        <b>QQ 官方备注</b>（<code>desc</code>）改的是 QQ 收藏夹里的备注，<b>全 QQ 可见</b>；
+        <b>本地备注</b>（<code>localRemark</code>）只存在桥接里、<b>只给 AI 看</b>——AI 挑表情时优先认它，
+        认不出才退回 QQ 备注和长笔记，所以想起个更准的名字就改本地备注，别去动 QQ 那份。
+      </div>
+      <div class="meta" id="stkSummary">加载中…</div>
+      <div class="row" style="margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="stkAutoLabel">
+          <span>AI 空闲时自己给没备注的表情补备注</span>
+        </label>
+        <label class="inline-tip" style="display:flex;align-items:center;gap:4px;margin:0" title="每张表情图都会进模型上下文，所以默认压得小；1~6">
+          一轮最多 <input type="number" id="stkAutoLabelPerTurn" min="1" max="6" step="1" style="width:60px"> 个
+        </label>
+        <button id="stkLabelNow" class="small">让 AI 现在补一批</button>
+        <label class="inline-tip" style="display:flex;align-items:center;gap:4px;margin:0" title="点按钮时一次补几个；1~10">
+          一次 <input type="number" id="stkManualLabelCount" min="1" max="10" step="1" style="width:60px"> 个
+        </label>
+        <span class="meta" id="stkAutoLabelMsg"></span>
+      </div>
+      <span class="meta" id="stkMsg"></span>
+
+      <div class="divider"></div>
+      <div class="row">
+        <input type="text" id="stkSearch" placeholder="搜索 QQ 备注 / 本地备注 / 笔记 / 标签 / md5" style="flex:1;min-width:220px">
+        <select id="stkCount" style="width:130px">
+          <option value="60">显示 60</option>
+          <option value="120" selected>显示 120</option>
+          <option value="300">显示 300</option>
+        </select>
+        <label class="inline-tip" style="display:flex;align-items:center;gap:4px;margin:0"><input type="checkbox" id="stkOnlyUnlabeled"> 只看没备注的</label>
+        <button id="stkSync" class="small">同步 QQ 收藏夹</button>
+        <button id="stkRefresh" class="small">刷新</button>
+      </div>
+      <div class="meta">点任意一张打开详情：可以改本地备注/标签/用法/笔记，也能改 QQ 备注、置顶、或从 QQ 收藏里删掉。<b>没备注的表情 AI 会自己看图补上</b>（它一轮补 1~2 个），你也可以在这里直接补。</div>
+
+      <div class="divider"></div>
+      <div id="stkGrid" class="stk-grid">加载中…</div>
+      <div id="stkEmpty" class="placeholder" style="display:none">
+        <h3>还没有同步到收藏表情</h3>
+        <p>点上面的<b>同步 QQ 收藏夹</b>拉一次；如果是刚给机器人账号收藏了表情，同步后就会出现。</p>
+      </div>
+    </section>
+
+    <div class="modal-overlay" id="stkModal">
+      <div class="modal">
+        <h3 id="stkModalTitle">表情详情</h3>
+        <div class="meta" id="stkModalMeta"></div>
+        <div class="row" style="align-items:flex-start;gap:14px;margin-top:10px">
+          <img id="stkModalImg" class="stk-preview" src="" alt="表情预览">
+          <div style="flex:1;min-width:240px">
+            <label>本地备注（只给 AI 看）</label>
+            <input type="text" id="stkLocalRemark" maxlength="40" placeholder="例如：捂耳朵猫（不想听）">
+            <label>QQ 官方备注（改 QQ 收藏夹，全 QQ 可见）</label>
+            <input type="text" id="stkQqRemark" maxlength="50" placeholder="留空 = 清除备注">
+            <label>标签（逗号分隔）</label>
+            <input type="text" id="stkTags" placeholder="无语, 不想听, 怼人">
+            <label>用法（什么场合该发它）</label>
+            <input type="text" id="stkUsage" placeholder="被念烦了、装没听见时用">
+            <label>AI 笔记（看图后的理解，长文本）</label>
+            <textarea id="stkNote" rows="3" placeholder="这只猫捂着耳朵……"></textarea>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="row">
+          <button id="stkSaveLocal" class="small">保存本地认知</button>
+          <button id="stkSaveQq" class="small">保存 QQ 备注</button>
+          <button id="stkPromote" class="small">置顶到最前</button>
+          <button id="stkDelete" class="small danger">从 QQ 收藏删除</button>
+          <button id="stkClose" class="small" style="margin-left:auto">关闭</button>
+        </div>
+        <div class="meta" id="stkModalMsg"></div>
+      </div>
+    </div>

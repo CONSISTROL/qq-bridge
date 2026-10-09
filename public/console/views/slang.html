@@ -18,7 +18,8 @@
           <button id="slangBatchReject" class="small">批量拒绝</button>
           <button id="slangBatchDeleteCand" class="small danger">批量删除候选</button>
           <button id="slangExtract" class="small">立即提取候选</button>
-          <button id="slangResearch" class="small">研究全部候选</button>
+          <button id="slangResearch" class="small" title="只研究「没研究过 / 有新群聊证据」的候选；已研究出无定论的不会重复烧 token">研究待研究候选</button>
+          <button id="slangResearchForce" class="small" title="无视「已研究过」标记，把全部候选重新研究一遍（费 token，慎用）">强制重研全部候选</button>
         </div>
         <div class="row" style="margin-top:8px">
           <input type="text" id="slangSearchCand" placeholder="搜索词条 / 草稿含义 / 语境证据" style="flex:1">
@@ -70,7 +71,63 @@
       </div>
 
       <div class="divider"></div>
-      <div class="meta" style="margin-bottom:6px">手动添加黑话</div>
+      <div class="meta" style="margin-bottom:6px">主题探索（自主扩展学习）
+        <span style="opacity:.75">——给一个关键词，AI 自己在后台联网把这一圈的梗和关联主题学回来（例如 mygo → Ave Mujica → 夢限大）。挖到的梗直接进黑话库并生效，主题综述进知识库。</span>
+      </div>
+      <div class="row">
+        <input type="text" id="exploreSeed" placeholder="种子关键词，如：mygo" style="flex:1">
+        <input type="number" id="exploreMaxTopics" min="1" max="60" step="1" style="width:110px" title="最多探几个主题">
+        <input type="number" id="exploreMaxDepth" min="0" max="4" step="1" style="width:96px" title="关联展开几层">
+        <button id="exploreStart" class="small">开始探索</button>
+        <button id="exploreRefresh" class="small">刷新进度</button>
+      </div>
+      <div class="meta" id="exploreMsg" style="margin-top:4px"></div>
+      <div class="slang-scroll" id="exploreJobs" style="max-height:260px">加载中…</div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">掉线补拉
+        <span style="opacity:.75">—— QQ 掉线/网关抖动期间的消息网关不会重发，桥接会在重连后自己补回来。
+        补回来只当上下文；只有「条数少且够新」才唤醒 AI，避免对几小时前的旧账刷屏。</span>
+      </div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" class="switch" id="backfillEnabled"> 启用
+        </label>
+        <input type="number" id="backfillMaxMessages" min="1" max="500" style="width:90px" title="每个会话单次最多补多少条">
+        <input type="number" id="backfillWakeMaxMessages" min="0" max="500" style="width:90px" title="补回条数 ≤ 这个值才唤醒 AI">
+        <input type="number" id="backfillWakeMaxAgeMin" min="0" style="width:90px" title="最早一条不超过这么多分钟才唤醒">
+        <button id="backfillNow" class="small">立即补拉一次</button>
+        <button id="backfillSave" class="small">保存</button>
+        <span class="meta" id="backfillMsg"></span>
+      </div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">豆包网页版通道（梗考究的<b>一路来源</b>）
+        <span style="opacity:.75">—— 它是另一个模型的说法，不是知识库。只在异步考究链里当佐证：
+        <b>单独一路永远不自动转正</b>，要和 B站证据 / 群聊语境对得上才收。需要一次性扫码登录。</span>
+      </div>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" class="switch" id="doubaoEnabled"> 启用
+        </label>
+        <button id="doubaoProbe" class="small">探活 / 查登录态</button>
+        <button id="doubaoLogin" class="small">扫码登录</button>
+        <button id="doubaoStop" class="small">关闭浏览器</button>
+        <span class="meta" id="doubaoMsg"></span>
+      </div>
+      <div class="meta" id="doubaoStatus" style="margin-top:6px">加载中…</div>
+      <div id="doubaoQrWrap" style="display:none;margin-top:8px;text-align:center">
+        <img id="doubaoQr" alt="豆包登录二维码" style="width:180px;height:180px;image-rendering:pixelated;border:1px solid var(--line);border-radius:8px;background:#fff">
+        <div class="meta">用手机豆包 / 飞书 App 扫码；扫完这里会自动变成「已登录」。</div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="doubaoAskPrompt" placeholder="测试提问，如：哈基米是什么梗" style="flex:1">
+        <button id="doubaoAsk" class="small">问一句试试</button>
+      </div>
+      <div class="meta" id="doubaoAskOut" style="margin-top:6px;white-space:pre-wrap"></div>
+
+      <div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">手动添加黑话 <span style="opacity:.75">（入库为候选，需在「候选」标签页确认后才会注入提示词）</span></div>
       <div class="row">
         <input type="text" id="slangContent" placeholder="词条，如：绝绝子" style="flex:1">
         <input type="text" id="slangMeaning" placeholder="含义，如：很好、很棒" style="flex:1">
@@ -80,7 +137,7 @@
         <input type="text" id="slangExample" placeholder="示例（可选）" style="flex:1">
       </div>
       <div class="row" style="margin-top:8px">
-        <button id="slangAdd" class="small">添加入库（确认）</button>
+        <button id="slangAdd" class="small">加入候选</button>
       </div>
       <details style="margin-top:10px">
         <summary class="meta">黑话系统参数（可调）</summary>

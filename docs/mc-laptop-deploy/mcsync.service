@@ -1,0 +1,25 @@
+[Unit]
+Description=MC 状态同步（笔记本 → 服务器镜像，供 qq-bridge 读取）
+Documentation=file:/home/wx/mc/README.md
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+After=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=wx
+Group=wx
+ExecStart=/usr/local/bin/mcsync-daemon.sh
+
+# 隧道断了自己回来
+Restart=always
+RestartSec=15
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcsync
+
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

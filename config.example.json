@@ -38,6 +38,15 @@
     "interceptNotify": true
   },
   "slang": {
+    "autoConfirmResearched": true,
+    "explore": {
+      "enabled": true,
+      "maxDepth": 2,
+      "maxTopics": 15,
+      "maxJobsPerHour": 6,
+      "maxConcurrent": 1,
+      "turnTimeoutMs": 300000
+    },
     "enabled": true,
     "extractMinMessages": 10,
     "extractCooldownMs": 300000,
@@ -49,7 +58,17 @@
     "injectMax": 8,
     "learnerPreset": "qq-chat",
     "workspaceTitle": "QQ 黑话学习",
-    "autoResearch": true
+    "autoResearch": true,
+    "doubao": {
+      "enabled": false,
+      "profileDir": "",
+      "memoryMax": "900M",
+      "memorySwapMax": "1500M",
+      "idleCloseMs": 300000,
+      "timeoutMs": 90000,
+      "maxTerms": 3,
+      "budgetMs": 180000
+    }
   },
   "social": {
     "enabled": true,
@@ -128,11 +147,30 @@
       "setMemberCard": false,
       "video": true,
       "videoFrames": true,
-      "runTask": true
+      "runTask": true,
+      "sendCard": false,
+      "exploreTopic": true,
+      "setProfile": false
     },
     "work": {
       "enabled": true,
       "maxSessions": 2
+    },
+    "profile": {
+      "enabled": false,
+      "adminWindowMs": 600000,
+      "minIntervalMs": 600000,
+      "maxPerDay": 3,
+      "allowLinks": false,
+      "maxAvatarBytes": 5242880
+    },
+    "card": {
+      "enabled": true,
+      "maxTitleChars": 60,
+      "maxDescChars": 90,
+      "maxPerMinute": 5,
+      "maxPerHour": 30,
+      "allowHosts": []
     },
     "wake": {
       "defaultMode": "diving",
@@ -203,12 +241,38 @@
       "maxListCount": 100,
       "includeInPrompt": true,
       "promptMaxStickers": 8,
+      "autoLabel": true,
+      "autoLabelPerTurn": 2,
+      "manualLabelCount": 5,
       "collect": {
         "enabled": true,
         "maxPerMinute": 2,
         "maxPerHour": 10,
         "maxRemarkChars": 20
       }
+    },
+    "video": {
+      "enabled": true,
+      "maxBytes": 33554432,
+      "maxFrames": 6,
+      "frameMaxWidth": 800,
+      "ffmpegPath": "",
+      "probeTimeoutMs": 20000,
+      "frameTimeoutMs": 30000,
+      "totalTimeoutMs": 90000
+    },
+    "forward": {
+      "imageLimit": 8,
+      "maxImageLimit": 20,
+      "maxTotalBytes": 16777216,
+      "messageLimit": 50,
+      "messageChars": 500,
+      "nestedDepth": 2,
+      "nestedMessages": 12,
+      "nestedDeepMessages": 8,
+      "nestedChars": 300,
+      "maxNestedForwards": 10,
+      "nestedFetchBudget": 20
     },
     "image": {
       "enabled": true,
@@ -223,14 +287,67 @@
       "rating": "safe",
       "ratingWords": {
         "mild": [
-          "巨乳", "爆乳", "美乳", "微乳", "貧乳", "水着", "競泳水着", "ビキニ", "泳装", "比基尼",
-          "下着", "ランジェリー", "ブラジャー", "パンツ", "ぱんつ", "内衣", "黑丝", "白丝", "ストッキング",
-          "ニーソ", "ニーソックス", "大腿", "太もも", "ふともも", "腿", "お尻", "尻", "谷間", "胸",
-          "セクシー", "性感", "魅惑", "魅魔", "サキュバス", "誘惑", "見せパン", "絶対領域", "露背",
-          "チラリ", "チラ見せ", "黑丝袜", "白丝袜", "网袜", "丝袜", "乳", "乳摇", "抖胸"
+          "巨乳",
+          "爆乳",
+          "美乳",
+          "微乳",
+          "貧乳",
+          "水着",
+          "競泳水着",
+          "ビキニ",
+          "泳装",
+          "比基尼",
+          "下着",
+          "ランジェリー",
+          "ブラジャー",
+          "パンツ",
+          "ぱんつ",
+          "内衣",
+          "黑丝",
+          "白丝",
+          "ストッキング",
+          "ニーソ",
+          "ニーソックス",
+          "大腿",
+          "太もも",
+          "ふともも",
+          "腿",
+          "お尻",
+          "尻",
+          "谷間",
+          "胸",
+          "セクシー",
+          "性感",
+          "魅惑",
+          "魅魔",
+          "サキュバス",
+          "誘惑",
+          "見せパン",
+          "絶対領域",
+          "露背",
+          "チラリ",
+          "チラ見せ",
+          "黑丝袜",
+          "白丝袜",
+          "网袜",
+          "丝袜",
+          "乳",
+          "乳摇",
+          "抖胸"
         ],
         "tolerated": [
-          "水泳", "お風呂", "風呂", "寝", "趴", "俯视", "lsp", "福利", "素足", "裸足", "紧身", "むね"
+          "水泳",
+          "お風呂",
+          "風呂",
+          "寝",
+          "趴",
+          "俯视",
+          "lsp",
+          "福利",
+          "素足",
+          "裸足",
+          "紧身",
+          "むね"
         ],
         "explicitExtra": []
       },
@@ -263,6 +380,10 @@
     },
     "proactive": {
       "enabled": true,
+      "rememberOpeners": 5,
+      "suggestDomains": 3,
+      "avoidRepeat": true,
+      "avoidKeywords": [],
       "checkIntervalMinMs": 1800000,
       "checkIntervalMaxMs": 5400000,
       "idleThresholdMs": 900000,
@@ -285,9 +406,16 @@
       "remindMinAskers": 2,
       "similarityThreshold": 0.62,
       "conflictMinCosine": 0.8
+    },
+    "backfill": {
+      "enabled": true,
+      "maxMessages": 100,
+      "wakeMaxMessages": 15,
+      "wakeMaxAgeMs": 600000
     }
   },
   "moderation": {
+    "_comment": "入站内容策略：命中的消息不进模型（桥接自己回固定话/静默）。patterns 留空 = 不拦。别把 ACG 体裁/标签词写进来：萝莉 / 合法萝莉 / ロリ / loli / 正太 / JS / 幼 都是 pixiv 上的正常标签，请求它们等于普通搜图，写进词表只会误杀（真要对某群收紧就写 extraPatterns）。只放无歧义的越线词（明确的真人未成年性内容、R-18G 之类）。",
     "enabled": true,
     "action": "reply",
     "replyText": "这个我不接，换一个吧",

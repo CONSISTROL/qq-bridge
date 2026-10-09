@@ -181,18 +181,21 @@ function collectSegmentMeta(content) {
 export function formatForwardResponse(data, options = {}) {
   const maxMessages = Math.max(1, Math.min(100, Number(options.maxMessages) || 50));
   const maxCharsPerMessage = Math.max(1, Math.min(2000, Number(options.maxCharsPerMessage) || 500));
+  const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
   const raw = Array.isArray(data) ? data : (Array.isArray(data?.messages) ? data.messages : []);
   const total = raw.length;
-  const truncatedByCount = total > maxMessages;
+  const window = raw.slice(offset, offset + maxMessages);
+  const truncatedByCount = total > offset + window.length;
   let textTruncated = false;
-  const messages = raw.slice(0, maxMessages).map((node, index) => {
+  const messages = window.map((node, index) => {
     const fullText = nodeText(node);
     const text = fullText.slice(0, maxCharsPerMessage);
     if (fullText.length > maxCharsPerMessage) textTruncated = true;
     const content = nodeContent(node);
     const meta = collectSegmentMeta(content);
     return {
-      index: index + 1,
+      // index 是「在整条转发里的绝对序号」，翻页时不会错位。
+      index: offset + index + 1,
       sender: senderName(node),
       userId: senderUserId(node),
       time: nodeTime(node),
@@ -207,6 +210,8 @@ export function formatForwardResponse(data, options = {}) {
   });
   return {
     total,
+    offset,
+    hasMore: offset + window.length < total,
     truncated: truncatedByCount || textTruncated,
     textTruncated,
     messages

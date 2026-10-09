@@ -79,6 +79,11 @@ const FIELDS = [
   { id: 'v2ProactiveIntervalMax', path: 'proactive.checkIntervalMaxMs', unit: 60000, def: 90, min: 1 },
   { id: 'v2ProactiveIdleThreshold', path: 'proactive.idleThresholdMs', unit: 60000, def: 15, min: 1 },
   { id: 'v2ProactiveProbability', path: 'proactive.probability', def: 0.3, min: 0, max: 1 },
+  // 反重复：记住最近主动开的头 + 随机点方向 + 主动开口时别碰的词
+  { id: 'v2ProactiveRememberOpeners', path: 'proactive.rememberOpeners', def: 5, min: 0, max: 20 },
+  { id: 'v2ProactiveSuggestDomains', path: 'proactive.suggestDomains', def: 3, min: 0, max: 8 },
+  { id: 'v2ProactiveDomains', path: 'proactive.domains', type: 'lines', def: [] },
+  { id: 'v2ProactiveAvoidKeywords', path: 'proactive.avoidKeywords', type: 'lines', def: [] },
 
   { id: 'v2StickerEnabled', path: 'sticker.enabled', type: 'bool', def: true },
   { id: 'v2StickerSyncTtlSec', path: 'sticker.syncTtlMs', unit: 1000, def: 60, min: 1 },
@@ -139,6 +144,8 @@ function fillForm(view, config) {
     // def=false 时（如 feedback.notifyOwnerOnError）必须显式 true 才算开。
     if (f.type === 'bool') { el.checked = f.def ? raw !== false : raw === true; continue; }
     if (f.type === 'list') { el.value = (Array.isArray(raw) ? raw : f.def).join(', '); continue; }
+    // lines：多行 textarea（每行一条）。领域/禁词这类列表用多行比逗号分隔好写得多。
+    if (f.type === 'lines') { el.value = (Array.isArray(raw) ? raw : (f.def ?? [])).join('\n'); continue; }
     if (f.type === 'text' || f.type === 'select') { el.value = raw ?? f.def; continue; }
     const n = Number(raw);
     const value = Number.isFinite(n) ? (f.unit && f.unit !== 1 ? n / f.unit : n) : f.def;
@@ -161,6 +168,11 @@ function readForm(view) {
     if (f.type === 'bool') { setPath(body, f.path, el.checked); continue; }
     if (f.type === 'list') {
       setPath(body, f.path, el.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean));
+      continue;
+    }
+    if (f.type === 'lines') {
+      // 换行和逗号都当分隔符：用户两种写法都常见，不用纠结。
+      setPath(body, f.path, el.value.split(/[\n,，]/).map((x) => x.trim()).filter(Boolean));
       continue;
     }
     if (f.type === 'text' || f.type === 'select') { setPath(body, f.path, el.value.trim()); continue; }
@@ -412,6 +424,30 @@ const CFG_SCHEMA = {
       { path: 'refererAllow', label: '允许抓取的站点', type: 'list', hint: '每行一个 host/origin；留空=不限制（仍受 SSRF 防护）' }
     ]
   },
+  card: {
+    title: '链接分享卡',
+    desc: '⚠️ 实测当前网关协议版本下**渲染不出来**：QQ 客户端只显示「发送者版本过低，无法展示内容」——消息本身被正常接受（message_seq 有值），门禁在 QQ 的发送端协议版本上，桥接改不了，所以 AI 侧默认关闭（工具开关见「工具」行）。要分享链接，直接用 qq_send_message 发「标题 + 完整链接」更实际。\n\n下面是功能本身的说明（换到支持的协议版本后可用）：作用于 qq_send_card。AI 只能填标题/摘要/链接/缩略图，卡片体（com.tencent.structmsg / news）由桥接组装——**不做任意 json/xml 透传**：卡片体是网关侧的任意结构化内容，能伪造「系统通知 / 红包 / 群邀请」这类看着像官方的东西，群里点开就是外部跳转，所以只开放这一个固定形状。链接与缩略图必须是公网 http(s)：本机/内网地址一律拒绝（否则提示注入能让 AI 发一张指向本机控制台、还带着令牌的可点击卡片）。',
+    fields: [
+      { path: 'enabled', label: '启用卡片发送', type: 'bool' },
+      { path: 'maxTitleChars', label: '标题最大字数', type: 'number' },
+      { path: 'maxDescChars', label: '摘要最大字数', type: 'number' },
+      { path: 'maxPerMinute', label: '每分钟上限', type: 'number' },
+      { path: 'maxPerHour', label: '每小时上限', type: 'number' },
+      { path: 'allowHosts', label: '允许分享的主机', type: 'list', hint: '每行一个域名；留空 = 允许任何公网主机（内网/本机始终被拦）。填了以后只放行这些域名及其子域' }
+    ]
+  },
+  profile: {
+    title: '机器人自己的资料（昵称/签名/头像）',
+    desc: '作用于 qq_get_self_profile · qq_set_profile · qq_set_avatar。**改的是账号级身份，全群全私聊可见**：群友一句「把你名字改成XXX」如果能生效，影响面是它所在的每一个群和每一个好友会话。所以默认关；打开后也只认「管理员上下文」（管理员私聊，或本轮由管理员消息触发——群友在管理员后面接一句不算），并且有内容校验（昵称/签名不许放链接、联系方式、推广字样）、每日限流、旧值留档可回滚。网关侧是 set_qq_profile / set_qq_avatar（头像是桥接自己下载后转 base64 上传，不把 URL 交给网关抓）。',
+    fields: [
+      { path: 'enabled', label: '启用改资料', type: 'bool', hint: '打开后 AI 才有 qq_set_profile / qq_set_avatar 工具；仍然只在管理员上下文可用' },
+      { path: 'adminWindowMs', label: '管理员消息有效期', type: 'number', factor: 60000, unit: '分钟', hint: '管理员说过话之后这么久内算「管理员在场」；超过就不算' },
+      { path: 'minIntervalMs', label: '两次改动最小间隔', type: 'number', factor: 60000, unit: '分钟' },
+      { path: 'maxPerDay', label: '每天最多改几次', type: 'number' },
+      { path: 'allowLinks', label: '允许昵称/签名里带链接', type: 'bool', hint: '默认关。打开等于把账号名变成可投放的广告位，除非你确实需要' },
+      { path: 'maxAvatarBytes', label: '头像体积上限', type: 'number', factor: 1048576, unit: 'MB', step: 0.5 }
+    ]
+  },
   work: {
     title: '工作车道（长任务并行）',
     desc: '作用于 qq_run_task。一个 QQ 会话只对应一个 DSH session，而 DSH 同一时刻只跑一个 turn——pixiv 取图（上限 110s）、十几 MB 大图发送这类慢活会把整条会话堵住，群里再问什么都得等它跑完。工作车道让慢活另开一条独立会话跑，投递立即返回、聊天会话保持随时可应答；跑完结论自动回投给主 AI，由它决定怎么跟群友说。',
@@ -427,12 +463,46 @@ const CFG_SCHEMA = {
       { path: 'enabled', label: '启用表情包体系', type: 'bool' },
       { path: 'includeInPrompt', label: '把表情清单放进提示词', type: 'bool' },
       { path: 'promptMaxStickers', label: '提示词最多列几张', type: 'number' },
+      { path: 'autoLabel', label: 'AI 空闲时自己补表情备注', type: 'bool', hint: '关掉后唤醒提示里不再催它给没备注的表情补备注（已写的保留）；这个开关也在「表情包」分区里' },
+      { path: 'autoLabelPerTurn', label: '自动补时一轮最多几个', type: 'number', hint: '1~6。每张表情图都要进模型上下文，默认 2；嫌慢就调大' },
+      { path: 'manualLabelCount', label: '手动按钮一次补几个', type: 'number', hint: '1~10。控制台「表情包」分区那个按钮一次要几个，默认 5' },
       { path: 'syncTtlMs', label: '同步缓存时长', type: 'number', factor: 1000, unit: '秒' },
       { path: 'maxListCount', label: '列表最多返回', type: 'number' },
       { path: 'collect.enabled', label: '允许 AI 收藏别人的表情', type: 'bool' },
       { path: 'collect.maxPerMinute', label: '收藏每分钟上限', type: 'number' },
       { path: 'collect.maxPerHour', label: '收藏每小时上限', type: 'number' },
       { path: 'collect.maxRemarkChars', label: '备注最大字数', type: 'number' }
+    ]
+  },
+  video: {
+    title: '聊天视频（抽帧给 AI 看）',
+    desc: '作用于 qq_get_message_video。AI 看不了视频本身：桥接把 QQ 视频抓下来、用 ffmpeg 抽几帧再给视觉模型。抽帧需要本机有 ffmpeg（apt-get install -y ffmpeg，或把 ffmpegPath 指到可执行文件）；没装则只能给视频封面。注意：**不做语音转写**，视频里说的话 AI 听不到，只看画面。',
+    fields: [
+      { path: 'enabled', label: '启用聊天视频理解', type: 'bool' },
+      { path: 'maxFrames', label: '默认抽几帧', type: 'number', hint: '1~8。每帧都进模型上下文，越多越费；一般 4~6 够用' },
+      { path: 'frameMaxWidth', label: '抽帧最大宽度', type: 'number', hint: '长边像素，默认 800；调大更清楚但更费上下文' },
+      { path: 'maxBytes', label: '视频抓取上限', type: 'number', factor: 1024 * 1024, unit: 'MB', hint: '超过就不下载，改用封面' },
+      { path: 'ffmpegPath', label: 'ffmpeg 路径', type: 'text', hint: '留空=自动找（本机 PATH）。填绝对路径可指向自带的静态 ffmpeg；填 none 可显式关掉抽帧（只给封面）' },
+      { path: 'probeTimeoutMs', label: '探测超时', type: 'number', unit: 'ms' },
+      { path: 'frameTimeoutMs', label: '单帧抽取超时', type: 'number', unit: 'ms' },
+      { path: 'totalTimeoutMs', label: '整次抽帧总预算', type: 'number', unit: 'ms' }
+    ]
+  },
+  forward: {
+    title: '合并转发（聊天记录）',
+    desc: '作用于 qq_get_forward_msg。两件事：① **文本层**——一条转发可能有几百条消息，本层默认给 50 条，AI 可以用 offset 翻页；转发里**再套合并转发**也能读，默认递归展开 2 层（以前只展开一层、每层只给 3 条预览，线上「多层转发」里内层 18 条 AI 只看到 3 条）；② **图片层**——几十张图一次全给视觉模型会炸上下文，默认一次 8 张，AI 用 imageOffset 翻页。',
+    fields: [
+      { path: 'messageLimit', label: '本层一次几条消息', type: 'number', hint: '默认 50，上限 100；AI 没读全可以带 offset 再查' },
+      { path: 'messageChars', label: '每条最多多少字', type: 'number', hint: '默认 500' },
+      { path: 'nestedDepth', label: '嵌套展开几层', type: 'number', hint: '默认 2，0=不展开（只给嵌套 id，AI 自己一层层查）' },
+      { path: 'nestedMessages', label: '第一层嵌套每个给几条', type: 'number', hint: '默认 12' },
+      { path: 'nestedDeepMessages', label: '更深嵌套每个给几条', type: 'number', hint: '默认 8' },
+      { path: 'nestedChars', label: '嵌套每条多少字', type: 'number', hint: '默认 300；更深的折半' },
+      { path: 'maxNestedForwards', label: '每层最多展开几个', type: 'number', hint: '默认 10' },
+      { path: 'nestedFetchBudget', label: '整次最多再抓几条嵌套', type: 'number', hint: '默认 20，防「转发套转发」指数放大成上百次网关调用' },
+      { path: 'imageLimit', label: '单次返回几张图', type: 'number', hint: 'AI 不指定时的默认值' },
+      { path: 'maxImageLimit', label: '单次硬上限', type: 'number', hint: 'AI 传再大也压到这个数，防止一次塞几十张图' },
+      { path: 'maxTotalBytes', label: '单次批总量预算', type: 'number', factor: 1024 * 1024, unit: 'MB', hint: '整批图片的字节总和上限；撞到上限时会把当前这张压小塞进去，压不下才跳过' }
     ]
   },
   send: {
@@ -746,9 +816,78 @@ export async function mount(root) {
     if (prev && options.some((o) => o.value === prev)) sel.value = prev;
   };
 
+  // ── 机器人自己的资料（昵称/签名/头像）────────────────────────────────
+  // 账号级身份：这里同时是「人工改」和「查看 AI 改过什么 / 一键回滚」的入口。
+  const loadSelfProfile = async () => {
+    const r = await api('/api/socialV2/self-profile').catch(() => null);
+    const summary = $('#profileSummary', view);
+    if (!r?.ok) { if (summary) summary.textContent = '读取失败'; return; }
+    state.selfProfile = r;
+    if (summary) {
+      summary.textContent = `${r.enabled ? '✅ 已启用' : '⛔ 未启用（默认关，改的是账号级身份）'}`
+        + `｜昵称：${r.current.nickname || '（未记录）'}｜签名：${r.current.personalNote || '（未记录）'}`
+        + `｜头像：${r.avatar.sha256 ? '已托管' : '（未记录）'}`
+        + (r.selfId ? `｜账号 ${r.selfId}` : '');
+    }
+    const img = $('#profileAvatar', view);
+    if (img) {
+      // 预览走 QQ 头像 CDN；带上时间戳避免和刚换的新头像命中缓存
+      img.src = r.avatar.previewUrl ? `${r.avatar.previewUrl}&t=${Date.now()}` : '';
+      img.title = r.avatar.sha256 ? `当前托管头像 ${r.avatar.sha256.slice(0, 8)}` : '还没有托管头像';
+    }
+    const hist = $('#profileHistory', view);
+    if (hist) {
+      hist.innerHTML = (r.history ?? []).length
+        ? r.history.map((c) => `<div>${esc(fmtClock(c.at))} <b>${esc(c.field)}</b>：${esc(c.from || '(空)')} → ${esc(c.to || '(空)')}`
+          + `${c.by ? ` <span style="opacity:.7">by ${esc(c.by)}</span>` : ''}${c.reason ? ` <span style="opacity:.7">（${esc(c.reason)}）</span>` : ''}</div>`).join('')
+        : '还没有改动记录';
+    }
+    // 没有可回滚的值就把按钮禁掉，别让人点了才发现
+    for (const [id, key] of [['profileRevertNick', 'nickname'], ['profileRevertNote', 'personalNote'], ['profileRevertAvatar', 'avatar']]) {
+      const btn = $('#' + id, view);
+      if (btn) { btn.disabled = !(r.canRevert?.[key]); btn.style.opacity = r.canRevert?.[key] ? '' : '.5'; }
+    }
+  };
+  const profileMsg = (text, ok = true) => {
+    const el = $('#profileMsg', view);
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = ok ? '' : '#c66';
+  };
+  $('#profileSave', view)?.addEventListener('click', async () => {
+    const nickname = $('#profileNickname', view).value.trim();
+    const personalNote = $('#profileNote', view).value.trim();
+    const avatar = $('#profileAvatarSrc', view).value.trim();
+    if (!nickname && !personalNote && !avatar) { profileMsg('昵称/签名/头像至少填一个', false); return; }
+    profileMsg('保存中…');
+    const r = await api('/api/socialV2/self-profile', 'POST', {
+      ...(nickname ? { nickname } : {}),
+      ...(personalNote ? { personalNote } : {}),
+      ...(avatar ? { avatar } : {}),
+      reason: '控制台手动修改'
+    }).catch((e) => ({ ok: false, error: e.message }));
+    if (r.ok) {
+      profileMsg(`✅ ${(r.changed ?? []).join('、')}`);
+      $('#profileNickname', view).value = '';
+      $('#profileNote', view).value = '';
+      $('#profileAvatarSrc', view).value = '';
+      await loadSelfProfile();
+    } else profileMsg('❌ ' + (r.error || '失败'), false);
+  });
+  for (const [id, field] of [['profileRevertNick', 'nickname'], ['profileRevertNote', 'personalNote'], ['profileRevertAvatar', 'avatar']]) {
+    $('#' + id, view)?.addEventListener('click', async () => {
+      if (!confirmDanger(`确定回滚${field === 'avatar' ? '头像' : (field === 'personalNote' ? '签名' : '昵称')}到上一个值？`)) return;
+      profileMsg('回滚中…');
+      const r = await api('/api/socialV2/self-profile-revert', 'POST', { field }).catch((e) => ({ ok: false, error: e.message }));
+      if (r.ok) { profileMsg(`✅ ${(r.changed ?? []).join('、')}`); await loadSelfProfile(); }
+      else profileMsg('❌ ' + (r.error || '失败'), false);
+    });
+  }
+
   // 保存后回填成服务端实际接受的值（钳制过的），避免界面与配置不一致
   fillForm(view, {});
   await loadConfig();
+  await loadSelfProfile();
   await refreshActivity();
   loadToolLog();
   loadSessionOptions();

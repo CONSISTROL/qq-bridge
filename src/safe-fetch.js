@@ -6,6 +6,7 @@
 // - 手动跟随重定向，每一跳重新校验
 // - 响应体限量读取，每次请求有包含响应体的总时限
 import dns from 'node:dns';
+import fs from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
@@ -248,7 +249,16 @@ function connectViaProxy(proxy, targetHost, targetPort, secure, timeoutMs) {
   });
 }
 
-function requestOnce(url, ip, limit, binary = false, extraHeaders = {}, timeoutMs = REQUEST_TIMEOUT_MS, proxy = null) {
+function requestOnce(url, ip, {
+  limit,
+  binary = false,
+  extraHeaders = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  proxy = null,
+  // 传了 sink（可写流）就把响应体边收边写盘，不在内存里堆整段——
+  // 几十 MB 的聊天视频整段进内存会把小内存机器打爆（本机总共 1.6GB）。
+  sink = null,
+} = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let req;
@@ -257,8 +267,10 @@ function requestOnce(url, ip, limit, binary = false, extraHeaders = {}, timeoutM
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(result);
+      if (error) {
+        try { sink?.destroy(); } catch { /* 调用方负责删半截文件 */ }
+        reject(error);
+      } else resolve(result);
     };
     const timer = setTimeout(() => {
       const error = new Error(`请求超时：${url.hostname}`);
@@ -318,6 +330,10 @@ function requestOnce(url, ip, limit, binary = false, extraHeaders = {}, timeoutM
               res.destroy();
             }
           };
+          if (sink) {
+            sink.once('error', (error) => finish(error));
+            sink.once('finish', () => finish(null, { statusCode, bytes: size }));
+          }
           res.on('data', (chunk) => {
             if (settled) return;
             if (!binary) { appendText(decoder.write(chunk)); return; }
@@ -327,12 +343,19 @@ function requestOnce(url, ip, limit, binary = false, extraHeaders = {}, timeoutM
               res.destroy();
               return;
             }
-            chunks.push(chunk);
+            if (!sink) { chunks.push(chunk); return; }
+            // 回压：磁盘写得比网络慢时先暂停 socket，避免未落盘数据在内存里越堆越多。
+            if (!sink.write(chunk)) {
+              res.pause();
+              sink.once('drain', () => { if (!settled) res.resume(); });
+            }
           });
           res.on('end', () => {
             if (settled) return;
-            if (binary) finish(null, { statusCode, buffer: Buffer.concat(chunks) });
-            else {
+            if (binary) {
+              if (sink) sink.end();
+              else finish(null, { statusCode, buffer: Buffer.concat(chunks) });
+            } else {
               appendText(decoder.end());
               finish(null, { statusCode, body: chunks.join(''), truncated: false });
             }
@@ -371,7 +394,7 @@ export async function safeFetch(urlString, maxChars = 50000, options = {}) {
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxChars, false, i === 0 ? extraHeaders : {}, timeoutMs, proxy);
+    const result = await requestOnce(url, ip, { limit: maxChars, binary: false, extraHeaders: i === 0 ? extraHeaders : {}, timeoutMs, proxy });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
@@ -410,7 +433,7 @@ export async function safeFetchBuffer(urlString, maxBytes = 4 * 1024 * 1024, opt
   const MAX_REDIRECTS = 5;
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, maxBytes, true, i === 0 ? extraHeaders : {}, timeoutMs, proxy);
+    const result = await requestOnce(url, ip, { limit: maxBytes, binary: true, extraHeaders: i === 0 ? extraHeaders : {}, timeoutMs, proxy });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
@@ -427,3 +450,35 @@ export async function safeFetchBuffer(urlString, maxBytes = 4 * 1024 * 1024, opt
   }
   throw new Error('重定向次数过多，已停止');
 }
+
+/**
+ * 抓**任意二进制**（视频/音频等），与 safeFetchBuffer 只差一点：不做图片格式校验。
+ *
+ * 为什么需要：聊天里的 QQ 视频是 mp4，走 safeFetchBuffer 会被
+ * 「抓取内容不是有效图片」直接拒掉——那不是安全问题，是校验用错了场景。
+ * SSRF 校验、体积上限、超时、重定向逐跳校验全部保持一致。
+ */
+export async function safeFetchBinary(urlString, maxBytes = 4 * 1024 * 1024, options = {}) {
+  validateLimit(maxBytes, 'maxBytes');
+  const extraHeaders = sanitizeImageHeaders(options.headers);
+  const timeoutMs = requestTimeout(options);
+  const proxy = parseProxy(options.proxy);
+  const MAX_REDIRECTS = 5;
+  let { url, ip } = await validateFetchUrl(urlString);
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    const result = await requestOnce(url, ip, { limit: maxBytes, binary: true, extraHeaders: i === 0 ? extraHeaders : {}, timeoutMs, proxy });
+    if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
+      if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
+      const next = new URL(result.redirect, url).toString();
+      ({ url, ip } = await validateFetchUrl(next));
+      continue;
+    }
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      throw new Error(`抓取失败：HTTP ${result.statusCode}`);
+    }
+    if (!result.buffer?.length) throw new Error('抓取内容为空');
+    return { url: url.toString(), statusCode: result.statusCode, buffer: result.buffer };
+  }
+  throw new Error('重定向次数过多，已停止');
+}
+

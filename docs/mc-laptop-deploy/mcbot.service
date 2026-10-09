@@ -1,0 +1,32 @@
+[Unit]
+Description=Minecraft AI Bot (mineflayer, mineflayer-pathfinder)
+Documentation=file:/home/wx/mc/README.md
+After=network-online.target mcserver.service
+Wants=network-online.target
+# MC 服务端先起，bot 连不上会自己重试，但顺序起更干净
+After=mcserver.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=wx
+Group=wx
+WorkingDirectory=/home/wx/mc/bot
+# VIEWER_DIST=2：viewer 把区块网格常驻内存，降到 2 明显减小占用（原 1.6G 机器上的调参）
+Environment=VIEWER_DIST=2
+ExecStart=/usr/bin/node /home/wx/mc/bot/botd.js
+
+Restart=always
+RestartSec=15
+
+StandardOutput=append:/home/wx/mc/bot/bot.log
+StandardError=append:/home/wx/mc/bot/bot.log
+SyslogIdentifier=mcbot
+
+LimitNOFILE=65536
+# bot 不需要写系统目录
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

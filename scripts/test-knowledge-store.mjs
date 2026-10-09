@@ -172,5 +172,22 @@ eq(findKnowledgeMatch([], '随便问问'), null, '空库查找返回 null');
 eq(findKnowledgeMatch(store, '')?.match, undefined, '空问题不命中');
 
 console.log('');
+// 来源三态：explore 不能被 loadKnowledge 洗成 ai（落盘再读回来要还是它）
+{
+  // 来源三态：explore 不能被 loadKnowledge 洗成 ai（落盘再读回来要还是它）
+  const e1 = normalizeKnowledgeEntry({ question: 'q1', answer: 'a1', source: 'explore', autoWritten: true });
+  ok(e1.source === 'explore', `explore 来源保留（实得 ${e1.source}）`);
+  ok(e1.autoWritten === true, 'autoWritten 保留');
+  ok(normalizeKnowledgeEntry({ question: 'q2', answer: 'a2', source: 'manual' }).source === 'manual', 'manual 仍是 manual');
+  ok(normalizeKnowledgeEntry({ question: 'q3', answer: 'a3' }).source === 'ai', '缺省回落 ai');
+  ok(normalizeKnowledgeEntry({ question: 'q4', answer: 'a4', source: '野值' }).source === 'ai', '未知值回落 ai');
+  // 落盘往返：normalize → 写 → 读 → 再来一遍 normalize，来源不能变
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kb-src-')), 'kb.json');
+  saveKnowledge(file, [e1]);
+  const back = loadKnowledge(file);
+  ok(back[0]?.source === 'explore', '落盘再读回来 source 仍是 explore（以前会被洗成 ai）');
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
+}
+
 console.log(fail === 0 ? `全部通过：${pass} 项` : `通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail === 0 ? 0 : 1);

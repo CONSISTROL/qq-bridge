@@ -126,7 +126,7 @@ function renderList() {
       <td>${escAll(e.hitCount)} 次<br><span class="meta">${escAll(e.askerCount || 0)} 人${Number(e.revision) ? ` · 改过 ${escAll(e.revision)} 次` : ''}</span></td>
       <td>${escAll(e.answer)}</td>
       <td>${tags.length ? `<span class="meta">${escAll(tags.join('、'))}</span><br>` : ''}
-        <span class="meta">${escAll(e.source === 'manual' ? '手动' : 'AI')} · ${escAll(String(e.updatedAt || '').slice(0, 10))}</span>
+        <span class="meta">${escAll(e.source === 'manual' ? '手动' : (e.source === 'explore' ? '主题探索' : 'AI'))} · ${escAll(String(e.updatedAt || '').slice(0, 10))}</span>
         ${Array.isArray(e.sources) && e.sources.length ? `<br><span class="meta">🔗 ${escAll(e.sources[e.sources.length - 1])}</span>` : ''}</td>
       <td class="row">
         <button class="small" data-kb-edit="${escAll(e.id)}">编辑</button>

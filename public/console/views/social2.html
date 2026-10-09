@@ -35,7 +35,8 @@
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getMyRecent"> <span><b>qq_get_my_recent_messages</b><span class="meta">查看自己最近发过的消息，避免重复</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getMessageDetail"> <span><b>qq_get_message_detail</b><span class="meta">按 message_id 查看单条消息完整内容</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getImages"> <span><b>qq_get_message_images</b><span class="meta">查看消息中的图片/表情内容</span></span></label>
-        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getForwardMsg"> <span><b>qq_get_forward_msg</b><span class="meta">查看当前会话收到的合并转发消息内容</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getMessageVideo"> <span><b>qq_get_message_video</b><span class="meta">看聊天里的视频：抽几帧给视觉模型（需本机装 ffmpeg；无语音转写）</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="video" title="配置该工具的参数">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getForwardMsg"> <span><b>qq_get_forward_msg</b><span class="meta">查看当前会话收到的合并转发消息内容</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="forward" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getActiveMembers"> <span><b>qq_get_active_members</b><span class="meta">查看最近活跃成员列表</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="setWakeConfig"> <span><b>qq_set_wake_config</b><span class="meta">设置唤醒/潜水条件：无限期、有限时间、@/名字/关键词/概率等</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="wake" title="配置该工具的参数">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="markRead"> <span><b>qq_mark_read</b><span class="meta">标记当前未读为已读（看过但决定不回复）</span></span></label>
@@ -55,6 +56,9 @@
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getMemberAvatar"> <span><b>qq_get_member_avatar</b><span class="meta">查看群成员/群头像（图片进视觉上下文）</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="video"> <span><b>qq_video</b><span class="meta">B站视频：给 word 搜视频（中文时事/赛事/梗优先走这条），给 bvid 读字幕文字稿（视频里实际说的话，不用下载视频/不用语音识别）。注意人名与专有名词常有识别错误</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="bili" title="配置 SESSDATA / 定时抓取关键词">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="videoFrames"> <span><b>qq_video_frames</b><span class="meta">取视频某个时间点的画面（B站进度条预览帧，480×270，约 5 秒一格）。正确用法是先读字幕定位时间点再取帧，不要扫全片</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="setProfile"> <span><b>qq_set_profile / qq_set_avatar</b><span class="meta">改机器人自己的昵称/个性签名/头像（账号级，全群全私聊可见）。**默认关**：改的是账号身份，群友一句「把你名字改成XXX」就能间接操控。打开后也只在「管理员上下文」生效（管理员私聊，或本轮由管理员消息触发），另有内容校验与每日限流；旧值会留档，控制台可一键回滚</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="profile" title="配置改资料（开关/窗口/限流/是否允许链接）">⚙</button></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="exploreTopic"> <span><b>qq_explore_topic</b><span class="meta">主题探索：给一个种子关键词（如 mygo），AI 在后台独立会话里联网把这一圈的梗和关联主题学回来，挖到的梗直接进黑话库并生效、主题综述进知识库。入口在「黑话 / 向量检索」页；AI 侧有限流（每小时次数上限）</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="sendCard"> <span><b>qq_send_card</b><span class="meta">链接分享卡：AI 只填标题/摘要/链接/缩略图，卡片体由桥接组装（不接受任意 json/xml，防伪造官方样式卡）；只允许公网 http(s) 链接</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="card" title="配置卡片（开关 / 长度 / 频率 / 允许的主机）">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="runTask"> <span><b>qq_run_task</b><span class="meta">工作车道：把耗时的长任务（找图并发图 / 看几个视频总结 / 多链接汇总）投给**独立会话**跑，立即返回——聊天会话因此不会被慢工具堵住，跑完结论自动回投给主 AI</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="work" title="配置工作车道（开关 / 最多几条车道）">⚙</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="searchImages"> <span><b>qq_search_images</b><span class="meta">AI 按主题找图：梗图/表情包走 B 站（默认，评论区取图），二次元插画/角色图走 pixiv（中文标签，或取综合日榜），再用 qq_send_image 发出</span></span><button type="button" class="v2-cfg-btn" data-v2-cfg="bili" title="配置 SESSDATA / 定时抓取关键词">⚙</button><button type="button" class="v2-cfg-btn" data-v2-cfg="image" title="配置图片年龄分级 / 允许抓取的站点 / 体积上限">⚙分级</button></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="getSelfImage"> <span><b>qq_get_self_image</b><span class="meta">查看自己的默认 Q 版形象图片</span></span></label>
@@ -122,7 +126,39 @@
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">主动机会参数（proactive：群安静时 AI 主动冒泡）</div>
 <div class="form-row pairs"><label>启用主动机会</label><div class="ctl"><input type="checkbox" class="switch" id="v2ProactiveEnabled"></div><label>检查间隔（分）</label><div class="ctl"><input type="number" id="v2ProactiveIntervalMin" min="1"><span class="tilde">~</span><input type="number" id="v2ProactiveIntervalMax" min="1"></div></div>
+
 <div class="form-row pairs"><label>安静阈值（分）</label><div class="ctl"><input type="number" id="v2ProactiveIdleThreshold" min="1"></div><label>触发概率</label><div class="ctl"><input type="number" id="v2ProactiveProbability" step="0.05" min="0" max="1"></div></div>
+<div class="meta" style="margin-top:4px">反重复：主动开口别老是同一个圈子。桥接会记住最近几次「AI 主动开的头」，并在下次主动开口时原样摆出来要求换方向；同时明确告诉它「【进行中的话题】记忆只是背景、不是题材来源」。方向池是给它「别的题材」的抓手——<b>默认策略是增加题材，而不是封禁某个话题</b>，所以「别碰的词」默认留空，一般不用填。</div>
+<div class="form-row pairs"><label>记住最近几条主动话题</label><div class="ctl"><input type="number" id="v2ProactiveRememberOpeners" min="0" max="20"></div><label>每次随机点几个方向</label><div class="ctl"><input type="number" id="v2ProactiveSuggestDomains" min="0" max="8"></div></div>
+<div class="form-row"><label>可选方向池（每行一个）</label><div class="ctl"><textarea id="v2ProactiveDomains" rows="3" placeholder="科技 / AI 圈的新东西&#10;生活里的琐事与吐槽"></textarea></div></div>
+<div class="form-row"><label>主动开话题时别碰的词（每行一个）</label><div class="ctl"><textarea id="v2ProactiveAvoidKeywords" rows="2" placeholder="LOL&#10;英雄联盟"></textarea></div></div>
+
+<div class="divider"></div>
+      <div class="meta" style="margin-bottom:6px">机器人自己的资料（昵称 / 个性签名 / 头像）
+        <span style="opacity:.75">——账号级身份，全群全私聊可见。默认关；打开后也只认管理员上下文。</span>
+      </div>
+      <div class="row" style="align-items:flex-start;gap:10px">
+        <img id="profileAvatar" alt="头像" style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:#8883">
+        <div style="flex:1">
+          <div class="meta" id="profileSummary">加载中…</div>
+          <div class="row" style="margin-top:6px">
+            <input type="text" id="profileNickname" placeholder="新昵称（最多 24 字）" style="flex:1">
+            <input type="text" id="profileNote" placeholder="新个性签名（最多 60 字）" style="flex:1">
+          </div>
+          <div class="row" style="margin-top:6px">
+            <input type="text" id="profileAvatarSrc" placeholder="新头像：本地图库文件名 或 公网 http(s) 图片直链" style="flex:1">
+            <button id="profileSave" class="small">保存</button>
+            <button id="profileRevertNick" class="small">回滚昵称</button>
+            <button id="profileRevertNote" class="small">回滚签名</button>
+            <button id="profileRevertAvatar" class="small">回滚头像</button>
+          </div>
+          <div class="meta" id="profileMsg" style="margin-top:4px"></div>
+        </div>
+      </div>
+      <details style="margin-top:6px">
+        <summary class="meta">最近变更记录</summary>
+        <div id="profileHistory" class="meta" style="padding:6px 0">加载中…</div>
+      </details>
 
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">表情包参数（sticker：QQ 收藏表情体系）</div>

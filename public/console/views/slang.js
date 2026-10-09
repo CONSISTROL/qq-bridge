@@ -44,6 +44,7 @@ function statusClass(status) {
 }
 function sourceLabel(e) {
   if (e.source === 'manual') return '手动';
+  if (e.source === 'explore') return `主题探索${e.exploredFrom ? `（${e.exploredFrom}）` : ''}`;
   if (Array.isArray(e.evidence) && e.evidence.some((ev) => ev.sender === 'AI提交')) return 'AI提交';
   return '自动提取';
 }
@@ -107,7 +108,14 @@ function renderPanel() {
   let html = `<div class="meta" style="padding:6px 8px">共 ${filtered.length} 条，显示 ${shown.length} 条（可滚动查找）</div>`;
   html += '<table><tr><th>选择</th><th>词条</th><th>次数</th><th>来源</th><th>含义 / 用法 / 示例</th><th>参考来源</th><th>语境证据</th><th>操作</th></tr>';
   for (const e of shown) {
-    const meaning = e.meaning ? esc(e.meaning) : (status === 'candidate' ? '<span class="meta">待研究</span>' : '<span class="meta">无</span>');
+    // 候选里要分清「还没研究过」和「研究过但没定论」——后者再点研究通常也不会有结果，
+    // 以前一律显示「待研究」，看起来像卡住了（实际是研究过了、模型说不确定）。
+    const meaning = e.meaning ? esc(e.meaning)
+      : (status === 'candidate'
+        ? (e.researchVerdict === 'unknown'
+          ? `<span class="meta" title="研究过，模型认为拿不准或不是梗；有新的群聊证据时会再研究一次">研究过·无定论</span>`
+          : '<span class="meta">待研究</span>')
+        : '<span class="meta">无</span>');
     const checked = state.selected.has(e.id) ? ' checked' : '';
     const actions = [];
     if (status === 'candidate') {
@@ -303,6 +311,133 @@ async function loadSlangConfig(view) {
   $('#slangAutoResearch', view).checked = c.autoResearch !== false;
 }
 
+// ── 掉线补拉 ─────────────────────────────────────────────────────────
+// QQ 掉线/网关抖动期间的消息网关不重发，靠重连后补拉。参数在 config.json 的 socialV2.backfill，
+// 读写走 /api/socialV2/config（**不是** /api/slang/config——那是黑话学习自己的配置）。
+function bindBackfillPanel(view) {
+  const apply = (c) => {
+    const b = c?.backfill ?? {};
+    $('#backfillEnabled', view).checked = b.enabled !== false;
+    $('#backfillMaxMessages', view).value = b.maxMessages ?? 100;
+    $('#backfillWakeMaxMessages', view).value = b.wakeMaxMessages ?? 15;
+    $('#backfillWakeMaxAgeMin', view).value = Math.round((b.wakeMaxAgeMs ?? 600000) / 60000);
+  };
+  // backfill 属于 QQ 消息链（socialV2），不是黑话配置——读写都走 /api/socialV2/config。
+  api('/api/socialV2/config').then((r) => apply(r?.config || {})).catch(() => {});
+
+  $('#backfillSave', view).addEventListener('click', async () => {
+    const body = {
+      backfill: {
+        enabled: $('#backfillEnabled', view).checked,
+        maxMessages: Number($('#backfillMaxMessages', view).value) || 100,
+        wakeMaxMessages: Number($('#backfillWakeMaxMessages', view).value) || 0,
+        wakeMaxAgeMs: (Number($('#backfillWakeMaxAgeMin', view).value) || 0) * 60000
+      }
+    };
+    const r = await api('/api/socialV2/config', { method: 'POST', body }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    setMsg($('#backfillMsg', view), r && r.ok ? '已保存' : `保存失败：${r?.error || '未知'}`, r && r.ok ? 'ok' : 'bad');
+  });
+
+  $('#backfillNow', view).addEventListener('click', async () => {
+    setMsg($('#backfillMsg', view), '正在补拉…');
+    const r = await api('/api/socialV2/backfill', { method: 'POST' }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (!r || !r.ok) setMsg($('#backfillMsg', view), `补拉失败：${r?.error || '未知'}`, 'bad');
+    else setMsg($('#backfillMsg', view), `检查 ${r.checked} 个会话，补回 ${r.added} 条，唤醒 ${(r.woken || []).length} 个（${r.note}）`, 'ok');
+  });
+}
+
+// ── 豆包网页版通道 ───────────────────────────────────────────────────
+// 只作梗考究的一路来源：单独一路永不自动转正（护栏在服务端 src/doubao-research.js）。
+// 这里管「开关 / 探活 / 扫码登录 / 测试提问」，登录态靠持久 profile 保持。
+function renderDoubaoStatus(view, data) {
+  const ch = data?.channel || {};
+  const bits = [];
+  bits.push(data?.enabled ? '<b>已启用</b>' : '已关闭');
+  if (ch.running) {
+    bits.push(ch.loggedIn === true ? '登录态：已登录' : (ch.loggedIn === false ? '登录态：<b>未登录</b>' : '登录态：未知'));
+    if (ch.busy) bits.push('正在处理请求');
+  } else {
+    bits.push('浏览器未运行（按需启动，空闲自动关闭）');
+  }
+  bits.push(`内存上限 ${esc(String(ch.memoryMax || data?.config?.memoryMax || '900M'))}`);
+  if (ch.profileBytes) bits.push(`profile ${(ch.profileBytes / 1024 / 1024).toFixed(1)}MB`);
+  if (ch.systemdRun === false) bits.push('<span style="color:var(--danger)">没有 systemd-run，无法限制内存</span>');
+  if (ch.lastError) bits.push(`<span style="color:var(--danger)">最近错误：${esc(String(ch.lastError).slice(0, 120))}</span>`);
+  if (data && data.autoConfirmResearched === false) bits.push('（自动转正当前是关闭的：所有研究结果都等人工确认）');
+  $('#doubaoStatus', view).innerHTML = bits.join(' ｜ ');
+  $('#doubaoEnabled', view).checked = data?.enabled === true;
+}
+
+async function loadDoubaoStatus(view) {
+  const r = await api('/api/doubao/status').catch(() => null);
+  if (!r || !r.ok) { setMsg($('#doubaoMsg', view), '读取豆包通道状态失败', 'bad'); return; }
+  renderDoubaoStatus(view, r);
+}
+
+function bindDoubaoPanel(view) {
+  $('#doubaoEnabled', view).addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    const r = await api('/api/doubao/config', { method: 'POST', body: { enabled: on } }).catch(() => null);
+    if (!r || !r.ok) { setMsg($('#doubaoMsg', view), '保存失败', 'bad'); e.target.checked = !on; return; }
+    setMsg($('#doubaoMsg', view), on ? '已启用（下一轮研究生效）' : '已关闭', 'ok');
+    loadDoubaoStatus(view);
+  });
+
+  $('#doubaoProbe', view).addEventListener('click', async () => {
+    setMsg($('#doubaoMsg', view), '正在启动浏览器探活（首次可能要十几秒）…');
+    const r = await api('/api/doubao/probe', { method: 'POST' }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (!r || !r.ok) setMsg($('#doubaoMsg', view), `探活失败：${r?.error || '未知'}`, 'bad');
+    else setMsg($('#doubaoMsg', view), r.loggedIn ? '通道正常，已登录' : '通道能打开，但**未登录**（点「扫码登录」）', r.loggedIn ? 'ok' : 'bad');
+    loadDoubaoStatus(view);
+  });
+
+  $('#doubaoLogin', view).addEventListener('click', async () => {
+    setMsg($('#doubaoMsg', view), '正在打开登录框取二维码…');
+    const r = await api('/api/doubao/login', { method: 'POST' }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (!r || !r.ok) {
+      setMsg($('#doubaoMsg', view), `取二维码失败：${r?.error || '未知'}`, 'bad');
+      return;
+    }
+    if (r.alreadyLoggedIn) {
+      setMsg($('#doubaoMsg', view), '已经是登录状态，不用扫', 'ok');
+      loadDoubaoStatus(view);
+      return;
+    }
+    $('#doubaoQr', view).src = 'data:image/png;base64,' + r.qr;
+    $('#doubaoQrWrap', view).style.display = 'block';
+    setMsg($('#doubaoMsg', view), '请用手机豆包 / 飞书 App 扫码，扫完自动检测…');
+    const w = await api('/api/doubao/login-wait', { method: 'POST', body: { timeoutMs: 180000 } }).catch(() => null);
+    if (w && w.loggedIn) {
+      setMsg($('#doubaoMsg', view), '登录成功，登录态已保存', 'ok');
+      $('#doubaoQrWrap', view).style.display = 'none';
+    } else {
+      setMsg($('#doubaoMsg', view), '还没检测到登录（二维码会过期，可以再点一次「扫码登录」）', 'bad');
+    }
+    loadDoubaoStatus(view);
+  });
+
+  $('#doubaoStop', view).addEventListener('click', async () => {
+    await api('/api/doubao/stop', { method: 'POST' }).catch(() => null);
+    setMsg($('#doubaoMsg', view), '已关闭浏览器（登录态保留，下次按需重启）', 'ok');
+    $('#doubaoQrWrap', view).style.display = 'none';
+    loadDoubaoStatus(view);
+  });
+
+  $('#doubaoAsk', view).addEventListener('click', async () => {
+    const prompt = $('#doubaoAskPrompt', view).value.trim();
+    if (!prompt) { setMsg($('#doubaoMsg', view), '先输入要问的内容', 'bad'); return; }
+    setMsg($('#doubaoMsg', view), '已发送，等回答…');
+    $('#doubaoAskOut', view).textContent = '';
+    const r = await api('/api/doubao/ask', { method: 'POST', body: { prompt } }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (!r || !r.ok) setMsg($('#doubaoMsg', view), `提问失败：${r?.error || '未知'}`, 'bad');
+    else {
+      setMsg($('#doubaoMsg', view), '收到回答', 'ok');
+      $('#doubaoAskOut', view).textContent = r.answer || '(空回答)';
+    }
+    loadDoubaoStatus(view);
+  });
+}
+
 export async function mount(root) {
   const view = await mountFragment(root, 'slang');
   state.view = view;
@@ -415,26 +550,102 @@ export async function mount(root) {
     const r = await api('/api/slang/extract', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setSlangMsg(r.ok ? '✅ 已触发提取' : ('❌ ' + (r.error || '失败')), r.ok);
   });
-  $('#slangResearch', view).addEventListener('click', async () => {
-    const r = await api('/api/slang/research', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+  const triggerResearch = async (force) => {
+    if (force && !confirmDanger('强制重研会把全部候选重新研究一遍（包括已经研究过、结论是「拿不准/不是梗」的），会明显消耗额度。继续？')) return;
+    const r = await api('/api/slang/research', 'POST', force ? { force: true } : {}).catch((e) => ({ ok: false, error: e.message }));
     setSlangMsg(r.ok ? ('✅ 已触发研究 ' + r.count + ' 条') : ('❌ ' + (r.error || '失败')), r.ok);
-  });
+  };
+  $('#slangResearch', view).addEventListener('click', () => triggerResearch(false));
+  $('#slangResearchForce', view)?.addEventListener('click', () => triggerResearch(true));
 
-  // 手动添加
+  // ── 主题探索（自主扩展学习）──────────────────────────────────────────
+  // 给一个种子关键词，AI 在后台独立会话里联网把这一圈的梗和关联主题学回来。
+  const renderExploreJobs = (data) => {
+    const box = $('#exploreJobs', view);
+    if (!box) return;
+    const jobs = data?.jobs ?? [];
+    if (!jobs.length) {
+      box.innerHTML = '<div class="meta" style="padding:8px">还没有探索任务。上面输入一个关键词（例如 <code>mygo</code>）就能开始。</div>';
+      return;
+    }
+    const statusLabel = { pending: '排队中', running: '挖掘中', done: '✅ 已完成', stopped: '⏹ 已停止', failed: '❌ 失败' };
+    box.innerHTML = jobs.map((j) => {
+      const visited = (j.visited ?? []).map((v) =>
+        `<div style="margin-left:10px">· <b>${esc(v.name)}</b>`
+        + `${v.kind ? ` <span class="meta">(${esc(v.kind)})</span>` : ''}`
+        + `${v.terms?.length ? ` <span class="meta">梗 ${v.terms.length}：${esc(v.terms.slice(0, 4).join('、'))}${v.terms.length > 4 ? '…' : ''}</span>` : ''}`
+        + `${v.related?.length ? `<div class="meta" style="margin-left:12px">→ 关联：${esc(v.related.slice(0, 6).join('、'))}</div>` : ''}`
+        + `</div>`).join('');
+      const queued = (j.queue ?? []).length
+        ? `<div class="meta" style="margin-left:10px">队列中还有 ${j.queue.length} 个：${esc(j.queue.slice(0, 6).map((t) => t.name).join('、'))}${j.queue.length > 6 ? '…' : ''}</div>`
+        : '';
+      const acts = (j.status === 'running' || j.status === 'pending')
+        ? ` <button class="small" data-explore-stop="${esc(j.id)}">停止</button>` : '';
+      const lastLog = (j.log ?? []).slice(-1)[0];
+      return `<div style="padding:8px;border-bottom:1px solid rgba(128,128,128,.2)">
+        <div><b>${esc(j.seed)}</b> <span class="meta">${statusLabel[j.status] ?? j.status}</span>`
+        + ` <span class="meta">｜已探 ${j.stats?.topics ?? 0}/${j.maxTopics} 个主题｜梗 ${j.stats?.terms ?? 0} 条（确认 ${j.stats?.confirmed ?? 0}）`
+        + `${j.stats?.failed ? `｜失败 ${j.stats.failed}` : ''}｜${j.maxDepth} 层</span>${acts}</div>
+        ${j.error ? `<div class="meta" style="color:#c66">${esc(j.error)}</div>` : ''}
+        ${visited}${queued}
+        ${lastLog ? `<div class="meta" style="margin-top:2px">最新：${esc(lastLog.text)}</div>` : ''}
+      </div>`;
+    }).join('');
+  };
+  const loadExploreJobs = async () => {
+    const data = await api('/api/socialV2/explore-jobs').catch(() => null);
+    if (data?.ok) renderExploreJobs(data);
+    return data;
+  };
+  $('#exploreStart', view)?.addEventListener('click', async () => {
+    const seed = $('#exploreSeed', view).value.trim();
+    if (!seed) { toast('先填个关键词', 'err'); return; }
+    const msg = $('#exploreMsg', view);
+    const maxTopics = Number($('#exploreMaxTopics', view).value) || undefined;
+    const maxDepthRaw = $('#exploreMaxDepth', view).value;
+    const maxDepth = maxDepthRaw === '' ? undefined : Number(maxDepthRaw);
+    setSlangMsg('发起中…');
+    const r = await api('/api/socialV2/explore-topic', 'POST', { seed, maxTopics, maxDepth }).catch((e) => ({ ok: false, error: e.message }));
+    if (r.ok) {
+      $('#exploreSeed', view).value = '';
+      if (msg) { msg.textContent = `✅ 已开始探索「${seed}」：${r.progress ?? ''}`; msg.style.color = ''; }
+      loadExploreJobs();
+    } else if (msg) {
+      msg.textContent = '❌ ' + (r.error || '发起失败');
+      msg.style.color = '#c66';
+    }
+  });
+  $('#exploreRefresh', view)?.addEventListener('click', () => loadExploreJobs());
+  // 停止：用事件委托（任务是动态渲染的）
+  $('#exploreJobs', view)?.addEventListener('click', async (e) => {
+    const id = e.target?.dataset?.exploreStop;
+    if (!id) return;
+    e.preventDefault();
+    const r = await api('/api/socialV2/explore-stop', 'POST', { id }).catch((err) => ({ ok: false, error: err.message }));
+    const msg = $('#exploreMsg', view);
+    if (msg) { msg.textContent = r.ok ? '⏹ 已请求停止（正在等的那一轮会被立刻中断）' : ('❌ ' + (r.error || '停止失败')); msg.style.color = r.ok ? '' : '#c66'; }
+    loadExploreJobs();
+  });
+  loadExploreJobs();
+
+  // 手动添加：入库为**候选**，走和 AI 提交一样的复核路径，不会直接进提示词。
+  // 想让它生效，去「候选」标签页确认（或批量确认）。
   $('#slangAdd', view).addEventListener('click', async () => {
     const content = $('#slangContent', view).value.trim();
     const meaning = $('#slangMeaning', view).value.trim();
     const usage = $('#slangUsage', view).value.trim();
     const example = $('#slangExample', view).value.trim();
     if (!content) { toast('词条不能为空', 'err'); return; }
-    const r = await api('/api/slang', 'POST', { content, meaning, usage, example }).catch((e) => ({ ok: false, error: e.message }));
-    setSlangMsg(r.ok ? '✅ 已添加' : ('❌ ' + (r.error || '失败')), r.ok);
+    const r = await api('/api/slang', 'POST', { content, meaning, usage, example, status: 'candidate' }).catch((e) => ({ ok: false, error: e.message }));
+    setSlangMsg(r.ok ? '✅ 已加入候选，去「候选」标签页确认后才会生效' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) {
       $('#slangContent', view).value = '';
       $('#slangMeaning', view).value = '';
       $('#slangUsage', view).value = '';
       $('#slangExample', view).value = '';
       refreshSlang();
+      // 新词落在「候选」：直接切过去，免得管理员在当前标签页里找不到刚加的词。
+      setTab('candidate');
     }
   });
 
@@ -492,6 +703,9 @@ export async function mount(root) {
   // 必须 await：基线要在表单填好之后建，否则刚加载出来的值会被当成用户改动
   await loadSlangConfig(view);
   loadRagStatus();
+  bindDoubaoPanel(view);
+  loadDoubaoStatus(view);
+  bindBackfillPanel(view);
 
   // 两个开关：拨动即写盘，失败就拨回去
   view.addEventListener('change', async (e) => {

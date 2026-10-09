@@ -204,7 +204,12 @@ export function normalizeKnowledgeEntry(raw) {
     tags: [...new Set([kind, ...tags])].slice(0, 8),
     sources: Array.isArray(entry.sources) ? entry.sources.map((s) => String(s ?? '').trim()).filter(Boolean).slice(-10) : [],
     status,
-    source: entry.source === 'manual' ? 'manual' : 'ai',
+    // 来源三态：manual=控制台手填，ai=群聊里学到的，explore=主题探索学来的。
+    // 别压成二值——落盘后再 loadKnowledge 会把 explore 洗成 ai，
+    // 「这条是探索学的还是群友问出来的」就再也分不清了（实测踩过）。
+    source: entry.source === 'manual' || entry.source === 'explore' ? entry.source : 'ai',
+    // 是否是自动写入的（探索/研究产出）：答案被更好来源覆盖时用来判断能不能改写。
+    autoWritten: entry.autoWritten === true,
     confidence: entry.confidence === 'low' ? 'low' : 'normal',
     hitCount: Math.max(0, Number(entry.hitCount ?? entry.count) || 0),
     // 答案被更新过几次。知识条目是该「不断更新」的，有个计数才能在控制台一眼看出
@@ -350,7 +355,7 @@ export function formatKnowledgeTable(list, { remindThreshold = 3 } = {}) {
     }
     return line;
   });
-  return `【群知识库】群友以前问过、已有确定答案的问题（与当前话题相关者优先；有答案就直接用，别重复考据；答案与事实不符时以你的查证为准并更新它）：\n${lines.join('\n')}`;
+  return `【群知识库】群友以前问过、已有确定答案的问题（与当前话题相关者优先）。\n对方**在问**这些事时，有答案就直接用，别重复考据（答案与事实不符时以你的查证为准并更新它）；\n但如果对方是在**玩梗/抛梗**——提到这个词只是为了逗、为了接话，那就别把答案念出来，\n顺着梗接回去就行。知道答案不等于要说出来。\n${lines.join('\n')}`;
 }
 
 /** 按命中次数取 top-N 渲染（未启用向量检索或检索失败时的兜底路径）。 */

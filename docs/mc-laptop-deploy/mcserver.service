@@ -1,0 +1,38 @@
+[Unit]
+Description=Minecraft Server (Paper 1.20.4, AI 直播用)
+Documentation=file:/home/wx/mc/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=wx
+Group=wx
+WorkingDirectory=/home/wx/mc/server
+Environment=MC_JAVA=/usr/lib/jvm/java-25-openjdk-amd64/bin/java
+Environment=MC_XMS=2G
+Environment=MC_XMX=6G
+
+# start.sh 前台模式，它会 exec java（PID 干净，systemd 能正确追踪）
+ExecStart=/home/wx/mc/server/start.sh
+
+# 优雅停止：走 RCON 发 stop，让 Paper 存盘后再退出
+ExecStop=/usr/bin/python3 /home/wx/mc/server/rcon-stop.py stop
+TimeoutStopSec=120
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+# 崩溃自动拉起
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcserver
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

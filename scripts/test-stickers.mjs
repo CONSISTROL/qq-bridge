@@ -14,6 +14,8 @@ import {
   buildStickerContext,
   buildStickerStrategyHint,
   applyStickerNote,
+  removeSticker,
+  stickerNeedsRemark,
   markStickerUsed
 } from '../src/sticker-lib.js';
 import {
@@ -92,6 +94,97 @@ console.log('## sticker-lib 纯函数');
   ok(noted.entry.localNote === '嘲讽用' && noted.entry.tags.includes('怼人'), 'applyStickerNote 写入本地认知');
   const used = markStickerUsed(noted.entries, 'a', '接梗');
   ok(used.entry.useCount === 1 && used.entry.lastContext === '接梗', 'markStickerUsed 记录使用');
+}
+
+// 本地备注（localRemark）：只给 AI 看的短名，跟 QQ 官方 desc 分开——
+// 控制台「表情包」分区主要就是靠它把表情起个准名字给 AI 用。
+console.log('## 本地备注 localRemark');
+{
+  const raw = normalizeStickerEntry({ emoji_id: 'a', resId: 'a', url: 'https://x/a', desc: 'QQ备注', localRemark: '  捂耳朵猫  ' });
+  ok(raw.localRemark === '捂耳朵猫', 'normalizeStickerEntry 保留并 trim 本地备注');
+  ok(normalizeStickerEntry({ emoji_id: 'a2', localRemark: 'x'.repeat(80) }).localRemark.length === 40, '本地备注超长截断到 40');
+
+  const synced = mergeStickerLibrary([raw], [{ emoji_id: 'a', resId: 'a', url: 'https://x/a2', md5: 'ABC', desc: 'QQ备注改了' }]);
+  ok(synced[0].localRemark === '捂耳朵猫', '同步 QQ 收藏不覆盖本地备注');
+  ok(synced[0].desc === 'QQ备注改了', '同步会更新 QQ 备注');
+
+  const noted = applyStickerNote(synced, 'a', { localRemark: '不想听' });
+  ok(noted.entry.localRemark === '不想听', 'applyStickerNote 能写本地备注');
+  const kept = applyStickerNote(noted.entries, 'a', { note: '只改笔记' });
+  ok(kept.entry.localRemark === '不想听', '只改笔记时本地备注不被清空');
+
+  const listed = formatStickerList(noted.entries, '不想听', 10);
+  ok(listed.matched === 1 && listed.stickers[0].localRemark === '不想听', '本地备注可被搜索且随列表返回');
+  const ctx = buildStickerContext(noted.entries, 8);
+  ok(ctx.includes('不想听') && !ctx.includes('QQ备注改了'), 'AI 摘要优先用本地备注，而不是 QQ 备注');
+
+  const removed = removeSticker(noted.entries, 'a');
+  ok(removed.entry?.id === 'a' && removed.entries.length === 0, 'removeSticker 删掉本地条目并返回被删项');
+  ok(removeSticker(noted.entries, '不存在').entry === null, 'removeSticker 找不到时不报错');
+}
+
+// 没备注的收藏表情要由 AI 自己看图补上：这里钉住「什么算没备注」「怎么捞出来」「提示里有没有催」。
+console.log('## 没备注的表情（AI 自己补）');
+{
+  ok(stickerNeedsRemark({ id: 'a' }) === true, '三样都没有 = 需要补');
+  ok(stickerNeedsRemark({ id: 'a', localRemark: '短名' }) === false, '有本地备注就不算');
+  ok(stickerNeedsRemark({ id: 'a', desc: 'QQ备注' }) === false, '有 QQ 备注就不算');
+  ok(stickerNeedsRemark({ id: 'a', localNote: '长笔记' }) === false, '有长笔记就不算');
+  ok(stickerNeedsRemark({ id: 'a', localRemark: '   ' }) === true, '空白字符不算备注');
+  ok(stickerNeedsRemark(null) === true, '空对象按需要补处理，不崩');
+
+  const list = [
+    normalizeStickerEntry({ emoji_id: 'a', resId: 'a', url: 'https://x/a', desc: '有备注' }),
+    normalizeStickerEntry({ emoji_id: 'b', resId: 'b', url: 'https://x/b' }),
+    normalizeStickerEntry({ emoji_id: 'c', resId: 'c', url: 'https://x/c', localNote: '我记的' }),
+    normalizeStickerEntry({ emoji_id: 'd', resId: 'd', url: 'https://x/d' })
+  ];
+  const all = formatStickerList(list, '', 10);
+  ok(all.unlabeled === 2, '总数里能报出还欠几条备注');
+  ok(all.stickers.find((s) => s.id === 'b')?.needsRemark === true, '列表项带 needsRemark 标记');
+
+  const only = formatStickerList(list, '', 10, { onlyUnlabeled: true });
+  ok(only.onlyUnlabeled === true && only.matched === 2, 'onlyUnlabeled 只列没备注的');
+  ok(only.stickers.every((s) => s.needsRemark), '返回的每一条都确实没备注');
+  ok(only.total === 4, 'total 仍是整个库的数量（不是过滤后的）');
+
+  // 提示里既要有常规清单，又要有「还欠 N 条、怎么补」的催办。
+  // 写法是拿线上行为换来的：第一版只说「有空就补」，模型推理里直接写
+  // 「could label later, not now … but it costs image tokens, let me skip」——于是这里
+  // 逐条钉住那几个真能推动它的杠杆：具体 id、挂到闲置回合、明说成本可忽略。
+  const ctx = buildStickerContext(list, 8);
+  ok(ctx.includes('有 2 个表情还没有任何备注'), '提示要报出欠账数量');
+  ok(ctx.includes('onlyUnlabeled=true'), '要给出捞全部的方法');
+  ok(ctx.includes('get_sticker_image') && ctx.includes('qq_sticker_note'), '要给出看图与写备注的工具');
+  ok(ctx.includes('本次就补这 2 个') && ctx.includes('`b`') && ctx.includes('`d`'), '要直接给出具体 id，省掉一次清单调用（模型对具体文本敏感、对抽象指令不敏感）');
+  ok(ctx.includes('群里没人等你') && ctx.includes('别拖到「以后」'), '要把动作挂到「闲置回合」上，否则「有空」永远不有空');
+  ok(ctx.includes('成本') && ctx.includes('几百 token'), '要明说图片成本可忽略，否则它会替我们省 token 一直拖着');
+  ok(ctx.includes('一轮最多补 2 个'), '要限制节奏，别刷成打标签');
+  ok(ctx.includes('不要覆盖'), '已有备注不许覆盖');
+  ok(ctx.includes('别照文件名'), '必须看图写，不许照哈希文件名猜');
+  ok(ctx.includes('别把补备注的进度发到群里'), '补备注是内部动作，不许发到群里');
+
+  // 控制台开关：关掉「AI 空闲时自己补备注」后，提示里连欠账都不提（已写的备注不受影响）
+  ok(!buildStickerContext(list, 8, { autoLabel: false }).includes('还没有任何备注'), '关掉后不再催 AI 补备注');
+  ok(buildStickerContext(list, 8).includes('还没有任何备注'), '默认（不传）按开启处理');
+  // 一轮补几个可配（socialV2.sticker.autoLabelPerTurn，1~6）：提示里的具体 id 数量要跟着变，
+  // 否则控制台调大/调小都没用——线上「每次只补两个」就是这么来的。
+  const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((i) => normalizeStickerEntry({ emoji_id: i, resId: i, url: `https://x/${i}` }));
+  const four = buildStickerContext(many, 8, { labelPerTurn: 4 });
+  ok(four.includes('一轮最多补 4 个'), '提示里的「一轮最多」跟着配置走');
+  ok(four.includes('本次就补这 4 个') && four.includes('`d`') && !four.includes('`e`'), '具体 id 只给 4 个');
+  const one = buildStickerContext(many, 8, { labelPerTurn: 1 });
+  ok(one.includes('一轮最多补 1 个') && one.includes('本次就补这个'), '调成 1 个时措辞要通顺（不是「这 1 个」）');
+  ok(buildStickerContext(many, 8, { labelPerTurn: 99 }).includes('一轮最多补 6 个'), '上限压到 6，不能无限往上抬');
+  ok(buildStickerContext(many, 8).includes('一轮最多补 2 个'), '默认 2 个');
+
+  // 线上真事故：AI 先把两张图都看完、再一起写备注，结果把 A 的描述写到 B 上
+  // （faker_憋笑 ↔ 柴郡猫猫_点赞 笔记互换）。提示里必须点明「看完一张立刻写掉」。
+  ok(ctx.includes('一张一张来') && ctx.includes('立刻'), '要求看完一张立刻写掉，别攒着一起写');
+  ok(ctx.includes('写到 B 上') && ctx.includes('互换'), '把「会写串」这件事说破并给真实例子，模型才当回事');
+
+  const labeled = [normalizeStickerEntry({ emoji_id: 'z', resId: 'z', url: 'https://x/z', desc: '都有备注' })];
+  ok(!buildStickerContext(labeled, 8).includes('还没有任何备注'), '全都有备注时不要多嘴');
 }
 
 console.log('## 配置文件');

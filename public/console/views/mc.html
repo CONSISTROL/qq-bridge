@@ -1,0 +1,172 @@
+<!-- Minecraft：bot 状态 / 里程碑进度 / 背包 / 日志 -->
+<section class="card">
+  <h2>B站直播 / 推流 <span id="mcLiveState" class="pill"></span></h2>
+  <div class="row" style="flex-wrap:wrap;gap:10px;align-items:center">
+    <span class="meta">直播间：</span>
+    <a id="mcLiveUrl" href="https://live.bilibili.com/21803677" target="_blank" rel="noreferrer">live.bilibili.com/21803677</a>
+    <span id="mcLiveMeta" class="meta"></span>
+  </div>
+  <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px">
+    <input id="mcLiveTitle" type="text" value="AI 玩 Minecraft 实况｜DeepSeek 挖矿版" placeholder="直播标题" style="flex:1;min-width:220px" />
+    <button id="mcLiveStart" class="small">开播（换推流码）</button>
+    <button id="mcLiveStop" class="small">下播</button>
+    <button id="mcLiveRefresh" class="small">刷新房间状态</button>
+  </div>
+  <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px">
+    <span class="meta">推流进程：</span>
+    <span id="mcPushState" class="pill"></span>
+    <button id="mcPushStart" class="small">启动推流</button>
+    <button id="mcPushRestart" class="small">重启推流</button>
+    <button id="mcPushStop" class="small">停止推流</button>
+  </div>
+  <div class="meta" id="mcPushStats" style="margin-top:6px"></div>
+  <div id="mcFaceAuth" style="margin-top:6px"></div>
+
+  <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+    <span class="meta">画质：</span>
+    <select id="mcCfgPreset">
+      <option value="">自定义</option>
+      <option value="480p">480p（854×480）</option>
+      <option value="540p">540p（960×540）</option>
+      <option value="720p">720p（1280×720）</option>
+      <option value="1080p">1080p（1920×1080）</option>
+    </select>
+    <label class="meta">输出 <input id="mcCfgW" type="number" style="width:72px" /> × <input id="mcCfgH" type="number" style="width:72px" /></label>
+    <label class="meta">投射 <input id="mcCfgRW" type="number" style="width:64px" /> × <input id="mcCfgRH" type="number" style="width:64px" /></label>
+    <label class="meta">帧率 <input id="mcCfgFps" type="number" style="width:56px" /></label>
+    <label class="meta">码率 <input id="mcCfgBitrate" type="text" style="width:76px" /></label>
+    <label class="meta">视距 <input id="mcCfgRadius" type="number" style="width:56px" /></label>
+    <button id="mcCfgSave" class="small">保存画质并重启推流</button>
+  </div>
+  <div class="meta" id="mcCfgHint" style="margin-top:4px">投射分辨率决定 CPU 开销：投射越接近输出越清晰、越吃 CPU。这台 2 核机建议 720p 配 384×216~512×288、帧率 5~6。</div>
+  <div class="row" style="margin-top:8px;align-items:center;gap:10px">
+    <span class="meta">第一人称网页视角：</span>
+    <a id="mcViewerLink" href="https://anihub.xin/mc/" target="_blank" rel="noreferrer">https://anihub.xin/mc/</a>
+    <span id="mcViewerState" class="pill"></span>
+  </div>
+  <div class="meta" style="margin-top:6px">开播/推流都是异步执行，点完等几秒看下面状态；串流码只存在服务器上，不会回传到页面。</div>
+  <details style="margin-top:8px">
+    <summary class="meta">推流日志（最近 40 行）</summary>
+    <pre id="mcStreamLog" style="max-height:220px;overflow:auto;white-space:pre-wrap"></pre>
+  </details>
+  <details style="margin-top:6px">
+    <summary class="meta">开播 / 下播输出</summary>
+    <pre id="mcLiveLog" style="max-height:200px;overflow:auto;white-space:pre-wrap"></pre>
+  </details>
+</section>
+
+<section class="card">
+  <h2>整机控制 <span id="mcSvcSummary" class="meta"></span>
+    <button id="mcSvcRefresh" class="small" style="float:right">刷新状态</button>
+  </h2>
+  <div class="meta" style="margin-bottom:8px">
+    直接控制笔记本上那套服务（走 SSH）。<b>停 AI 前建议先停看门狗</b>，否则它会把 AI 拉回来；
+    停客户端会让直播画面失去来源；改动推流后等 5~10 秒再看状态。
+  </div>
+  <div id="mcServices"><span class="meta">点右上角「刷新状态」读取（SSH 查询，约 2~3 秒）…</span></div>
+
+  <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)">
+    <span class="meta">快捷操作：</span>
+    <button id="mcAllUp" class="small">一键全部启动</button>
+    <button id="mcAllDown" class="small">一键全部停止</button>
+  </div>
+
+  <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px">
+    <span class="meta">待机封面：</span>
+    <span id="mcStandbyState" class="pill"></span>
+    <button id="mcStandbyOn" class="small">切到待机封面</button>
+    <button id="mcStandbyOff" class="small">切回游戏画面</button>
+    <button id="mcStandbyRefresh" class="small">刷新</button>
+  </div>
+  <div class="meta" style="margin-top:4px">待机封面只换画面源，<b>不会断开推流、不需要重新开播</b>。封面图在笔记本的 <code>/home/wx/mc/stream/standby.png</code>。</div>
+  <pre id="mcSvcLog" style="max-height:180px;overflow:auto;white-space:pre-wrap;margin-top:8px;display:none"></pre>
+</section>
+
+<section class="card">
+  <h2>功耗 / 风扇 <span id="mcThermSummary" class="meta"></span>
+    <button id="mcThermRefresh" class="small" style="float:right">刷新</button>
+  </h2>
+  <div class="meta" style="margin-bottom:8px">
+    <b>风扇转速没有软件接口</b>，只能靠降温间接压。<b>降 PL1 基本没用</b>——实测整机只烧 12~16W、温度就已 70°C（PL1 帽子 30W 根本没碰到），瓶颈是散热不是功耗。
+    <b>真正能降温的是频率上限</b>（降工作电压）。改完立即生效，且重启后自动重新应用（<code>mc-thermal.service</code> 读 <code>/etc/mc-thermal.conf</code>）。
+  </div>
+
+  <div class="row" style="flex-wrap:wrap;gap:12px;align-items:center">
+    <span class="meta">预设档位：</span>
+    <button class="small" data-therm="quiet" title="2.0GHz / PL1 15W / PL2 20W / EPP=power —— 风扇最安静，但推流和 AI 会变慢">安静</button>
+    <button class="small" data-therm="balanced" title="3.2GHz / PL1 30W / PL2 38W / EPP=balance_performance —— 现在这套（57~75°C）">平衡</button>
+    <button class="small" data-therm="boost" title="4.1GHz（原生睿频）/ PL1 45W / PL2 45W / EPP=performance —— 满速，但会回到 90°C+ 且风扇很吵">增强</button>
+  </div>
+
+  <div class="row" style="flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+    <label class="meta">频率上限 <input id="mcThermMhz" type="number" min="800" max="4100" step="100" style="width:78px" /> MHz</label>
+    <label class="meta">PL1 <input id="mcThermPl1" type="number" min="2" max="45" style="width:62px" /> W</label>
+    <label class="meta">PL2 <input id="mcThermPl2" type="number" min="2" max="45" style="width:62px" /> W</label>
+    <label class="meta">调频器
+      <select id="mcThermGov">
+        <option value="powersave">powersave（省电，空闲降频）</option>
+        <option value="performance">performance（锁高频）</option>
+      </select>
+    </label>
+    <label class="meta">能效偏好
+      <select id="mcThermEpp">
+        <option value="power">power（最省电）</option>
+        <option value="balance_power">balance_power</option>
+        <option value="balance_performance">balance_performance</option>
+        <option value="performance">performance（最激进）</option>
+        <option value="default">default</option>
+      </select>
+    </label>
+    <button id="mcThermApply" class="small">应用</button>
+  </div>
+  <div class="meta" id="mcThermNow" style="margin-top:8px"></div>
+  <pre id="mcThermLog" style="max-height:160px;overflow:auto;white-space:pre-wrap;margin-top:6px;display:none"></pre>
+</section>
+
+<section class="card">
+  <h2>服务端 / bot</h2>
+  <div id="mcOverview"><span class="meta">加载中…</span></div>
+</section>
+
+<section class="card">
+  <h2>里程碑进度</h2>
+  <div id="mcMilestones"><span class="meta">加载中…</span></div>
+</section>
+
+<section class="card">
+  <h2>背包</h2>
+  <div id="mcInventory"><span class="meta">加载中…</span></div>
+</section>
+
+<section class="card">
+  <h2>AI 记忆 <span class="meta" id="mcMemInfo">（读取中…）</span></h2>
+  <div class="meta" style="margin-bottom:6px">
+    上限已取消（2026-10-08）。记忆、教训、经验三类分开显示：<b>记忆</b>每轮注入提示词，直接影响它的言行；<b>教训库</b>只增不删，每轮完整注入；<b>经验流水</b>只写不读，用于回溯"它学到过什么、什么时候忘的"。
+  </div>
+  <div id="mcMemory"><span class="meta">加载中…</span></div>
+</section>
+
+<section class="card">
+  <h2>投递指令 <span class="meta">（写进 bot-command.txt，由 bot 轮询执行）</span></h2>
+  <div class="row">
+    <input id="mcCmd" type="text" placeholder="say 你好 / mine dirt / pos" style="flex:1;min-width:220px" />
+    <button id="mcCmdSend" class="small">发送</button>
+  </div>
+  <div class="meta" style="margin-top:6px">只放行 say / pos / mine / stop / goto 开头的指令。</div>
+</section>
+
+<section class="card">
+  <h2>bot 日志 <span class="meta" id="mcLogInfo">（读取中…）</span></h2>
+  <div class="row" style="margin:6px 0;gap:6px;flex-wrap:wrap">
+    <select id="mcLogLimit" class="small">
+      <option value="40">最近 40 行</option>
+      <option value="200">最近 200 行</option>
+      <option value="1000" selected>最近 1000 行</option>
+      <option value="5000">最近 5000 行</option>
+      <option value="all">全部历史</option>
+    </select>
+    <button id="mcLogRefresh" class="small">刷新</button>
+    <button id="mcLogDownload" class="small">下载全部</button>
+  </div>
+  <pre id="mcLog" style="max-height:60vh;overflow:auto;white-space:pre-wrap"></pre>
+</section>

@@ -2,8 +2,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import dns from 'node:dns';
+import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import os from 'node:os';
+import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { SENSITIVE_RE } from '../src/sensitive.js';
@@ -20,7 +23,7 @@ dns.promises.lookup = async (host) => {
 let fetchModule;
 try { fetchModule = await import('../src/safe-fetch.js'); }
 finally { dns.promises.lookup = originalLookup; }
-const { isPrivateIp, safeFetch, safeFetchBuffer, validateFetchUrl } = fetchModule;
+const { isPrivateIp, safeFetch, safeFetchBuffer, safeFetchBinary, validateFetchUrl } = fetchModule;
 
 function mockTransport(t, scripts) {
   const requests = [];
@@ -138,6 +141,18 @@ test('image byte limits and signatures are checked', async (t) => {
   await assert.rejects(safeFetchBuffer('http://93.184.216.34/', 11), /大小限制/);
   assert.equal(responses[1].destroyed, true);
   await assert.rejects(safeFetchBuffer('http://93.184.216.34/'), /不是有效图片/);
+});
+
+// 聊天里的 QQ 视频是 mp4：走 safeFetchBuffer 会被「不是有效图片」拒掉（线上真实踩过）。
+// safeFetchBinary 只放开格式校验，SSRF 校验/体积上限/超时都必须保持一致。
+test('safeFetchBinary 收任意二进制，但仍然守体积与 SSRF 边界', async (t) => {
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(20, 7)]);
+  const { responses } = mockTransport(t, [{ body: mp4 }, { body: mp4 }]);
+  const ok = await safeFetchBinary('http://93.184.216.34/video.mp4', 1024);
+  assert.deepEqual(ok.buffer, mp4, '非图片二进制要能抓下来');
+  await assert.rejects(safeFetchBinary('http://93.184.216.34/video.mp4', 8), /大小限制/, '体积上限仍然生效');
+  assert.equal(responses[1].destroyed, true);
+  await assert.rejects(safeFetchBinary('http://127.0.0.1/video.mp4'), /禁止/, '内网地址仍然被拦');
 });
 
 test('text and image requests have a total deadline despite continuous incoming data', async (t) => {

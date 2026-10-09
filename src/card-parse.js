@@ -299,3 +299,53 @@ export function cardPreviewUrl(seg) {
   else if (type === 'share') card = parseShareCard(d);
   return card?.preview && /^https?:\/\//i.test(card.preview) ? card.preview : '';
 }
+
+// ── 出站：由桥接自己组装分享卡（AI 只给字段，不给 JSON）─────────────────────
+//
+// 为什么不让 AI 直接传 json/xml：
+//   卡片体是网关侧的**任意结构化内容**，能伪造「系统通知 / 红包 / 群邀请」这类看着像官方的东西，
+//   群里其他人点开就是外部跳转。所以这里只做一个固定形状的「链接分享卡」，
+//   app/view 由桥接写死，AI 只能填标题/摘要/链接/预览图，且都要过 cleanCardText + URL 校验。
+//
+// 形状对齐 `com.tencent.structmsg` 的 news 视图 —— 这也是 parseJsonCard 认识的那一种，
+// 所以 AI 自己发出去的卡片，回来时它能从 recentMessages 里读懂（闭环）。
+// 注意：QQ 客户端对卡片渲染有版本差异，部分版本只显示 prompt 兜底文本，这是客户端行为，桥接控制不了；
+// 因此 prompt 必须自带「标题 + 链接」，保证最差情况下也是一条可点的纯文本。
+export const CARD_BUILT_TITLE_MAX = 60;
+export const CARD_BUILT_DESC_MAX = 90;
+
+/**
+ * 组一张链接分享卡（返回 JSON 字符串，供 `{ type: 'json', data: { data } }` 使用）。
+ * @param {{title:string, url:string, desc?:string, preview?:string, source?:string}} input
+ */
+export function buildNewsCard({ title, url, desc = '', preview = '', source = '' } = {}) {
+  const cleanTitle = cleanCardText(title, CARD_BUILT_TITLE_MAX) || cleanCardText(url, CARD_BUILT_TITLE_MAX);
+  const cleanDesc = cleanCardText(desc, CARD_BUILT_DESC_MAX);
+  const cleanUrl = String(url ?? '').trim();
+  const cleanPreview = String(preview ?? '').trim();
+  let host = '';
+  try { host = new URL(cleanUrl).hostname; } catch { host = ''; }
+  const tag = cleanCardText(source, CARD_SOURCE_MAX) || host;
+  const card = {
+    app: 'com.tencent.structmsg',
+    desc: 'com.tencent.structmsg',
+    view: 'news',
+    ver: '0.0.0.1',
+    // 兜底文本：QQ 不渲染卡片时，用户至少能看到「标题 + 完整链接」。
+    prompt: `[分享] ${cleanTitle}${cleanUrl ? ` ${cleanUrl}` : ''}`.slice(0, 200),
+    meta: {
+      news: {
+        action: '',
+        appid: '-1',
+        appname: tag,
+        title: cleanTitle,
+        desc: cleanDesc,
+        jumpUrl: cleanUrl,
+        ...(cleanPreview ? { preview: cleanPreview } : {}),
+        tag,
+        source: tag
+      }
+    }
+  };
+  return JSON.stringify(card);
+}

@@ -1,0 +1,33 @@
+[Unit]
+Description=MC 直播推流 (体素渲染 → ffmpeg → B站 RTMP)
+Documentation=file:/home/wx/mc/stream/README.md
+After=network-online.target mcserver.service
+Wants=network-online.target
+After=mcserver.service
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=wx
+Group=wx
+WorkingDirectory=/home/wx/mc/stream
+ExecStart=/home/wx/mc/stream/mc-stream-launch.sh
+
+# 写 stream.pid：qq-bridge 的推流视图靠它判断"推流在跑"（ExecStartPost 里的 $MAINPID 即渲染进程）
+ExecStartPost=/bin/bash -c 'echo $MAINPID > /home/wx/mc/stream/stream.pid'
+ExecStopPost=/bin/bash -c 'rm -f /home/wx/mc/stream/stream.pid'
+
+# 推流断了要自己回来（网络抖动/ffmpeg 退出）
+Restart=always
+RestartSec=10
+
+StandardOutput=append:/home/wx/mc/stream/stream.log
+StandardError=append:/home/wx/mc/stream/stream.log
+SyslogIdentifier=mcstream
+
+LimitNOFILE=65536
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
