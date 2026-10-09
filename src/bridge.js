@@ -17,7 +17,7 @@ import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } fr
 import { mdToPlain, splitForQQ } from './md-to-plain.js';
 import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
-import { safeFetch, safeFetchBuffer, safeFetchBinary, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
+import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -33,7 +33,7 @@ import {
 import { normalizeImageRating, normalizeRatingWords, DEFAULT_MILD_TAGS, DEFAULT_TOLERATED_TAGS, EXPLICIT_TAGS } from './image-rating.js';
 import { searchPixivByTag, pixivDailyRanking, pixivThumbUrl, searchPixivWeb, pixivIllustOriginal, isPixivHost, pixivArtworkIdFromAnyUrl, pixivRenditionOf } from './pixiv-search.js';
 import { presetCompositionStamp } from './preset-stamp.js';
-import { cardSegmentToText, extractCardFromSegments, CARD_SUMMARY_MAX, buildNewsCard, cleanCardText } from './card-parse.js';
+import { cardSegmentToText, extractCardFromSegments, cardPreviewMedia, CARD_SUMMARY_MAX, buildNewsCard, cleanCardText } from './card-parse.js';
 import { getMcStatus, formatMcStatusBlock, postCommand, recentBotLog, memoryState, getStreamStatus, runStreamAction, runLiveAction, recentStreamLog, getStreamConfig, setStreamConfig, QUALITY_PRESETS } from './mc-state.js';
 // 真正的 MC 全套控制（走 SSH 到笔记本那台）：服务启停 / 推流 / B站开播 / 待机封面。
 // 与上面的 mc-state.js 区别：mc-state 读的是盘上的状态文件（只读展示），
@@ -10643,11 +10643,17 @@ async function main() {
           let meta = { durationSec: 0, width: 0, height: 0, bytes: 0 };
           const hasFfmpeg = !!(await resolveFfmpegPath());
           if (videoUrl && hasFfmpeg) {
+            // 视频**边下边落盘**，不整段进内存：聊天视频动辄几十 MB，这台机器总共才 1.6GB 内存，
+            // 缓冲整段会把它打爆（也正是「大一点的视频看不了」的根因）。
+            const tmpDir = fs.mkdtempSync(path.join(STATE_DIR, 'video-tmp-'));
+            const videoFile = path.join(tmpDir, 'in.bin');
             try {
-              // 注意用 safeFetchBinary 而不是 safeFetchBuffer：后者强制「必须是图片」，mp4 会被拒。
-              const fetched = await safeFetchBinary(videoUrl, maxBytes, { timeoutMs: 60000 });
-              meta.bytes = fetched.buffer.length;
-              const extracted = await extractVideoFrames(fetched.buffer, { frames: wantFrames, maxWidth });
+              // 注意用 safeFetchToFile/safeFetchBinary 而不是 safeFetchBuffer：后者强制「必须是图片」，mp4 会被拒。
+              const fetched = await safeFetchToFile(videoUrl, maxBytes, videoFile, {
+                timeoutMs: Math.max(5000, Number(cfgV.fetchTimeoutMs) || 60000),
+              });
+              meta.bytes = fetched.bytes;
+              const extracted = await extractVideoFramesFromFile(videoFile, { frames: wantFrames, maxWidth, tmpDir });
               if (extracted) {
                 frames = extracted.frames;
                 meta = { ...meta, ...extracted.meta };
@@ -10655,6 +10661,8 @@ async function main() {
             } catch (error) {
               note = `视频下载失败（${error?.message ?? error}），只能给封面。`;
               log(`[video] 下载失败 ${key} ${messageId}: ${error?.message ?? error}`);
+            } finally {
+              try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 清理失败不影响主流程 */ }
             }
           } else if (!hasFfmpeg) {
             note = '本机没装 ffmpeg（抽帧需要它），只能给视频封面。装法：apt-get install -y ffmpeg，或在 config.json 里把 socialV2.video.ffmpegPath 指到 ffmpeg 可执行文件。';
@@ -11818,7 +11826,7 @@ async function main() {
           parts.push({ type: 'text', text: face.text || `[表情#${media.faceId}]` });
         }
       } else {
-        const imgLabel = media.label === '[动画表情]' ? '表情包' : '图片';
+        const imgLabel = media.label === '[动画表情]' ? '表情包' : (media.label === '[卡片封面]' ? '卡片封面' : '图片');
         const frames = await fetchOneBotImageParts(media);
         if (!frames.length) {
           parts.push({ type: 'text', text: `[${imgLabel}${index}（获取失败）]` });
@@ -11877,7 +11885,7 @@ async function main() {
           out.push({ index, kind: 'face', faceId: media.faceId ? String(media.faceId) : undefined, text: face.text || `[表情#${media.faceId}]` });
         }
       } else {
-        const imgLabel = media.label === '[动画表情]' ? '表情包' : '图片';
+        const imgLabel = media.label === '[动画表情]' ? '表情包' : (media.label === '[卡片封面]' ? '卡片封面' : '图片');
         // 动图会返回多帧（见 normalizeImageForVision），所以这里按 parts 循环，
         // 每帧单独吃批预算；一帧都塞不下才算「总大小超限」。
         const frames = await fetchOneBotImageParts(media);
@@ -11935,18 +11943,28 @@ async function main() {
       return videoNote;
     }
     // 把「表情包」和「图片」分开说：模型看不到段类型，只有这行提示能告诉它这是不是表情包。
-    const labels = mediaList.map((m) => (m?.kind === 'face' ? '表情' : (m?.label === '[动画表情]' ? '表情包' : '图片')));
+    // 卡片预览图也要单独说：它不是群友发的照片，而是那张卡片的封面。
+    const labelOf = (m) => {
+      if (m?.kind === 'face') return '表情';
+      if (m?.label === '[动画表情]') return '表情包';
+      if (m?.label === '[卡片封面]') return '卡片封面图';
+      return '图片';
+    };
+    const labels = mediaList.map(labelOf);
     const uniq = [...new Set(labels)];
     const desc = uniq.length === 1 ? uniq[0] : uniq.join('/');
     const onlyStickers = labels.every((l) => l === '表情包' || l === '表情');
     const stickerNote = onlyStickers ? '（这是表情包，不是照片；表情包本来就是反复用的，不要指出「你发过了 / 重复了 / 存重了」）' : '';
+    const cardNote = labels.some((l) => l === '卡片封面图')
+      ? '（卡片封面图就是那张卡片/视频的封面，不是群友发的照片；群友讨论「封面」时看它）'
+      : '';
     // 动图只喂第一帧会被当成静图描述，所以提前说明「工具会按顺序返回多帧」。
     const maybeAnim = mediaList.some((m) => m?.label === '[动画表情]' || /\.gif(\?|$)/i.test(String(m?.file || m?.url || '')));
     const animNote = maybeAnim ? '**其中可能有动图：查看工具会按顺序返回多帧，别只看第一帧就下结论。**' : '';
     if (currentMode === 'reserved2') {
-      return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${animNote}。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
+      return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
     }
-    return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${animNote}。`;
+    return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}。`;
   }
 
   function findMessageMedia(key, ref) {
@@ -14158,6 +14176,15 @@ async function main() {
       if (out.length >= MAX_MEDIA_COUNT) break;
     }
     if (out.length) log(`[image] 通过 get_msg 兜底取到 ${out.length} 个媒体段（messageId=${messageId}）`);
+    // 卡片封面也走兜底：缓存里没有媒体（老消息、或这条是本次改动之前入的库）时，
+    // get_msg 里的 json/xml/share 段仍然带着 preview，能直接补出封面图。
+    if (!out.length) {
+      const cardMedia = cardPreviewMedia(extractCardFromSegments(segs));
+      if (cardMedia) {
+        out.push(cardMedia);
+        log(`[image] 通过 get_msg 兜底取到卡片封面（messageId=${messageId}）`);
+      }
+    }
     return out;
   }
 
@@ -15193,6 +15220,10 @@ async function main() {
     const mediaList = extractMediaFromSegments(event.message ?? []);
     // 卡片的结构化信息（完整 url/preview）：摘要里放不下的链接，AI 从这里拿。
     const cardInfo = extractCardFromSegments(event.message ?? []);
+    // 卡片自带的预览图（B站小程序卡、链接分享卡的封面）也当图片投喂：
+    // 以前卡片在 AI 眼里只有一行文字，群里聊「封面就吓哭了」时它只能让群友再发一遍。
+    const cardPreview = cardPreviewMedia(cardInfo);
+    if (cardPreview) mediaList.push(cardPreview);
     const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
     const seqRef = event.message_seq != null ? String(event.message_seq) : '';
     const refsToStore = [...new Set([messageRef, seqRef].filter(Boolean))];

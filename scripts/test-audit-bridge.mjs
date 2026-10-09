@@ -1573,6 +1573,45 @@ await test('表情包管理接口：本地备注 / QQ 备注 / 置顶 / 删除 /
 // 线上事故（09-30）：有人发了个 QQ 视频，桥接整段忽略，AI 只能回「视频我这边打不开」。
 // 视频段其实带着 file/url/thumb，以前一个都没记。这里钉住：段要认出来、提示要指向抽帧工具、
 // 没有 ffmpeg 时要老实降级成封面（而不是假装能看）。
+// 入站卡片：B站小程序卡/链接分享卡自带封面（card.preview）。
+// 以前预览图只解析不接线，卡片在 AI 眼里就是一行文字，群里聊「封面就吓哭了」时
+// 它只能回「封面发来看看」——数据明明就在消息里。
+await test('入站卡片的预览图要挂成图片媒体，并在提示里点明是卡片封面', async (h) => {
+  h.setMode('reserved2');
+  const cardJson = JSON.stringify({
+    app: 'com.tencent.structmsg',
+    view: 'mini',
+    meta: {
+      detail_1: {
+        title: '2026英雄联盟全球总决赛主题曲《KNOW MY NAME》',
+        desc: '以我之名',
+        preview: 'https://qq.ugcimg.cn/v1/cover-token/e9vf2tsqr6j29hl2kodb3vahlc',
+        qqdocurl: 'https://b23.tv/K16z3SB',
+      },
+    },
+  });
+  const key = 'group:456';
+  await h.handleIncoming('group', 456, {
+    post_type: 'message', message_type: 'group',
+    group_id: 456, user_id: 999, self_id: 1,
+    message_id: 490001, message_seq: 9001,
+    sender: { user_id: 999, card: '米哈游㍿', nickname: '米哈游' },
+    message: [
+      { type: 'json', data: { data: cardJson } },
+      { type: 'text', data: { text: '封面就吓哭了' } },
+    ],
+  }, h.cfg);
+  const msg = (h.getSocialV2State(key).recentMessages || []).at(-1);
+  assert.ok(msg, '消息要入库');
+  const cover = (msg.media || []).find((m) => m?.label === '[卡片封面]');
+  assert.ok(cover, '卡片封面要作为媒体挂在消息上');
+  assert.equal(cover.kind, 'image');
+  assert.equal(cover.url, 'https://qq.ugcimg.cn/v1/cover-token/e9vf2tsqr6j29hl2kodb3vahlc', '封面 URL 要原样保留');
+  const hint = h.mediaHintFor(key, msg.messageId, msg.media);
+  assert.match(hint, /卡片封面图/, '提示要说清这是卡片封面，不是群友发的照片');
+  assert.match(hint, /qq_get_message_images/, '提示要给出看图工具，否则 AI 不知道能看');
+});
+
 await test('视频段要被识别，且提示指向 qq_get_message_video', async (h) => {
   const media = h.extractMediaFromSegments([
     { type: 'text', data: { text: '看这个' } },
@@ -1638,6 +1677,77 @@ await testWith(
       assert.equal(none.status, 200);
       assert.equal(none.body.frames.length, 0);
       assert.match(String(none.body.note ?? ''), /没有视频段|不是视频/, '要明确说这条没有视频段');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
+  }
+);
+
+// 「大一点的视频看不了」的根因：视频以前整段读进内存，上限写死 32MB。
+// 现在必须走 safeFetchToFile（边下边落盘），并把配置里的抓取上限带下去。
+const videoDownloadCalls = [];
+const videoDownloadFixture = {
+  safeFetchToFile: async (url, maxBytes, filePath) => {
+    videoDownloadCalls.push({ url, maxBytes, filePath });
+    fs.writeFileSync(filePath, Buffer.from('fake-not-a-video'));
+    return { url, statusCode: 200, bytes: 18 };
+  },
+  safeFetchBuffer: async () => ({ url: 'https://public.invalid/b.jpg', statusCode: 200, buffer: PNG12 }),
+};
+await testWith(
+  {
+    globals: videoDownloadFixture,
+    config: { socialV2: { video: { ffmpegPath: process.execPath, maxBytes: 12345678, fetchTimeoutMs: 120000 } } },
+  },
+  '聊天视频边下边落盘：按配置的上限下载，抽不出帧也要降级到封面',
+  async (h) => {
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      h.appendSocialV2Message(key, '米哈游㍿', '[视频]', '[视频]', false, true, 489100,
+        [{ kind: 'video', file: 'b.mp4', url: 'https://public.invalid/b.mp4', thumb: 'https://public.invalid/b.jpg', label: '[视频]' }],
+        '1472298635', [], null, null);
+      const res = await apiRequest(server, `/api/images/message-video?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=489100`, {
+        method: 'GET', agentToken: st.agentToken
+      });
+      assert.equal(res.status, 200);
+      const call = videoDownloadCalls.at(-1);
+      assert.ok(call, '要真的走落盘下载，而不是把整段视频读进内存');
+      assert.equal(call.maxBytes, 12345678, '必须用配置里的抓取上限，不能写死');
+      assert.match(String(call.filePath), /video-tmp-.*in\.bin$/, '要落到临时目录的文件里');
+      assert.ok(Array.isArray(res.body.frames) && res.body.frames.length >= 1, '抽不出帧要降级给封面，而不是整条失败');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
+  }
+);
+
+// 撞上限时的表现：老实说「下载失败 + 为什么」，并给封面兜底（AI 至少知道发生过什么）。
+const videoTooLargeFixture = {
+  safeFetchToFile: async () => { throw new Error('图片超过大小限制（12345678 字节）'); },
+  safeFetchBuffer: async () => ({ url: 'https://public.invalid/c.jpg', statusCode: 200, buffer: PNG12 }),
+};
+await testWith(
+  { globals: videoTooLargeFixture, config: { socialV2: { video: { ffmpegPath: process.execPath, maxBytes: 12345678 } } } },
+  '视频超过抓取上限时如实说明并降级到封面',
+  async (h) => {
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      h.appendSocialV2Message(key, '米哈游㍿', '[视频]', '[视频]', false, true, 489101,
+        [{ kind: 'video', file: 'c.mp4', url: 'https://public.invalid/c.mp4', thumb: 'https://public.invalid/c.jpg', label: '[视频]' }],
+        '1472298635', [], null, null);
+      const res = await apiRequest(server, `/api/images/message-video?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=489101`, {
+        method: 'GET', agentToken: st.agentToken
+      });
+      assert.equal(res.status, 200);
+      const note = String(res.body.note ?? '');
+      assert.match(note, /下载失败/, '要如实报告下载失败');
+      assert.match(note, /大小限制/, '要把原因（超上限）带给管理员');
+      assert.match(note, /封面/, '要说明降级成了封面');
+      assert.ok(Array.isArray(res.body.frames) && res.body.frames.length >= 1, '拿不到帧也要给封面');
     } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
   }
 );

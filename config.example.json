@@ -253,7 +253,8 @@
     },
     "video": {
       "enabled": true,
-      "maxBytes": 33554432,
+      "maxBytes": 268435456,
+      "fetchTimeoutMs": 240000,
       "maxFrames": 6,
       "frameMaxWidth": 800,
       "ffmpegPath": "",

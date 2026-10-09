@@ -20,6 +20,7 @@ import {
   decodeXmlEntities,
   cleanCardText,
   cardPreviewUrl,
+  cardPreviewMedia,
   extractCardFromSegments,
   normalizeCardForStore,
   CARD_SUMMARY_MAX,
@@ -47,6 +48,14 @@ console.log('## 真实卡片（OneBot get_msg 取回的原样 payload）');
   ok(String(card?.url || '').startsWith('https://api.xiaoheihe.cn/'), '链接解析正确', card?.url);
   ok(String(card?.app || '') === 'com.tencent.tuwen.lua', 'app 字段保留', card?.app);
   ok(String(card?.preview || '').startsWith('https://'), '预览图 URL 被提取（当前不自动下载）', card?.preview);
+  // 预览图要能变成一条可投喂的图片媒体：卡片封面以前只提取不接线，
+  // AI 看不到封面，群里聊「封面就吓哭了」时只能让群友再发一遍。
+  const previewMedia = cardPreviewMedia(card);
+  ok(previewMedia?.kind === 'image' && previewMedia?.url === card?.preview, '预览图转成图片媒体（url 不变）', JSON.stringify(previewMedia));
+  ok(previewMedia?.label === '[卡片封面]', '媒体标签标明是卡片封面，不是群友发的照片', previewMedia?.label);
+  ok(cardPreviewMedia(null) === null, '没有卡片时返回 null');
+  ok(cardPreviewMedia({ preview: 'javascript:alert(1)' }) === null, '非 http(s) 的预览图不接线（防注入）');
+  ok(cardPreviewMedia({ preview: '' }) === null, '空预览图返回 null');
 
   const text = cardSegmentToText({ type: 'json', data: { data: REAL_CARD_JSON } });
   ok(text.startsWith('[卡片·小黑盒]'), '渲染成 [卡片·来源] 开头', text);

@@ -23,7 +23,7 @@ dns.promises.lookup = async (host) => {
 let fetchModule;
 try { fetchModule = await import('../src/safe-fetch.js'); }
 finally { dns.promises.lookup = originalLookup; }
-const { isPrivateIp, safeFetch, safeFetchBuffer, safeFetchBinary, validateFetchUrl } = fetchModule;
+const { isPrivateIp, safeFetch, safeFetchBuffer, safeFetchBinary, safeFetchToFile, validateFetchUrl } = fetchModule;
 
 function mockTransport(t, scripts) {
   const requests = [];
@@ -177,10 +177,34 @@ test('aborted bodies reject instead of leaving the operation pending', async (t)
   await assert.rejects(safeFetch('http://93.184.216.34/'), /中断/);
 });
 
+// 聊天视频动辄几十 MB，整段进内存会把小内存机器打爆（线上「大一点的视频看不了」）：
+// 走 safeFetchToFile 边下边落盘。SSRF 边界、体积上限、失败清理必须和 safeFetchBinary 一样硬。
+test('safeFetchToFile 边下边落盘，超限时删掉半截文件并守住 SSRF 边界', async (t) => {
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(64, 7)]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'safe-fetch-file-'));
+  const file = path.join(dir, 'out.bin');
+  try {
+    mockTransport(t, [{ body: mp4 }, { body: mp4 }]);
+    const ok = await safeFetchToFile('http://93.184.216.34/video.mp4', 1024, file);
+    assert.equal(ok.bytes, mp4.length);
+    assert.deepEqual(fs.readFileSync(file), mp4, '内容要真的落盘');
+
+    await assert.rejects(safeFetchToFile('http://93.184.216.34/video.mp4', 8, file), /大小限制/, '体积上限仍然生效');
+    assert.equal(fs.existsSync(file), false, '超限后必须删掉半截文件，不能留垃圾');
+
+    await assert.rejects(safeFetchToFile('http://127.0.0.1/video.mp4', 1024, file), /禁止/, '内网地址仍然被拦');
+    assert.equal(fs.existsSync(file), false, '被拦的 URL 不该创建文件');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('invalid resource limits are rejected before network access', async (t) => {
   mockTransport(t, []);
   for (const limit of [0, -1, NaN, Infinity, 1.5]) {
     await assert.rejects(safeFetch('http://93.184.216.34/', limit), /正整数/);
     await assert.rejects(safeFetchBuffer('http://93.184.216.34/', limit), /正整数/);
+    await assert.rejects(safeFetchToFile('http://93.184.216.34/', limit, '/tmp/never-written.bin'), /正整数/);
   }
+  await assert.rejects(safeFetchToFile('http://93.184.216.34/', 1024, ''), /目标文件路径/);
 });

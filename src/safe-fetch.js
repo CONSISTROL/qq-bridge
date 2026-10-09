@@ -482,3 +482,48 @@ export async function safeFetchBinary(urlString, maxBytes = 4 * 1024 * 1024, opt
   throw new Error('重定向次数过多，已停止');
 }
 
+/**
+ * 与 safeFetchBinary 同样的校验与限额，但把响应体**边收边写进文件**，不在内存里囤整段。
+ *
+ * 聊天视频动辄几十 MB，整段进内存会把小内存机器打爆（本机 1.6GB），所以视频走这条；
+ * 图片仍走 safeFetchBinary（尺寸本来就小，缓冲更简单）。
+ *
+ * @param {string} urlString 目标 URL（仅 http/https，逐跳重新做内网校验）
+ * @param {number} maxBytes 字节上限（正整数，超了抛错并删掉半截文件）
+ * @param {string} filePath 目标文件路径（调用方负责清目录）
+ * @param {{headers?:object,timeoutMs?:number,proxy?:string}} [options]
+ * @returns {Promise<{url:string,statusCode:number,bytes:number}>}
+ */
+export async function safeFetchToFile(urlString, maxBytes, filePath, options = {}) {
+  validateLimit(maxBytes, 'maxBytes');
+  if (typeof filePath !== 'string' || !filePath) throw new Error('safeFetchToFile 需要目标文件路径');
+  const extraHeaders = sanitizeImageHeaders(options.headers);
+  const timeoutMs = requestTimeout(options);
+  const proxy = parseProxy(options.proxy);
+  const MAX_REDIRECTS = 5;
+  let { url, ip } = await validateFetchUrl(urlString);
+  const sink = fs.createWriteStream(filePath, { flags: 'w' });
+  try {
+    for (let i = 0; i <= MAX_REDIRECTS; i++) {
+      const result = await requestOnce(url, ip, {
+        limit: maxBytes, binary: true, extraHeaders: i === 0 ? extraHeaders : {}, timeoutMs, proxy, sink,
+      });
+      if (REDIRECT_STATUSES.has(result.statusCode)) {
+        if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
+        const next = new URL(result.redirect, url).toString();
+        ({ url, ip } = await validateFetchUrl(next));
+        continue;
+      }
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw new Error(`抓取失败：HTTP ${result.statusCode}`);
+      }
+      if (!result.bytes) throw new Error('抓取内容为空');
+      return { url: url.toString(), statusCode: result.statusCode, bytes: result.bytes };
+    }
+    throw new Error('重定向次数过多，已停止');
+  } catch (error) {
+    try { sink.destroy(); } catch { /* 已销毁 */ }
+    try { fs.rmSync(filePath, { force: true }); } catch { /* 删不掉也不影响报错 */ }
+    throw error;
+  }
+}

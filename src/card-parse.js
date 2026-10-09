@@ -300,6 +300,23 @@ export function cardPreviewUrl(seg) {
   return card?.preview && /^https?:\/\//i.test(card.preview) ? card.preview : '';
 }
 
+/**
+ * 把卡片的预览图变成一条**图片媒体**记录，交给既有的看图链路（qq_get_message_images）。
+ *
+ * 为什么要有这个：B站小程序卡/链接分享卡自带 `preview` 封面，但以前只提取不接线，
+ * 卡片在 AI 眼里就只是一行文字。群里经常围绕封面聊天（「封面就吓哭了」），
+ * AI 看不到封面只能让群友「封面发来看看」——明明数据就在消息里。
+ *
+ * @param {{preview?:string}} card 已解析的卡片（extractCardFromSegments 的产物）
+ * @returns {{kind:'image',url:string,label:string,summary:string}|null} 没有可用预览图时返回 null
+ */
+export function cardPreviewMedia(card) {
+  const url = card?.preview && /^https?:\/\//i.test(String(card.preview)) ? String(card.preview) : '';
+  if (!url) return null;
+  // label 用区别于普通图片的写法：提示里要能让 AI 明白这是「卡片封面」而不是群友发的照片。
+  return { kind: 'image', url, label: '[卡片封面]', summary: '卡片预览图' };
+}
+
 // ── 出站：由桥接自己组装分享卡（AI 只给字段，不给 JSON）─────────────────────
 //
 // 为什么不让 AI 直接传 json/xml：
