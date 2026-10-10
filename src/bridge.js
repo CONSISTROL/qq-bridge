@@ -1835,22 +1835,39 @@ async function main() {
           })
         ]);
         if (resp && typeof resp === 'object' && resp.status && resp.status !== 'ok') {
-          throw new Error(`OneBot ${action} 失败: ${resp.wording || resp.retcode || resp.status}`);
+          // 网关**明确回绝**（retcode 非 0）：这条确实没发出去，重发它是安全的。
+          const rejected = new Error(`OneBot ${action} 失败: ${resp.wording || resp.retcode || resp.status}`);
+          rejected.oneBotRejected = true;
+          throw rejected;
         }
         // WS 返回 { status, retcode, data }；HTTP 分支返回 body.data —— 统一成 data
         return resp && typeof resp === 'object' && 'data' in resp ? resp.data : resp;
       } catch (error) {
-        // ── 关键分支：写类动作超时 ≠ 失败 ────────────────────────────────
+        // ── 写类动作：只要「可能已经送出去了」就绝不重发 ────────────────────
         // 2026-09 事故：大图 base64 走 WS，固定 15s 超时后这里「回退 HTTP」再发一遍；
         // 超时的那个 WS 请求并没有被取消，SnowLuma 照样把它送出去了，于是群里收到两张一样的图。
         // 日志证据：`[onebot] WS send_private_msg 失败（…超时（15000ms）），回退 HTTP`
         // 与重复图的时间戳一一对应（10~19MB 的 pixiv 原图，连 2.2MB 的也会撞）。
-        // 所以写类动作一旦超时，直接放弃重发，把「不确定」如实交给上层。
-        if (isWrite && isTimeoutError(error)) {
-          log(`[onebot] WS ${action} 超时（${wsTimeoutMs}ms，payload ${Math.round(oneBotPayloadBytes(params) / 1024)}KB）：不再回退 HTTP 重发（避免重复发送），如实上报结果不确定`);
-          throw new OneBotUncertainError(`OneBot ${action} 在 ${wsTimeoutMs}ms 内没有回执，发送结果不确定（消息可能已经发出，不要重发）`);
+        //
+        // 2026-10-10 又踩了一次**连接中断**版本：WS 发出去、群里已经收到，但回执没回来
+        // （SnowLuma WebSocket closed / ECONNRESET），当时这里照旧「回退 HTTP」并最终报硬失败，
+        // 结果模型重发 → 群里两条一样的。所以判定放宽到：**除了「网关明确回绝」和
+        // 「连接还没建立就失败（closed before opening，请求根本没发出去）」，其余写类失败
+        // 一律按「可能已送达」处理**，不回退、不重发，交给上层用历史查证（probeSendLanded）。
+        if (isWrite) {
+          const message = String(error?.message ?? error);
+          const neverSent = error?.oneBotRejected === true || /closed before opening/i.test(message);
+          if (!neverSent) {
+            const why = isTimeoutError(error)
+              ? `超时（${wsTimeoutMs}ms，payload ${Math.round(oneBotPayloadBytes(params) / 1024)}KB）`
+              : `失败（${message}）`;
+            log(`[onebot] WS ${action} ${why}：消息可能已经送达，不再回退 HTTP 重发（避免重复发送），改为查历史求证`);
+            throw new OneBotUncertainError(`OneBot ${action} ${why}，发送结果不确定（消息可能已经发出，不要重发）`);
+          }
+          log(`[onebot] WS ${action} 确认未发出（${message}），回退 HTTP`);
+        } else {
+          log(`[onebot] WS ${action} 失败（${error?.message ?? error}），回退 HTTP`);
         }
-        log(`[onebot] WS ${action} 失败（${error?.message ?? error}），回退 HTTP`);
       }
     }
     const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -1883,6 +1900,11 @@ async function main() {
           log(`[onebot] ${action} 第 ${attempt + 1} 次失败（${error?.message ?? error}${cause ? ' / ' + cause : ''}），${wait}ms 后重试`);
           await sleep(wait);
           continue;
+        }
+        // 写类动作的 HTTP 传输失败（连接被掐、回执丢失）：请求可能已经送达，同样不能当硬失败报出去。
+        if (isWrite && transient) {
+          log(`[onebot] HTTP ${action} 失败（${error?.message ?? error}${cause ? ' / ' + cause : ''}）：消息可能已经送达，标记为结果不确定`);
+          throw new OneBotUncertainError(`OneBot ${action} 经 HTTP 发送时连接中断，结果不确定（消息可能已经发出，不要重发）`);
         }
         throw cause ? new Error(`${error?.message ?? error}（${cause}）`) : error;
       }
@@ -12091,9 +12113,9 @@ async function main() {
     if (!selfId) return 'unknown';
     const action = kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history';
     const params = kind === 'group' ? { group_id: Number(id) } : { user_id: Number(id) };
-    // 网关提交有延迟：最多查两次（间隔 800ms），避免把「刚发出去、还没落历史」误判成没发。
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt > 0) await sleep(800);
+    // 网关提交历史有延迟：最多查三次（间隔 800/1600ms），避免把「刚发出去、还没落历史」误判成没发。
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(attempt * 800);
       let list = [];
       try {
         const resp = await bot.request(action, { ...params, count: 10 });
@@ -12141,18 +12163,23 @@ async function main() {
         })
         .catch(async (error) => {
           log(`QQ 发送失败 (${key}):`, error?.message ?? error);
-          // 超时 ≠ 没发出去：先查历史再定论。查到已送达就当成功（否则模型会重发出一条重复消息）；
-          // 查到确实没发出去，才如实报失败（这时重发是安全且正确的）。
+          // 写类失败（超时 / 连接中断 / HTTP 回执丢失）≠ 没发出去：先查历史再定论。
+          //  查到 → 按已送达处理（报成功，否则模型会重发出一条重复消息）
+          //  确认没有 → 报**普通失败**（这时重发是安全且正确的，不该标成「不确定」吓住模型）
+          //  查不了 → 保留「不确定」，由 MCP 侧明确劝阻盲目重发
           if (error?.uncertain === true) {
             const landed = await probeSendLanded(key, msg);
             if (landed === 'sent') {
-              log(`[onebot] 回执超时的那条经历史查证其实已送达（${key}）：按成功处理、不重发`);
+              log(`[onebot] 回执异常的那条经历史查证其实已送达（${key}）：按成功处理、不重发`);
               sent.push(msg);
               return;
             }
             if (landed === 'missing') {
-              log(`[onebot] 回执超时的那条经历史查证确认没发出去（${key}）：如实报失败，可安全重发`);
+              log(`[onebot] 回执异常的那条经历史查证确认没发出去（${key}）：如实报失败（重发安全）`);
+              failed.push(new Error(`发送失败，且已确认历史里没有这条（可以安全重发）：${error?.message ?? error}`));
+              return;
             }
+            log(`[onebot] 回执异常的那条查不了历史（${key}）：按不确定上报，提醒上层别盲目重发`);
           }
           failed.push(error);
         });

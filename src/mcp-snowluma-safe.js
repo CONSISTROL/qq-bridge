@@ -337,7 +337,7 @@ defineTool(
 
 defineTool(
   'qq_get_group_history',
-  '获取指定群的最近消息历史（只读）。messageSeq 可选：从该消息序号往前取。注意：是否可用取决于 SnowLuma 是否实现 get_group_msg_history。',
+  '获取指定群的最近消息历史（只读）。messageSeq 可选：从该消息序号往前取。**reserved2 模式下这个工具会被拒绝**（旧只读工具不带会话令牌）——要看最近消息、或者想确认自己刚发的那条到底发出去没有，请改用 `qq_get_recent_messages`。是否可用还取决于 SnowLuma 是否实现 get_group_msg_history。',
   { groupId: z.union([z.number(), z.string()]).describe('群号'), messageSeq: z.number().optional().describe('起始消息序号（可选）') },
   async ({ groupId, messageSeq }) => {
     const g = String(groupId);
@@ -459,7 +459,7 @@ defineTool(
 
 defineTool(
   'qq_get_recent_messages',
-  '查看指定会话的最近消息（只读），支持 offset 扩大范围。消息对象里若有 `card` 字段，那是卡片消息（分享/小程序/音乐等）的结构化内容：**`card.url` 是完整链接，要用就用它**——`text` 里的摘要在极长时会用 `…` 截断。',
+  '查看指定会话的最近消息（只读），支持 offset 扩大范围。消息对象里若有 `card` 字段，那是卡片消息（分享/小程序/音乐等）的结构化内容：**`card.url` 是完整链接，要用就用它**——`text` 里的摘要在极长时会用 `…` 截断。**发送工具报「结果不确定」时，先用这个工具看最后几条确认到底发出去没有**，别不看就重发（那会在群里变成两条一样的消息）。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),

@@ -55,7 +55,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
  *   `failGetMsg`：`get_msg` 探针本身打不通（模拟 WS 被大图 base64 占满）——
  *   用来验证「探针没打通 ≠ 没送达」，此时不能重发。
  */
-export async function bridgeHarness({ config = {}, savedState, stickerState, forwardFixtures, history, globals = {}, getMsg, hangActions, failGetMsg } = {}) {
+export async function bridgeHarness({ config = {}, savedState, stickerState, forwardFixtures, history, globals = {}, getMsg, hangActions, failActions, failGetMsg } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-audit-bridge-'));
   fs.mkdirSync(path.join(temp, 'src'));
   fs.mkdirSync(path.join(temp, 'state'));
@@ -105,6 +105,10 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
         // 永不 settle：模拟「WS 请求发出去了、但回执没在预算内回来」。
         return new Promise(() => {});
       }
+      // failActions：让指定动作直接抛错，用来模拟「连接中途断开」这类**非超时**失败
+      // （真事：WS 把消息送出去了、回执没回来，桥接当时当成硬失败 → 模型重发 → 重复）。
+      const failMap = failActions ?? {};
+      if (Object.hasOwn(failMap, action)) throw new Error(String(failMap[action]));
       // 真网关会返回 user_id / nickname；改资料的「旧值基线」和头像备份都靠它。
       if (action === 'get_login_info') {
         return { status: 'ok', retcode: 0, data: { user_id: 2840404638, nickname: '哦鲸鲸' } };

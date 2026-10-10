@@ -418,7 +418,7 @@ await testWith(
 
 await testWith(
   { config: { snowluma: { wsTimeoutMs: 1000 } }, globals: { scrubFormulaicSpeech, describeScrub }, hangActions: ['send_group_msg'], history: {} },
-  '文字回执超时且历史里查不到：如实报失败并标记 uncertain（重发才安全）',
+  '文字回执超时且历史里查不到：报普通失败（重发安全），不标 uncertain',
   async (h) => {
     const stopKeepAlive = h.keepLoopAlive();
     const server = h.startConsoleServer();
@@ -432,9 +432,72 @@ await testWith(
       });
       assert.equal(res.status, 500);
       assert.equal(res.body.ok, false);
-      assert.equal(res.body.uncertain, true, '要把「可能已发出」透给上游，好让 MCP 劝阻模型重发');
-      assert.match(String(res.body.hint ?? ''), /不要原样重发|确认/, '要说清下一步该怎么办');
+      assert.equal(res.body.uncertain, undefined, '历史已确认没有 → 不该标不确定，否则模型不敢重发');
+      assert.match(String(res.body.error ?? ''), /确认历史里没有|可以安全重发/, '要告诉上层重发是安全的');
       assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 1, '仍然只发一次');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+  }
+);
+
+// 2026-10-10 线上事故：WS 把消息送出去了（群里已可见），但连接中途断开、回执没回来。
+// 当时这种「非超时」失败会被当成硬失败，而且还会回退 HTTP 再发一次 → 模型也重发 → 两条重复。
+await testWith(
+  {
+    config: { snowluma: { wsTimeoutMs: 1000 } },
+    globals: { scrubFormulaicSpeech, describeScrub },
+    failActions: { send_group_msg: 'SnowLuma WebSocket closed' },
+    history: {
+      group: {
+        456: [{
+          message_id: 9100, message_seq: 91,
+          sender: { user_id: 2840404638 },
+          message: [{ type: 'text', data: { text: '消息已经发出去了' } }],
+        }],
+      },
+    },
+  },
+  'WS 连接中途断开但历史里查到了：按已送达处理，不回退 HTTP 重发',
+  async (h) => {
+    const stopKeepAlive = h.keepLoopAlive();
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '消息已经发出去了' }, agentToken: st.agentToken,
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.ok, true, '历史里查到就必须报成功，否则模型会重发');
+      assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 1, '只尝试一次');
+      assert.doesNotMatch(String(res.body.error ?? ''), /fetch is not defined/, '不能回退 HTTP（那会立刻发第二条）');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+  }
+);
+
+await testWith(
+  {
+    config: { snowluma: { wsTimeoutMs: 1000 } },
+    globals: { scrubFormulaicSpeech, describeScrub },
+    failActions: { send_group_msg: 'SnowLuma WebSocket closed' },
+    history: {},
+  },
+  'WS 连接中途断开且历史里没有：同样报普通失败（重发安全）',
+  async (h) => {
+    const stopKeepAlive = h.keepLoopAlive();
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '确实没发出去' }, agentToken: st.agentToken,
+      });
+      assert.equal(res.status, 500);
+      assert.equal(res.body.uncertain, undefined, '历史已确认没有 → 不该标不确定');
+      assert.match(String(res.body.error ?? ''), /确认历史里没有|可以安全重发/);
     } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
   }
 );
