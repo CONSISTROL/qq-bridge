@@ -38,7 +38,7 @@ import { getMcStatus, formatMcStatusBlock, postCommand, recentBotLog, memoryStat
 // 真正的 MC 全套控制（走 SSH 到笔记本那台）：服务启停 / 推流 / B站开播 / 待机封面。
 // 与上面的 mc-state.js 区别：mc-state 读的是盘上的状态文件（只读展示），
 // mc-control 是**执行动作**那一侧。
-import { getMcServices, controlService, controlStandby, getThermal, setThermal, SERVICE_KEYS } from './mc-control.js';
+import { getMcServices, controlService, controlStandby, getThermal, setThermal, SERVICE_KEYS, getWhitelist, whitelistAction } from './mc-control.js';
 
 /** 含卡片的消息允许的 text/plain 截断上限：要放得下 CARD_SUMMARY_MAX + 前缀。 */
 const CARD_TEXT_LIMIT = CARD_SUMMARY_MAX + 80;
@@ -5640,6 +5640,27 @@ async function main() {
           sendJson({ ok: false, error: '未知的 MC 控制接口' }, 404);
           return;
         }
+                // ===== MC 服务器白名单（名单增删 + 开关）=====
+        // 门槛同上面的 MC 控制接口：仅控制台（管理端）可用，
+        // 带 agent token 的 AI 工具一律拒绝，免得 AI 能自己把自己加进白名单。
+        if (url.pathname === '/api/mc/whitelist') {
+          if (req.headers['x-agent-token']) {
+            sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
+            return;
+          }
+          try {
+            if (req.method === 'GET') {
+              sendJson(await getWhitelist());
+            } else {
+              const body = await readBody();
+              const r = await whitelistAction(String(body.action || '').trim(), body.name);
+              sendJson(r, r.ok ? 200 : 400);
+            }
+          } catch (e) {
+            sendJson({ ok: false, error: e?.message ?? String(e) }, 500);
+          }
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/presets') {
           let presets = [];
           try {
@@ -7708,7 +7729,12 @@ async function main() {
             }
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
+            sendJson({
+              ok: false,
+              error: error?.message ?? String(error),
+              // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
+              ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+            }, 500);
           }
           return;
         }
@@ -7859,7 +7885,12 @@ async function main() {
             }
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
+            sendJson({
+              ok: false,
+              error: error?.message ?? String(error),
+              // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
+              ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+            }, 500);
           }
           return;
         }
@@ -10812,7 +10843,12 @@ async function main() {
             }
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
+            sendJson({
+              ok: false,
+              error: error?.message ?? String(error),
+              // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
+              ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+            }, 500);
           }
           return;
         }
@@ -12029,6 +12065,53 @@ async function main() {
     return delays;
   }
 
+  /** 比对「发出去的文本」与历史里的文本：QQ 侧可能改空白，抹掉空白再比。 */
+  function normalizeSentText(text) {
+    return String(text ?? '').replace(/\s+/g, '').trim();
+  }
+
+  /**
+   * 写类动作 WS 超时后，**事后查证**这条到底发出去没有。
+   *
+   * 为什么需要：超时只说明「没拿到回执」，不等于没发出去。以前这里只能对上层报「结果不确定」，
+   * 而模型看到工具报错就会重发 → 群里出现两条一样的消息（线上 2026-10-09 13:15 群 1050666134
+   * 就是这样重发了一次）。网关实现了 get_group_msg_history / get_friend_msg_history，且历史里
+   * 包含机器人自己发的消息（掉线补拉 backfillMissedMessages 就是靠它），所以这里能直接查证。
+   *
+   * @returns {Promise<'sent'|'missing'|'unknown'>} unknown = 查不了（别据此下结论）
+   */
+  async function probeSendLanded(key, text) {
+    const want = normalizeSentText(text);
+    const sep = String(key).indexOf(':');
+    const kind = String(key).slice(0, sep);
+    const id = String(key).slice(sep + 1);
+    if (!want || (kind !== 'group' && kind !== 'private') || !id) return 'unknown';
+    let selfId = '';
+    try { selfId = String((await getBotSelfId()) ?? ''); } catch { /* 查不到就没法只认自己发的 */ }
+    if (!selfId) return 'unknown';
+    const action = kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history';
+    const params = kind === 'group' ? { group_id: Number(id) } : { user_id: Number(id) };
+    // 网关提交有延迟：最多查两次（间隔 800ms），避免把「刚发出去、还没落历史」误判成没发。
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await sleep(800);
+      let list = [];
+      try {
+        const resp = await bot.request(action, { ...params, count: 10 });
+        list = Array.isArray(resp?.data?.messages) ? resp.data.messages
+          : (Array.isArray(resp?.messages) ? resp.messages : []);
+      } catch (error) {
+        log(`[onebot] 查证超时消息失败（${action}）：${error?.message ?? error}`);
+        return 'unknown';
+      }
+      const mine = list.filter((m) => String(m?.sender?.user_id ?? '') === selfId).slice(-4);
+      for (const m of mine) {
+        const { text: historyText } = backfillSegmentParts(m?.message ?? []);
+        if (normalizeSentText(historyText) === want) return 'sent';
+      }
+    }
+    return 'missing';
+  }
+
   function sendMessagesV2(key, messages, delays, replyToMessageId, atUserId = null) {
     const assertSendAllowed = captureSendGuard(key);
     const [kind, id] = key.split(':');
@@ -12056,8 +12139,21 @@ async function main() {
           await onebotSend(kind, id, msg, useReply, useAt);
           sent.push(msg);
         })
-        .catch((error) => {
+        .catch(async (error) => {
           log(`QQ 发送失败 (${key}):`, error?.message ?? error);
+          // 超时 ≠ 没发出去：先查历史再定论。查到已送达就当成功（否则模型会重发出一条重复消息）；
+          // 查到确实没发出去，才如实报失败（这时重发是安全且正确的）。
+          if (error?.uncertain === true) {
+            const landed = await probeSendLanded(key, msg);
+            if (landed === 'sent') {
+              log(`[onebot] 回执超时的那条经历史查证其实已送达（${key}）：按成功处理、不重发`);
+              sent.push(msg);
+              return;
+            }
+            if (landed === 'missing') {
+              log(`[onebot] 回执超时的那条经历史查证确认没发出去（${key}）：如实报失败，可安全重发`);
+            }
+          }
           failed.push(error);
         });
       if (i < delays.length) {
@@ -12069,6 +12165,8 @@ async function main() {
       if (failed.length > 0) {
         const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
         err.sent = sent.slice();
+        // 「回执超时、历史也查不到」与真正的硬失败要分开：上层据此告诉模型别原样重发。
+        err.uncertain = failed.some((e) => e?.uncertain === true);
         throw err;
       }
       return sent;

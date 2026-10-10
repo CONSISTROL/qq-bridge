@@ -377,6 +377,67 @@ await testWith({ config: { snowluma: { wsTimeoutMs: 40 }, socialV2: { image: { a
     await assert.rejects(() => h.sendImageV2('private:123', url, {}), /不能自动重发|不确定/);
     stopKeepAlive();
   });
+
+// 文字消息的「回执超时」以前只能报「不确定」，模型看到工具报错就重发 → 群里两条一样的消息
+// （线上 2026-10-09 13:15 群 1050666134 真实发生）。现在超时后去历史里查证：
+// 查到就算已送达（报成功，模型不会重发）；查不到才如实报失败（这时重发才对）。
+await testWith(
+  {
+    config: { snowluma: { wsTimeoutMs: 1000 } },
+    globals: { scrubFormulaicSpeech, describeScrub },
+    hangActions: ['send_group_msg'],
+    history: {
+      group: {
+        456: [{
+          message_id: 9001, message_seq: 77,
+          sender: { user_id: 2840404638 }, // harness 的 get_login_info 里机器人就是这个号
+          message: [{ type: 'text', data: { text: '在的' } }],
+        }],
+      },
+    },
+  },
+  '文字回执超时但历史里查到了：按已送达处理，绝不重发',
+  async (h) => {
+    const stopKeepAlive = h.keepLoopAlive();
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '在的' }, agentToken: st.agentToken,
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.ok, true, '查证已送达就必须报成功，否则模型会重发出一条重复消息');
+      assert.equal(res.body.sent, 1);
+      assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 1, '只发一次，没有重发');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+  }
+);
+
+await testWith(
+  { config: { snowluma: { wsTimeoutMs: 1000 } }, globals: { scrubFormulaicSpeech, describeScrub }, hangActions: ['send_group_msg'], history: {} },
+  '文字回执超时且历史里查不到：如实报失败并标记 uncertain（重发才安全）',
+  async (h) => {
+    const stopKeepAlive = h.keepLoopAlive();
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '这条没发出去' }, agentToken: st.agentToken,
+      });
+      assert.equal(res.status, 500);
+      assert.equal(res.body.ok, false);
+      assert.equal(res.body.uncertain, true, '要把「可能已发出」透给上游，好让 MCP 劝阻模型重发');
+      assert.match(String(res.body.hint ?? ''), /不要原样重发|确认/, '要说清下一步该怎么办');
+      assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 1, '仍然只发一次');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+  }
+);
 await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch, hangActions: ['send_group_msg'] },
   '读类动作不受影响：写类超时策略不会误伤普通读', async (h) => {
     assert.ok(h.isOneBotWriteAction('send_group_msg') && h.isOneBotWriteAction('set_group_card'));

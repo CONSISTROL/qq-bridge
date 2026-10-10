@@ -149,9 +149,28 @@ async function agentApi(path, init = {}) {
   let body = null;
   try { body = await res.json(); } catch { body = null; }
   if (!res.ok) {
-    throw new Error(body?.error || `桥接 API HTTP ${res.status}`);
+    const error = new Error(body?.error || `桥接 API HTTP ${res.status}`);
+    // 「回执超时、连历史都查不到」不是普通失败：消息可能已经发出，重发就是重复消息。
+    // 把这个标记透出去，发送类工具据此返回**非错误**结果（报错会诱导模型重发）。
+    if (body?.uncertain === true) error.uncertain = true;
+    throw error;
   }
   return body;
+}
+
+/** 发送类工具的统一失败出口：不确定 → 非错误结果并明确劝阻重发；硬失败 → isError。 */
+function sendFailureResult(error, prefix = '发送失败') {
+  if (error?.uncertain === true) {
+    return {
+      content: [{
+        type: 'text',
+        text: '⚠️ 这条的回执超时了，桥接查过历史也没能确认送达：**它可能已经发出去了**。'
+          + '**不要原样重发**（重发很可能在群里变成两条一样的消息）。'
+          + '先用 qq_get_recent_messages 看一眼最后几条：确认没发出去，再重发；已经在，就当发过了。'
+      }]
+    };
+  }
+  return { content: [{ type: 'text', text: `${prefix}：${error?.message ?? error}` }], isError: true };
 }
 
 async function authorizeRead(key, token) {
@@ -358,7 +377,7 @@ defineTool(
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `发送失败：${error?.message ?? error}` }], isError: true };
+      return sendFailureResult(error);
     }
   }
 );
@@ -381,7 +400,7 @@ defineTool(
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `发送失败：${error?.message ?? error}` }], isError: true };
+      return sendFailureResult(error);
     }
   }
 );
@@ -404,7 +423,7 @@ defineTool(
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `发送失败：${error?.message ?? error}` }], isError: true };
+      return sendFailureResult(error);
     }
   }
 );
@@ -556,7 +575,7 @@ defineTool(
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `分条发送失败：${error?.message ?? error}` }], isError: true };
+      return sendFailureResult(error, '分条发送失败');
     }
   }
 );
@@ -602,7 +621,7 @@ defineTool(
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `发送失败：${error?.message ?? error}` }], isError: true };
+      return sendFailureResult(error);
     }
   }
 );
