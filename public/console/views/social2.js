@@ -82,6 +82,7 @@ const FIELDS = [
   // 反重复：记住最近主动开的头 + 随机点方向 + 主动开口时别碰的词
   { id: 'v2ProactiveRememberOpeners', path: 'proactive.rememberOpeners', def: 5, min: 0, max: 20 },
   { id: 'v2ProactiveSuggestDomains', path: 'proactive.suggestDomains', def: 3, min: 0, max: 8 },
+  { id: 'v2ProactiveDomainCooldown', path: 'proactive.domainCooldown', def: 2, min: 0, max: 6 },
   { id: 'v2ProactiveDomains', path: 'proactive.domains', type: 'lines', def: [] },
   { id: 'v2ProactiveAvoidKeywords', path: 'proactive.avoidKeywords', type: 'lines', def: [] },
 

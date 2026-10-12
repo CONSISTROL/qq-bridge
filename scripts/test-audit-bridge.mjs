@@ -1092,6 +1092,53 @@ await test('主动开话题：默认配置（不填任何新参数）下反重�
   assert.match(prompt, /默认配置下也要记住这句话/, '下一轮能看到');
   assert.match(prompt, /【这次换个方向】/, '默认 suggestDomains 生效（内置方向池）');
 });
+await test('主动开话题：连着两条「刷到个说法 + 健康作息」要被点名，并避开对应方向', async (h) => {
+  // 线上真实复读（2026-10-12 群 1050666134）：模型不觉得「午睡」和「久坐」是重复，
+  // 原提示也只禁「同一人物/作品/圈子」，于是它连着两次用同一句式写了同一类冷知识。
+  const st = {
+    proactiveOpeners: [
+      { text: '刷到个说法，午睡超过半小时，醒来反而更懵 这个点还没冒头的，是不是已经在自己身上验证了', at: 1 },
+      { text: '刷到个说法，久坐超过四小时，晚上去健身房也补不回来 那我这种一天坐24小时的，已经没救了', at: 2 },
+    ],
+    proactiveDomains: [],
+  };
+  const block = h.buildProactiveTopicBlock(st);
+  assert.match(block, /「刷到个/, '要把重复的起头方式点名到具体字眼');
+  assert.match(block, /健康 \/ 作息/, '要把重复的题材点名出来（午睡≠久坐，但都是这一类）');
+  const dirLine = /【这次换个方向】([^\n]*)/.exec(block)?.[1] ?? '';
+  assert.ok(dirLine, '仍然要给方向建议');
+  for (const bad of ['睡眠 / 作息', '运动 / 健身', '冷知识 / 科普']) {
+    assert.ok(!dirLine.includes(bad), `正在重复的题材对应的方向不该再建议：${bad}（实际：${dirLine}）`);
+  }
+  assert.equal(st.proactiveDomains.length, 1, '要记下这轮建议过的方向，供下一轮避开');
+  assert.ok(st.proactiveDomains[0].names.length >= 1);
+});
+
+await test('主动开话题：方向池轮换——连续两轮不会建议同一批方向', async (h) => {
+  const st = { proactiveOpeners: [], proactiveDomains: [] };
+  const pickOf = (text) => /【这次换个方向】([^\n]*)/.exec(text)?.[1] ?? '';
+  const first = pickOf(h.buildProactiveTopicBlock(st));
+  const second = pickOf(h.buildProactiveTopicBlock(st));
+  const ALL = ['科技 / AI 圈的新东西', '生活里的琐事与吐槽', '影视 / 动画 / 番剧', '音乐 / 歌单', '游戏（非电竞赛事）', '社会新闻里的小事', '冷知识 / 科普', '吃吃喝喝', '摸鱼 / 上班上学', '网上的抽象梗', '运动 / 健身', '睡眠 / 作息'];
+  const inFirst = ALL.filter((d) => first.includes(d));
+  const inSecond = ALL.filter((d) => second.includes(d));
+  assert.ok(inFirst.length >= 1 && inSecond.length >= 1, '两轮都要给出方向');
+  const overlap = inFirst.filter((d) => inSecond.includes(d));
+  assert.equal(overlap.length, 0, `相邻两轮不该重复建议同一方向（重叠：${overlap.join(' / ')}）`);
+});
+
+await test('主动开话题：不相干的两条开盘不该被误判成重复', async (h) => {
+  const block = h.buildProactiveTopicBlock({
+    proactiveOpeners: [
+      { text: '刚下了场雨，路上全是蜗牛', at: 1 },
+      { text: '食堂今天的排骨居然不柴', at: 2 },
+    ],
+    proactiveDomains: [],
+  });
+  assert.doesNotMatch(block, /起头方式本身就在重复/, '没有重复起法就不该乱报');
+  assert.doesNotMatch(block, /题材也在重复/, '题材不同就不该乱报');
+});
+
 await testWith({ config: { socialV2: { proactive: { avoidKeywords: ['LOL', '英雄联盟'], domains: [] } } } },
   '主动开话题：avoidKeywords 会写进提示词', async (h) => {
     h.setMode('reserved2');

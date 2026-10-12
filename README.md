@@ -78,7 +78,7 @@ npm install        # 安装依赖（postinstall 会自动修补 @snowluma/sdk �
 | --- | --- |
 | `dsh.baseUrl` | DSH Web 地址，默认 `http://127.0.0.1:3080` |
 | `dsh.provider` / `dsh.model` / `dsh.reasoningEffort` | DSH 会话使用的模型/推理强度；若你的 DSH 没有示例中的模型，改成 DSH 设置页里可用的模型即可（选择失败只打日志，不阻塞启动） |
-| `dsh.authToken` | DSH launch token（新版 DSH 用于换取 Cookie 的进程启动 token）。留空时桥接会自动从 `~/.dsh/guard/logs/server-*.out.log` 发现；DSH 重启后遇到 401 也会自动重新发现并换 Cookie |
+| `dsh.authToken` | DSH launch token（新版 DSH 用于换取 Cookie 的进程启动 token）。留空时桥接会自动从 `~/.dsh/guard/logs/server-*.out.log` 发现；DSH 重启后遇到 401 也会自动重新发现并换 Cookie。⚠ 自动发现**只认日志里那行带 `?token=` 的启动横幅**：启动 DSH 的 `script` 若没加 `-f`（flush），横幅会卡在 4KB 块缓冲里不落盘，于是发现逻辑只能退到**更早一次启动的旧 token**，还会把内存里正确的覆盖掉 → 永久 401 且不再自愈。本机的 `dsh-restart.sh` 已改成 `script -qf` 并轮询抓取（2026-10-11 踩过：16:43~23:11 桥接整体哑了 6.5 小时） |
 | `dsh.authHeader` / `dsh.authPrefix` | 保留字段，当前新版 DSH 链路使用 Cookie 交换，不再直接发送该鉴权头 |
 | `snowluma.wsUrl` | SnowLuma OneBot **WebSocket** 地址（如 `ws://127.0.0.1:3001`） |
 | `snowluma.httpUrl` | OneBot **HTTP API** 地址（如 `http://127.0.0.1:3000`）；不要填 WebSocket 端口，否则会报 HTTP 426 |
@@ -246,6 +246,7 @@ qq-bridge/
 - **一个 QQ 会话的「聊天」仍然一次只跑一个 turn**：工作车道解决的是「慢活挡住整条会话」，但同一个会话里两句话仍然按顺序处理（这是 DSH 会话模型的固有行为）。工作车道需要 DSH 重启一次才会出现在工具列表里（MCP server 是 DSH 启动时拉起的子进程）
 - **大图发送依赖 WS 通道**：base64 图片走 WS，写类动作的等待上限按 payload 体积放宽（约 512KB/s 估算，上限 180s）。超时**不再回退 HTTP 重发**——超时不等于失败，盲目重发正是重复发图的历史根因；此时桥接会如实返回「发送结果不确定」，并临时挡住同一张图的自动重试
 - **文字消息发送失败时会去历史里求证，不让一次网络抖动变成两条重复消息**：写类动作只要**可能已经送出去**（回执超时、连接中途断开、HTTP 传输中断）就**绝不回退重发**（那是重复的直接来源），改为用 `get_group_msg_history` / `get_friend_msg_history` 查这条到底发出去没有——**查到**就当已送达（按成功返回，模型不会重发）；**确认没有**才如实报失败（这时重发是安全且正确的）；**查不了**才带 `uncertain` 标记，MCP 侧返回**非错误**结果并劝阻「不要原样重发，先用 `qq_get_recent_messages` 确认」。只有「网关明确回绝」和「连接还没建立就失败」这两种确定没发出去的情况才会回退 HTTP 重试
+- **主动开口不会老是同一套**：桥接记着最近几次「你主动开的头」，下一轮原样摆给模型，并**具体点名**重复的起头方式（例如连着几次都用「刷到个…」开头）和重复题材（例如连着几次都是健康作息类冷知识）——模型只会觉得「午睡 ≠ 久坐」，不点名它就会一直「合规地」复读。方向池也不再纯随机：最近几轮建议过的方向、以及正在重复的题材对应的方向都会先避开（`socialV2.proactive.domainCooldown`，默认 2 轮；控制台可调）
 - 图片及部分表情可以通过安全下载接入多模态模型；语音/视频以及无法取得图片字节的消息仍使用占位文本
 - agent 的 Markdown 回复会转成纯文本（链接保留 `文字 (url)` 形式）
 - `@snowluma/sdk` 的 npm 发布版存在 ESM 扩展名 bug，本仓库通过 postinstall 补丁修复（见 `scripts/patch-snowluma-sdk.mjs`）

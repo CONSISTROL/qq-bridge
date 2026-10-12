@@ -788,6 +788,7 @@ function loadConfig() {
         rememberOpeners: 5,        // 记住最近几条主动开的话题（0 = 不记）
         openerChars: 120,          // 每条记多少字（太长会挤占上下文）
         suggestDomains: 3,         // 每次随机点几个方向（0 = 不点）
+        domainCooldown: 2,         // 最近几轮建议过的方向先避开（0 = 纯随机，实测容易连抽同类）
         avoidKeywords: [],         // 主动开话题时明确别碰的词（例如 ["LOL","英雄联盟","S16"]）；留空 = 不限制
         domains: [...DEFAULT_PROACTIVE_DOMAINS]
       },
@@ -865,6 +866,7 @@ function loadConfig() {
     rememberOpeners: 5,
     openerChars: 120,
     suggestDomains: 3,
+    domainCooldown: 2,
     avoidRepeat: true,
     avoidKeywords: [],
     domains: [...DEFAULT_PROACTIVE_DOMAINS],
@@ -6768,7 +6770,7 @@ async function main() {
             if (merged.proactive.enabled !== undefined) merged.proactive.enabled = merged.proactive.enabled === true;
             if (merged.proactive.probability !== undefined) merged.proactive.probability = Math.min(1, Math.max(0, Number(merged.proactive.probability) || 0));
             // 反重复参数：避免主动开口每次都聊同一个圈子。
-            for (const k of ['rememberOpeners', 'suggestDomains', 'openerChars']) {
+            for (const k of ['rememberOpeners', 'suggestDomains', 'domainCooldown', 'openerChars']) {
               if (merged.proactive[k] !== undefined) {
                 const n = Number(merged.proactive[k]);
                 merged.proactive[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : (Number(current.proactive?.[k]) || 0);
@@ -12677,6 +12679,13 @@ async function main() {
                 .map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0 }))
                 .slice(-20)
               : [],
+            // 最近几轮「建议过的方向」：方向池纯随机很容易连抽同类，靠它做轮换。
+            proactiveDomains: Array.isArray(val.proactiveDomains)
+              ? val.proactiveDomains
+                .filter((r) => r && typeof r === 'object' && Array.isArray(r.names))
+                .map((r) => ({ names: r.names.map((n) => String(n)).slice(0, 8), at: Number(r.at) || 0 }))
+                .slice(-8)
+              : [],
             activeTopics: Array.isArray(val.activeTopics) ? val.activeTopics : [],
             pendingThoughts: Array.isArray(val.pendingThoughts) ? val.pendingThoughts : [],
             memberImpressions: (() => {
@@ -12759,6 +12768,9 @@ async function main() {
           // 主动开过的话题：反重复要用，必须跨重启保留（否则重启后又开始复读）。
           proactiveOpeners: Array.isArray(st.proactiveOpeners)
             ? st.proactiveOpeners.filter((o) => o && o.text).slice(-20).map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0 }))
+            : [],
+          proactiveDomains: Array.isArray(st.proactiveDomains)
+            ? st.proactiveDomains.filter((r) => r && Array.isArray(r.names)).slice(-8).map((r) => ({ names: r.names.map((n) => String(n)).slice(0, 8), at: Number(r.at) || 0 }))
             : [],
           activeTopics: Array.isArray(st.activeTopics) ? st.activeTopics.slice(-50) : [],
           pendingThoughts: Array.isArray(st.pendingThoughts) ? st.pendingThoughts.slice(-50) : [],
@@ -14463,31 +14475,111 @@ async function main() {
    * 旧的提示词还写着「追问上次没聊完的事」「结合记忆里的群友兴趣」，等于直接叫它顺着旧话题复读。
    * 所以这里做三件事：给一个别处的方向、明确「记忆是背景不是题材」、把最近开的头摆出来。
    */
+  // 主动开口的「同质内容」识别。
+  //
+  // 线上实况（2026-10-12，群 1050666134）：连着两次主动开口是
+  //   「刷到个说法，午睡超过半小时，醒来反而更懵」/「刷到个说法，久坐超过四小时，晚上去健身房也补不回来」
+  // 模型不认为这是重复（午睡 ≠ 久坐），原来的提示词也只禁「同一个人物/战队/作品/圈子」，
+  // 所以它完全合规地复读了**同一个句式 + 同一类题材**；群友看到的却是「这机器人怎么老来这套」。
+  // 关键词表故意写得具体：宁可漏判，也不要把正常话题误判成重复。
+  const OPENER_GENRES = Object.freeze([
+    { name: '健康 / 作息', domains: ['运动 / 健身', '睡眠 / 作息', '冷知识 / 科普'],
+      words: ['久坐', '久站', '午睡', '睡眠', '作息', '熬夜', '失眠', '养生', '颈椎', '腰椎', '健身', '运动', '体检', '三高', '喝水', '补回来', '伤身'] },
+    { name: 'AI / 科技', domains: ['科技 / AI 圈的新东西'], words: ['AI', '人工智能', '大模型', '模型', '开源', '芯片', '算力', '发布会'] },
+    { name: '赛事 / 电竞', domains: ['游戏（非电竞赛事）'], words: ['决赛', '半决赛', '战队', '冠军', '联赛', '赛程', '选手', '版本答案'] },
+    { name: '吃吃喝喝', domains: ['吃吃喝喝'], words: ['好吃', '外卖', '奶茶', '咖啡', '食堂', '下馆子', '点了份'] },
+    { name: '影视 / 番剧', domains: ['影视 / 动画 / 番剧'], words: ['电影', '上映', '番剧', '动画', '剧集', '男主', '女主', '结局'] },
+    { name: '游戏', domains: ['游戏（非电竞赛事）'], words: ['游戏', '版本更新', '公测', '发售', '打折', '皮肤'] },
+  ]);
+
+  /** 把一句话归到某个题材（认不出来返回 null）。 */
+  function openerGenreOf(text) {
+    const t = String(text ?? '').replace(/\s+/g, '');
+    if (!t) return null;
+    for (const g of OPENER_GENRES) if (g.words.some((w) => t.includes(w))) return g;
+    return null;
+  }
+
+  /**
+   * 找出一批开头里重复出现的「起法」（如「刷到个」）。
+   * 只认 3~6 字的共同前缀、出现 ≥2 次才算——太短会误伤（「今天」这种），太长会漏。
+   */
+  function detectOpenerHead(openers) {
+    const texts = openers.map((o) => String(o?.text ?? '').replace(/\s+/g, '')).filter((t) => t.length >= 4);
+    if (texts.length < 2) return '';
+    const counts = new Map();
+    for (const t of texts) {
+      for (let len = Math.min(6, t.length); len >= 3; len--) {
+        const head = t.slice(0, len);
+        counts.set(head, (counts.get(head) ?? 0) + 1);
+      }
+    }
+    let best = '';
+    for (const [head, n] of counts) if (n >= 2 && head.length > best.length) best = head;
+    return best;
+  }
+
   function buildProactiveTopicBlock(st) {
     const p = cfg.socialV2?.proactive ?? {};
     let out = '';
+    const openers = (Array.isArray(st?.proactiveOpeners) ? st.proactiveOpeners : []).filter((o) => o && o.text);
+    const recentOpeners = openers.slice(-4);
+    // 最近三次里出现 ≥2 次的题材 = 正在重复的题材（「午睡≠久坐」，但都是健康作息类）。
+    const genreTally = new Map();
+    for (const o of recentOpeners.slice(-3)) {
+      const g = openerGenreOf(o.text);
+      if (g) genreTally.set(g.name, (genreTally.get(g.name) ?? 0) + 1);
+    }
+    let repeatGenre = null;
+    for (const [name, n] of genreTally) if (n >= 2) repeatGenre = OPENER_GENRES.find((g) => g.name === name) ?? null;
+    const repeatHead = detectOpenerHead(recentOpeners);
     // ① 方向池：主动开口最缺的就是「别的题材」，先给它一个。
+    //    但**不能纯随机**：随机很容易连着两轮抽到同类方向，模型就顺着写出同质内容。
+    //    所以既避开「正在重复的题材」对应的方向，也避开最近几轮已经建议过的方向。
     const domains = (Array.isArray(p.domains) ? p.domains : []).map((d) => String(d ?? '').trim()).filter(Boolean);
     const want = Math.max(0, Math.min(8, numOr(p.suggestDomains, 3)));
+    const avoidDomains = new Set(repeatGenre?.domains ?? []);
+    const cooldown = Math.max(0, Math.min(6, numOr(p.domainCooldown, 2)));
+    if (cooldown > 0) {
+      for (const round of (Array.isArray(st?.proactiveDomains) ? st.proactiveDomains : []).slice(-cooldown)) {
+        for (const n of (Array.isArray(round?.names) ? round.names : [])) avoidDomains.add(String(n));
+      }
+    }
     if (domains.length && want > 0) {
+      let pool = domains.filter((d) => !avoidDomains.has(d));
+      // 全被避开了就别硬撑（宁可给个重复方向，也不能一个方向都不给）。
+      if (pool.length < want) pool = pool.concat(domains.filter((d) => avoidDomains.has(d)));
       const picked = [];
-      const pool = domains.slice();
       while (picked.length < want && pool.length) {
         picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
       }
       out += `【这次换个方向】从这几个里挑一个你真有话说的：${picked.join(' / ')}。\n`
         + '方向只是起点，挑定之后可以联网搜点新鲜的东西再开口；不必硬凑。\n\n';
+      if (st) {
+        if (!Array.isArray(st.proactiveDomains)) st.proactiveDomains = [];
+        st.proactiveDomains.push({ names: picked.slice(), at: Date.now() });
+        if (st.proactiveDomains.length > 8) st.proactiveDomains.splice(0, st.proactiveDomains.length - 8);
+      }
     }
     // ② 最关键的一条：记忆和群史是「背景」，不是「题材」。
     out += '【别拿记忆和群史当题材】上面的【群聊上下文】【进行中的话题】只是让你知道群里在聊什么，'
       + '**不是让你顺着它往下说**。主动冒泡是要**开一个新话题**；'
       + '从旧话题、或同一个人物/战队/作品/圈子里再找一个角度，跟复读没区别。\n\n';
-    // ③ 最近主动开的头：模型对抽象指令不敏感，对具体文本敏感，所以原样摆出来。
-    const openers = (Array.isArray(st?.proactiveOpeners) ? st.proactiveOpeners : []).filter((o) => o && o.text);
-    if (p.avoidRepeat !== false && openers.length) {
+    // ③ 最近主动开的头：模型对抽象指令不敏感，对具体文本敏感，所以原样摆出来——而且要把
+    //    「你自己的起法和题材也在重复」点名到具体字眼上，否则它只会觉得「我明明换了话题」。
+    if (p.avoidRepeat !== false && recentOpeners.length) {
       out += '【你最近主动开的头 · 这次别再聊这些】\n'
-        + openers.slice(-4).map((o) => `- ${o.text}`).join('\n')
-        + '\n上面这些已经说过了；同一个人物/战队/作品/圈子的后续也算重复，至少隔几轮再提。\n\n';
+        + recentOpeners.map((o) => `- ${o.text}`).join('\n')
+        + '\n上面这些已经说过了；同一个人物/战队/作品/圈子的后续也算重复，至少隔几轮再提。\n';
+      if (repeatHead) {
+        out += `**而且你的起头方式本身就在重复**：最近 ${recentOpeners.length} 次里不止一次是用「${repeatHead}」开头的——`
+          + '这次**必须换一种起法**（直接抛结论、问一句、吐槽、报个刚看到的小事都行），再用这个套路群里一眼就看出你在复读。\n';
+      }
+      if (repeatGenre) {
+        out += `**题材也在重复**：最近几次里不止一次都是「${repeatGenre.name}」这一类（换个角度也算同一处取材）——`
+          + '这次**别再挑这一类**，从上面给你的方向里挑一个别的。\n';
+      }
+      out += '\n';
     }
     // ④ 可选禁词（管理员配的，默认空）。默认策略不是「禁止某个话题」，而是「别老聊同一个」——
     //    话题本来就没有对错，问题是它只能从同一处取材。
