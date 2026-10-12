@@ -1114,6 +1114,67 @@ await test('主动开话题：连着两条「刷到个说法 + 健康作息」�
   assert.ok(st.proactiveDomains[0].names.length >= 1);
 });
 
+// 语义查重闸门：线上「耳虫」隔两天又开一次（上下文窗口看不到自己两天前说过）。
+// 这里用假 embedder 精确控制相似度：同话题 → 1.0（必拦），不同话题 → 0（放行）。
+class FakeRepeatEmbedder {
+  constructor() { this.ready = true; this.info = { ready: true, model: 'fake', dim: 2 }; this.stats = { requests: 0, totalMs: 0 }; }
+  async start() { return true; }
+  async embed(texts) { return texts.map((t) => (/耳虫|单曲循环/.test(String(t)) ? [1, 0] : [0, 1])); }
+  async probe() { return { ok: true }; }
+  dispose() {}
+}
+
+await testWith(
+  { globals: { EmbeddingClient: FakeRepeatEmbedder, scrubFormulaicSpeech, describeScrub }, config: { socialV2: { proactive: { repeatSimThreshold: 0.75, repeatWindowHours: 168 } } } },
+  '主动开口闸门：和两天前的开盘撞题就不发，打回换题；换过之后能发出去',
+  async (h) => {
+    const stopKeepAlive = h.keepLoopAlive();
+    const server = h.startConsoleServer();
+    try {
+      if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+      h.setMode('reserved2');
+      const key = 'group:456';
+      const st = h.getSocialV2State(key);
+      st.proactiveOpeners = [{ text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: Date.now() - 2 * 86400000 }];
+      // 装闸门：真实路径是在「主动机会检查」唤醒时装的
+      await h.sendWakePromptV2(key, 'proactiveCheck').catch(() => {});
+      const first = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '一段旋律在我脑子里单曲循环到现在，这叫耳虫' }, agentToken: st.agentToken,
+      });
+      assert.equal(first.status, 500);
+      assert.equal(first.body.selfRepeat, true, '要被闸门拦下');
+      assert.ok(Number(first.body.detail?.sim) >= 0.75, `要带相似度（实际 ${first.body.detail?.sim}）`);
+      assert.match(String(first.body.error ?? ''), /几乎一样|换个题/, '要给模型明确的换题指令');
+      assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 0, '拦下就不能发出去');
+
+      const second = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+        body: { key, messages: '换个话题：今天食堂的排骨居然不柴' }, agentToken: st.agentToken,
+      });
+      assert.equal(second.status, 200, JSON.stringify(second.body));
+      assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 1, '每回合只拦一次，换过之后照发');
+    } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+  }
+);
+
+await test('主动开话题：更早开过的头要带时间摆出来（避免隔天又来一遍）', async (h) => {
+  const now = Date.now();
+  const st = {
+    proactiveOpeners: [
+      { text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: now - 2 * 86400000 },
+      { text: '刚跑完回来灌了两大杯白开水，越喝越渴', at: now - 30 * 3600000 },
+      { text: '中午一碗面下肚，现在坐在椅子上像被人拔了电源', at: now - 20 * 3600000 },
+      { text: '不说话是吧，那我继续睡了', at: now - 10 * 3600000 },
+      { text: '一早上自言自语四次，我词库都干了', at: now - 5 * 3600000 },
+      { text: '现在这个点，群里的都在干嘛', at: now - 3600000 },
+    ],
+    proactiveDomains: [],
+  };
+  const block = h.buildProactiveTopicBlock(st);
+  assert.match(block, /更早你主动开过的/, '要把更早的开盘也摆出来');
+  assert.match(block, /2 天前/, '要标出大致时间，让模型知道那是旧账');
+  assert.match(block, /耳虫/, '两天前那条必须在清单里');
+});
+
 await test('主动开话题：方向池轮换——连续两轮不会建议同一批方向', async (h) => {
   const st = { proactiveOpeners: [], proactiveDomains: [] };
   const pickOf = (text) => /【这次换个方向】([^\n]*)/.exec(text)?.[1] ?? '';
@@ -1182,8 +1243,11 @@ await testWith({ config: { socialV2: { proactive: { enabled: true, probability: 
     assert.equal(p.probability, 0.2, '用户配置优先');
     assert.ok(Array.isArray(p.domains) && p.domains.length >= 8, `内置方向池仍在（实际 ${p.domains?.length}）`);
     assert.equal(p.suggestDomains, 3, '新默认值补齐');
-    assert.equal(p.rememberOpeners, 5);
+    assert.equal(p.rememberOpeners, 20, '默认要记够久，免得隔天又来一遍');
     assert.equal(p.avoidRepeat, true);
+    assert.equal(p.repeatGuard, true, '语义查重默认开');
+    assert.equal(p.repeatSimThreshold, 0.75);
+    assert.equal(p.repeatWindowHours, 168);
   });
 await testWith({ config: { socialV2: { proactive: { domains: ['只留这个'] } } } },
   '主动开话题：用户显式给的 domains 覆盖内置池（不会被悄悄改回去）', async (h) => {

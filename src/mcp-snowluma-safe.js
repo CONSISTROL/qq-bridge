@@ -153,6 +153,9 @@ async function agentApi(path, init = {}) {
     // 「回执超时、连历史都查不到」不是普通失败：消息可能已经发出，重发就是重复消息。
     // 把这个标记透出去，发送类工具据此返回**非错误**结果（报错会诱导模型重发）。
     if (body?.uncertain === true) error.uncertain = true;
+    // 桥接的「自我重复闸门」把这条打回了（没发出去）：也要让工具返回非错误结果，
+    // 附上跟哪条撞了，好让模型换个题——报错的话它多半会原样重发。
+    if (body?.selfRepeat === true) { error.selfRepeat = true; error.detail = body.detail ?? null; }
     throw error;
   }
   return body;
@@ -160,6 +163,21 @@ async function agentApi(path, init = {}) {
 
 /** 发送类工具的统一失败出口：不确定 → 非错误结果并明确劝阻重发；硬失败 → isError。 */
 function sendFailureResult(error, prefix = '发送失败') {
+  if (error?.selfRepeat === true) {
+    const d = error.detail ?? {};
+    const when = d.at ? new Date(Number(d.at)).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '';
+    const sim = Number.isFinite(Number(d.sim)) ? `相似度 ${Number(d.sim).toFixed(2)}` : '';
+    return {
+      content: [{
+        type: 'text',
+        text: '🚫 这条被桥接的「自我重复闸门」拦下了：它和你之前**主动开过的题**几乎一样'
+          + (when ? `（${when}` : '（') + (sim ? `，${sim}` : '') + (when || sim ? '）' : '')
+          + (d.text ? `：「${String(d.text).slice(0, 60)}」` : '')
+          + '。\n**这一轮别再发同一套了**：换个完全不同的题材，或者同一题材里换一个真正不一样的角度；'
+          + '发之前先看一眼上面【更早你主动开过的】那份清单。这条只拦一次，你换过之后就能发出去。'
+      }]
+    };
+  }
   if (error?.uncertain === true) {
     return {
       content: [{

@@ -785,10 +785,13 @@ function loadConfig() {
         // 电竞/赛事），于是每次主动开口都是同一个话题，群里看着像复读机。
         // 这里记下最近几次「你主动开的头」，下一轮原样摆给它并要求换方向；
         // 再从 domains 里随机点几个方向，给它一个不同于近期记忆的抓手。
-        rememberOpeners: 5,        // 记住最近几条主动开的话题（0 = 不记）
+        rememberOpeners: 20,       // 记住最近几条主动开的话题（0 = 不记）；20 条才够覆盖「隔天又来一遍」
         openerChars: 120,          // 每条记多少字（太长会挤占上下文）
         suggestDomains: 3,         // 每次随机点几个方向（0 = 不点）
         domainCooldown: 2,         // 最近几轮建议过的方向先避开（0 = 纯随机，实测容易连抽同类）
+        repeatGuard: true,         // 主动开口前做语义查重（拿常驻向量模型比最近的盘），太像就不发
+        repeatSimThreshold: 0.75,  // 查重阈值：实测同一话题 0.83、不同话题 0.32~0.47
+        repeatWindowHours: 168,    // 只跟最近这些小时内的盘比（0 = 不限）
         avoidKeywords: [],         // 主动开话题时明确别碰的词（例如 ["LOL","英雄联盟","S16"]）；留空 = 不限制
         domains: [...DEFAULT_PROACTIVE_DOMAINS]
       },
@@ -863,10 +866,13 @@ function loadConfig() {
     checkIntervalMaxMs: 90 * 60 * 1000,
     idleThresholdMs: 15 * 60 * 1000,
     probability: 0.3,
-    rememberOpeners: 5,
+    rememberOpeners: 20,
     openerChars: 120,
     suggestDomains: 3,
     domainCooldown: 2,
+    repeatGuard: true,
+    repeatSimThreshold: 0.75,
+    repeatWindowHours: 168,
     avoidRepeat: true,
     avoidKeywords: [],
     domains: [...DEFAULT_PROACTIVE_DOMAINS],
@@ -6770,13 +6776,21 @@ async function main() {
             if (merged.proactive.enabled !== undefined) merged.proactive.enabled = merged.proactive.enabled === true;
             if (merged.proactive.probability !== undefined) merged.proactive.probability = Math.min(1, Math.max(0, Number(merged.proactive.probability) || 0));
             // 反重复参数：避免主动开口每次都聊同一个圈子。
-            for (const k of ['rememberOpeners', 'suggestDomains', 'domainCooldown', 'openerChars']) {
+            for (const k of ['rememberOpeners', 'suggestDomains', 'domainCooldown', 'openerChars', 'repeatWindowHours']) {
               if (merged.proactive[k] !== undefined) {
                 const n = Number(merged.proactive[k]);
                 merged.proactive[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : (Number(current.proactive?.[k]) || 0);
               }
             }
             if (merged.proactive.avoidRepeat !== undefined) merged.proactive.avoidRepeat = merged.proactive.avoidRepeat !== false;
+            // 语义查重闸门：阈值是小数（0.5~0.99），不能走上面那条整型钳制（会被 round 成 1）。
+            if (merged.proactive.repeatSimThreshold !== undefined) {
+              const v = Number(merged.proactive.repeatSimThreshold);
+              merged.proactive.repeatSimThreshold = Number.isFinite(v)
+                ? Math.min(0.99, Math.max(0.5, v))
+                : (Number(current.proactive?.repeatSimThreshold) || 0.75);
+            }
+            if (merged.proactive.repeatGuard !== undefined) merged.proactive.repeatGuard = merged.proactive.repeatGuard !== false;
             for (const k of ['domains', 'avoidKeywords']) {
               if (merged.proactive[k] === undefined) continue;
               const raw = Array.isArray(merged.proactive[k]) ? merged.proactive[k] : String(merged.proactive[k]).split(/[,，\n]+/);
@@ -7758,6 +7772,8 @@ async function main() {
               error: error?.message ?? String(error),
               // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+              // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
+              ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -7914,6 +7930,8 @@ async function main() {
               error: error?.message ?? String(error),
               // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+              // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
+              ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -10872,6 +10890,8 @@ async function main() {
               error: error?.message ?? String(error),
               // 回执超时且历史查不到：这条可能已经发出。让上游（MCP）据此提示模型「别原样重发」。
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
+              // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
+              ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -12089,6 +12109,60 @@ async function main() {
     return delays;
   }
 
+  // ── 主动开口的「自我重复」闸门 ────────────────────────────────────────────
+  // 线上事故（2026-10-12 群 217423624）：「耳虫」隔两天又主动开了一次。模型看不到自己两天前说过
+  // （上下文窗口只给最近 20 条、开盘记忆只留 5 条），光靠提示词只是「求它别重复」。这里用常驻的
+  // 中文向量模型做**语义查重**：跟最近 N 天的开盘太像就直接不发，打回去让它换题。
+  // 阈值实测（bge-small-zh-v1.5）：同一话题两条 0.827；不同话题 0.32~0.47 → 默认 0.75。
+  const proactiveGuardTurns = new Map(); // key -> { armed, used }（易失，不落盘）
+
+  function cosineSim(a, b) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    if (!na || !nb) return 0;
+    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  }
+
+  /**
+   * 这条文本是不是在重复自己最近开过的题？
+   * @returns {Promise<{opener:object, sim:number}|null>} 命中返回最像的那条，否则 null
+   */
+  async function findRepeatedOpener(st, text) {
+    const p = cfg.socialV2?.proactive ?? {};
+    if (p.repeatGuard === false) return null;
+    const raw = String(text ?? '').trim();
+    if (raw.length < 6) return null; // 太短（「在的」「？」）没有查重意义
+    const threshold = Math.max(0.5, Math.min(0.99, numOr(p.repeatSimThreshold, 0.75)));
+    const windowHours = Math.max(0, numOr(p.repeatWindowHours, 168));
+    const since = windowHours > 0 ? Date.now() - windowHours * 3600 * 1000 : 0;
+    // 最多比 12 条：embedder 是 8 条一批的小批量模型（批量大会 OOM），pool 太小又覆盖不到隔天的。
+    const pool = (Array.isArray(st?.proactiveOpeners) ? st.proactiveOpeners : [])
+      .filter((o) => o && o.text && (!since || (Number(o.at) || 0) >= since))
+      .slice(-12);
+    if (!pool.length) return null;
+    if (!embedder.ready) {
+      // 检索没开就别为了查重去 spawn 模型（start() 最长能等 30s，会把主动开口卡住）。
+      if (!ragEnabled()) return null;
+      try { await embedder.start(); } catch { return null; }
+    }
+    if (!embedder.ready) return null;
+    let vectors = [];
+    try {
+      vectors = await embedder.embed([raw, ...pool.map((o) => String(o.text))]);
+    } catch (error) {
+      log(`[proactive] 自我重复查重的向量失败，跳过闸门：${error?.message ?? error}`);
+      return null;
+    }
+    if (!Array.isArray(vectors) || vectors.length !== pool.length + 1 || !vectors[0]?.length) return null;
+    let best = null;
+    for (let i = 0; i < pool.length; i++) {
+      const sim = cosineSim(vectors[0], vectors[i + 1]);
+      if (!Number.isFinite(sim)) continue;
+      if (!best || sim > best.sim) best = { sim, opener: pool[i] };
+    }
+    return best && best.sim >= threshold ? best : null;
+  }
+
   /** 比对「发出去的文本」与历史里的文本：QQ 侧可能改空白，抹掉空白再比。 */
   function normalizeSentText(text) {
     return String(text ?? '').replace(/\s+/g, '').trim();
@@ -12153,6 +12227,22 @@ async function main() {
         return r.text;
       });
     let chain = chainFor(key);
+    // 主动回合的第一条 = 「主动开的头」：先查一次自我重复，太像就不发、打回去换题。
+    // 每回合只查/只拦一次：模型换过题还像也放行，免得把它卡在同一轮里转圈。
+    const guardTurn = proactiveGuardTurns.get(key);
+    if (guardTurn?.armed && !guardTurn.used && outgoing.length && typeof outgoing[0] === 'string') {
+      guardTurn.used = true;
+      chain = chain.then(async () => {
+        const hit = await findRepeatedOpener(getSocialV2State(key), outgoing[0]);
+        if (!hit) return;
+        const age = relativeTimeLabel(hit.opener.at);
+        log(`[proactive] 自我重复闸门拦下一条（${key}，相似度 ${hit.sim.toFixed(2)}，对照 ${age}）：${outgoing[0].slice(0, 40)}`);
+        const err = new Error(`这句和你 ${age}主动开的头几乎一样（相似度 ${hit.sim.toFixed(2)}）：「${String(hit.opener.text).replace(/\s+/g, ' ').slice(0, 40)}」——换个题、或至少换一个完全不同的角度再发。`);
+        err.selfRepeat = true;
+        err.detail = { sim: hit.sim, at: hit.opener.at, text: String(hit.opener.text).slice(0, 120) };
+        throw err;
+      });
+    }
     for (let i = 0; i < outgoing.length; i++) {
       const msg = outgoing[i];
       const useReply = i === 0 ? replyToMessageId : null;
@@ -12192,6 +12282,9 @@ async function main() {
     }
     return setSendChain(key, chain).then(() => {
       if (failed.length > 0) {
+        // 自我重复闸门：这是**有意的拒绝**（不是发送失败），原样抛给上层，好让 MCP 提示模型换题。
+        const refused = failed.find((e) => e?.selfRepeat === true);
+        if (refused) throw refused;
         const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
         err.sent = sent.slice();
         // 「回执超时、历史也查不到」与真正的硬失败要分开：上层据此告诉模型别原样重发。
@@ -14519,6 +14612,17 @@ async function main() {
     return best;
   }
 
+  /** 给「更早开过的头」标个大致时间（几天前/几小时前），让模型有「这是旧账」的实感。 */
+  function relativeTimeLabel(at) {
+    const ms = Date.now() - (Number(at) || 0);
+    if (!Number.isFinite(ms) || ms < 0) return '之前';
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return `${Math.max(1, mins)} 分钟前`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    return `${Math.round(hours / 24)} 天前`;
+  }
+
   function buildProactiveTopicBlock(st) {
     const p = cfg.socialV2?.proactive ?? {};
     let out = '';
@@ -14571,6 +14675,14 @@ async function main() {
       out += '【你最近主动开的头 · 这次别再聊这些】\n'
         + recentOpeners.map((o) => `- ${o.text}`).join('\n')
         + '\n上面这些已经说过了；同一个人物/战队/作品/圈子的后续也算重复，至少隔几轮再提。\n';
+      // 更早那些也要摆出来：线上事故（2026-10-12 群 217423624）「耳虫」隔两天又开了一次——
+      // 只留 5 条开盘 + 上下文窗口只给最近 20 条，模型根本看不到自己两天前说过。
+      const older = openers.slice(0, -4).slice(-16);
+      if (older.length) {
+        out += '【更早你主动开过的（别当成新题材再来一遍）】\n'
+          + older.map((o) => `- [${relativeTimeLabel(o.at)}] ${String(o.text).replace(/\s+/g, ' ').slice(0, 34)}`).join('\n')
+          + '\n';
+      }
       if (repeatHead) {
         out += `**而且你的起头方式本身就在重复**：最近 ${recentOpeners.length} 次里不止一次是用「${repeatHead}」开头的——`
           + '这次**必须换一种起法**（直接抛结论、问一句、吐槽、报个刚看到的小事都行），再用这个套路群里一眼就看出你在复读。\n';
@@ -14745,6 +14857,8 @@ async function main() {
       return;
     }
     const st = getSocialV2State(key);
+    // 只有「主动开口」那一轮才装自我重复闸门；普通唤醒立刻卸掉，免得耽误正常回复。
+    proactiveGuardTurns.set(key, { armed: reason === 'proactiveCheck', used: false });
     // 投递水位初始化（升级到「补缝隙」逻辑后的第一轮）：
     // 把当前未读算作**待投递**，而不是当作已经给过 AI——否则升级前那一刻就已经积压的未读
     // （例如线上那条从没进过 newMessages 的「玉山镇」）会被后续 mark_read 静默清掉。

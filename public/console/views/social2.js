@@ -80,9 +80,13 @@ const FIELDS = [
   { id: 'v2ProactiveIdleThreshold', path: 'proactive.idleThresholdMs', unit: 60000, def: 15, min: 1 },
   { id: 'v2ProactiveProbability', path: 'proactive.probability', def: 0.3, min: 0, max: 1 },
   // 反重复：记住最近主动开的头 + 随机点方向 + 主动开口时别碰的词
-  { id: 'v2ProactiveRememberOpeners', path: 'proactive.rememberOpeners', def: 5, min: 0, max: 20 },
+  { id: 'v2ProactiveRememberOpeners', path: 'proactive.rememberOpeners', def: 20, min: 0, max: 20 },
   { id: 'v2ProactiveSuggestDomains', path: 'proactive.suggestDomains', def: 3, min: 0, max: 8 },
   { id: 'v2ProactiveDomainCooldown', path: 'proactive.domainCooldown', def: 2, min: 0, max: 6 },
+  // 语义查重闸门：主动开口前和最近的盘比向量相似度，太像就不发（0.75 = 实测同话题 0.83 / 不同话题 0.32~0.47）
+  { id: 'v2ProactiveRepeatGuard', path: 'proactive.repeatGuard', type: 'bool', def: true },
+  { id: 'v2ProactiveRepeatSim', path: 'proactive.repeatSimThreshold', def: 0.75, min: 0.5, max: 0.99 },
+  { id: 'v2ProactiveRepeatWindowH', path: 'proactive.repeatWindowHours', def: 168, min: 0, max: 720 },
   { id: 'v2ProactiveDomains', path: 'proactive.domains', type: 'lines', def: [] },
   { id: 'v2ProactiveAvoidKeywords', path: 'proactive.avoidKeywords', type: 'lines', def: [] },
 
