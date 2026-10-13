@@ -179,7 +179,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     // 主动开话题的反重复：记住最近主动开的头，下次要求换方向。
     // 注意 buildProactivePrompt 只是**一代（reserved）**路径；reserved2 真正生效的是
     // buildWakePromptV2 + 共用的 buildProactiveTopicBlock，两个都要能测。
-    buildProactivePrompt, buildWakePromptV2, buildProactiveTopicBlock, recordSentMessagesV2, retryPendingWakeV2,
+    buildProactivePrompt, buildWakePromptV2, buildProactiveTopicBlock, recordSentMessagesV2, retryPendingWakeV2, agentMessageView,
     // 一代批次提示：用来钉住「【管理员】≠群主」的术语只在真的出现管理员消息时注入。
     buildBatchPrompt,
     // 链接分享卡：只发桥接组装的固定形状，链接必须过 validateFetchUrl。

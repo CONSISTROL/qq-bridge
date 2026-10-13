@@ -7119,7 +7119,7 @@ async function main() {
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getUnread')) { sendJson({ ok: false, error: '工具未启用：qq_get_unread_messages' }, 403); return; }
           const st = getSocialV2State(key);
-          const messages = st.unread.slice(-limit);
+          const messages = st.unread.slice(-limit).map(agentMessageView);
           // 这些消息已经真正给过 AI 了，推进投递水位（让 wait 不再重复投递）。
           markDeliveredV2(st, messages);
           sendJson({ ok: true, key, unreadCount: st.unread.length, messages });
@@ -7136,7 +7136,7 @@ async function main() {
           const st = getSocialV2State(key);
           const start = Math.max(0, st.recentMessages.length - offset - limit);
           const end = Math.max(0, st.recentMessages.length - offset);
-          const messages = st.recentMessages.slice(start, end);
+          const messages = st.recentMessages.slice(start, end).map(agentMessageView);
           markDeliveredV2(st, messages);
           sendJson({ ok: true, key, messages });
           return;
@@ -14182,7 +14182,7 @@ async function main() {
   }
 
   // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
-  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null, card = null, gwSeq = null) {
+  function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null, card = null, gwSeq = null, atSelf = false) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
@@ -14239,6 +14239,9 @@ async function main() {
       // 非卡片消息不加这个字段，避免给每条消息都塞一个 card:null。
       ...(card ? { card } : {}),
       quoteTargetIsSelf: !!quoteTargetIsSelf,
+      // 这条有没有 @ 你（或 @全体）。存下来，好让 AI 一眼看出「谁在跟谁说话」——
+      // 线上问题：群里消息它几乎都默认当成对自己说的，因为它只能自己从文本里猜。
+      atSelf: !!atSelf,
       isOwner: !!isOwner,
       ownerLabel: isOwner ? `管理员（ownerQQ ${cfg.ownerQQ ?? ''}）` : '',
       isSelf: false,
@@ -14866,7 +14869,7 @@ async function main() {
     if (reason === 'poke') {
       return `${base}【唤醒】${key}\n原因：有人拍了一拍（可能拍了你，也可能拍了别人）。\n先看未读/最近消息里的 [拍一拍] 事件：如果是拍你，可以自然回应一句，也可以用 qq_send_poke 回一个拍一拍；如果是拍别人，觉得有趣也可以接梗。除了回应，偶尔也可以主动戳一下正在聊的人/熟人，像真人手贱/提醒/逗一下，但别频繁。不想接就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
     }
-    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用与点名：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。**要回的是某个人**（答他问的问题、cue 他、把话抛给他、点他名）时，也可以直接用 qq_send_message 的 atUserId 点名他，比引用更轻，群友也常这么用；但别每条都 @，也别引用和 @ 一起上。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
+    return `${base}【唤醒】${key}\n原因：${describeWakeReasonV2(reason)}\n【谁在跟谁说话】只有「有人 @ 你、引用了你的消息、点名问你」才算在跟你说话；关键词命中、你关注的群友发言、随机醒来这些都**不是**在找你。工具返回的消息里，**带 aboutYou 字段的才是针对你的**（没有这个字段＝这条没针对你），别把别人之间的对话当成提问来逐条回答；想插话可以，但那属于你主动参与。\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用与点名：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。**要回的是某个人**（答他问的问题、cue 他、把话抛给他、点他名）时，也可以直接用 qq_send_message 的 atUserId 点名他，比引用更轻，群友也常这么用；但别每条都 @，也别引用和 @ 一起上。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
   }
 
   function buildWakeReminderPromptV2(key) {
@@ -14876,6 +14879,24 @@ async function main() {
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
     return `${roleLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+  }
+
+  /**
+   * 给 AI 看的消息视图：把「谁在跟谁说话」显式化。
+   * 线上问题（2026-10-13）：群里消息它几乎都默认当成对自己说的——消息对象里只有
+   * isSelf / quoteTargetIsSelf，既没有「@了你」的标记，也没写清引用的是谁，它只能自己猜。
+   * 约定：**只有带 aboutYou 字段的才是针对你的**；没有这个字段＝这条没针对你。
+   */
+  function agentMessageView(m) {
+    if (!m || typeof m !== 'object') return m;
+    const out = { ...m, who: m.isSelf ? '你（机器人）' : (m.sender || (m.userId != null ? String(m.userId) : '群友')) };
+    const quoted = /\[引用\s*([^：\]]+)/.exec(String(m.text ?? ''));
+    if (quoted) out.repliesTo = /^你$/.test(quoted[1].trim()) ? '你' : quoted[1].trim();
+    if (!m.isSelf && (m.atSelf || m.quoteTargetIsSelf)) {
+      out.aboutYou = m.atSelf && m.quoteTargetIsSelf ? '@了你，并引用了你的消息'
+        : (m.atSelf ? 'at了你（@ 的是你）' : '引用了你的消息');
+    }
+    return out;
   }
 
   // 频率受限/忙导致「唤醒没送出去」时的补投：定时器只负责触发，投递仍走 sendWakePromptV2
@@ -14907,6 +14928,31 @@ async function main() {
       log(`[reserved2] 补投暂存唤醒失败 ${key}（${item.reason}）:`, error?.message ?? error);
       return false;
     }
+  }
+
+  /**
+   * 把内部唤醒标记翻成「人话」，并且**讲清这条是不是在跟你说话**。
+   * 线上问题（2026-10-13）：提示里只写 `原因：speaker:kafka`，模型把它读成「有人找我」，
+   * 于是群里别人之间的对话它都要接一句。真正「在找你」的只有 atMention / nameMention / question。
+   */
+  function describeWakeReasonV2(reason) {
+    const r = String(reason ?? '').trim();
+    if (!r) return '未知';
+    if (r === 'atMention') return '有人 @ 你，或引用了你的消息 —— **这条是对你说的**';
+    if (r === 'nameMention') return '有人叫了你的名字 —— 大概率在找你';
+    if (r === 'question') return '有人在问你（指向你的提问）';
+    if (r === 'private') return '私聊消息 —— 对你说';
+    if (r === 'anyMessage') return '这个会话开了「任何消息都醒」（不一定在跟你说话）';
+    if (r.startsWith('keyword:')) return `消息里出现了你设的关键词「${r.slice('keyword:'.length)}」—— **不等于在跟你说话**，先看再决定`;
+    if (r.startsWith('speaker:')) return `你关注的群友「${r.slice('speaker:'.length)}」发言了 —— **不是在跟你说话**，只是他说话了，先判断要不要接`;
+    if (r === 'probability') return '按概率随机醒来看一眼 —— 没人找你';
+    if (r === 'proactiveCheck') return '主动机会检查 —— 没人找你，你可以自己开个话题，也可以继续睡';
+    if (r === 'replyCheck') return '你刚回过话，回来看有没有人接 —— 没人接就算了';
+    if (r === 'busyRecovery') return '上一轮卡住了，补醒一次看看有没有漏掉的消息';
+    if (r === 'timeout') return '你自己设的潜水时间到了 —— 没人找你';
+    if (r === 'restartRecovery') return '桥接重启，补投积压的唤醒';
+    if (r === 'admin') return '管理员手动叫醒你';
+    return r;
   }
 
   async function sendWakePromptV2(key, reason) {
@@ -15780,6 +15826,9 @@ async function main() {
       const inboundSegments = Array.isArray(event.message) ? event.message : [];
       const replySeg = inboundSegments.find((seg) => seg && seg.type === 'reply');
       const quotedId = replySeg?.data?.id != null ? String(replySeg.data.id) : null;
+      // @ 了机器人本人（或 @全体）＝ 这条直接冲着它来，必须显式记下来。
+      const atSelf = inboundSegments.some((seg) => seg?.type === 'at'
+        && (String(seg.data?.qq) === String(event.self_id ?? '') || seg.data?.qq === 'all'));
       let quoteHint = '';
       if (quotedId) {
         let quotedMedia = [];
@@ -15809,7 +15858,7 @@ async function main() {
         }
         return;
       }
-      appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId, cardInfo, event.message_seq ?? null);
+      appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId, cardInfo, event.message_seq ?? null, atSelf);
       // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {

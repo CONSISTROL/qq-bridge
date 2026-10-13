@@ -1188,6 +1188,55 @@ await testWith(
   }
 );
 
+// 线上问题（2026-10-13）：群里消息 AI 几乎都默认当成对自己说的。要给它两样东西：
+// ① 读消息时能看出「谁在跟谁说话」（aboutYou / repliesTo / who）；② 唤醒原因要讲清是不是在找它。
+await test('读消息时要能看出「谁在跟谁说话」：aboutYou / repliesTo / who', async (h) => {
+  const server = h.startConsoleServer();
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+    h.setMode('reserved2');
+    const key = 'group:456';
+    const st = h.getSocialV2State(key);
+    h.appendSocialV2Message(key, 'kafka', '在吗', '在吗', false, false, 710001, [], '1374585879', [], null, null, null, false);
+    h.appendSocialV2Message(key, '面包屑🍞', '@哦鲸鲸 这个怎么弄', '@哦鲸鲸 这个怎么弄', false, false, 710002, [], '2638514344', [], null, null, null, true);
+    h.appendSocialV2Message(key, 'kafka', '[引用 面包屑🍞：色儿不一样] 我也这么觉得', '[引用 面包屑🍞：色儿不一样] 我也这么觉得', false, false, 710003, [], '1374585879', [], '710002', null, null, false);
+    h.appendSocialV2Message(key, 'kafka', '[引用 你：我这条是回他这张图的] 哈哈', '[引用 你：我这条是回他这张图的] 哈哈', true, false, 710004, [], '1374585879', [], '710000', null, null, false);
+
+    const res = await apiRequest(server, `/api/socialV2/recent?token=fixture-console-token&key=${encodeURIComponent(key)}&limit=10`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(res.status, 200);
+    const byId = new Map((res.body.messages ?? []).map((m) => [String(m.messageId), m]));
+
+    const plain = byId.get('710001');
+    assert.equal(plain.who, 'kafka', '要说清是谁在说话');
+    assert.equal(plain.aboutYou, undefined, '没针对你的消息不能带 aboutYou');
+
+    const at = byId.get('710002');
+    assert.match(String(at.aboutYou ?? ''), /at了你|@/, '@ 了机器人必须标出来');
+
+    const quotedOther = byId.get('710003');
+    assert.equal(quotedOther.repliesTo, '面包屑🍞', '要说清这条在回谁');
+    assert.equal(quotedOther.aboutYou, undefined, '引用别人≠在跟你说话');
+
+    const quotedSelf = byId.get('710004');
+    assert.equal(quotedSelf.repliesTo, '你');
+    assert.match(String(quotedSelf.aboutYou ?? ''), /引用/, '引用你的消息要标成针对你');
+  } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
+});
+
+await test('唤醒提示要讲清「是不是在跟你说话」', async (h) => {
+  h.setMode('reserved2');
+  const key = 'group:456';
+  h.getSocialV2State(key);
+  const bySpeaker = h.buildWakePromptV2(key, 'speaker:kafka');
+  assert.match(bySpeaker, /不是在跟你说话/, '关注的群友发言不是找你，必须说明');
+  assert.match(bySpeaker, /谁在跟谁说话/, '要给指向规则');
+  assert.match(bySpeaker, /aboutYou/, '要告诉它看 aboutYou 字段判断');
+  const byAt = h.buildWakePromptV2(key, 'atMention');
+  assert.match(byAt, /这条是对你说的/, '@ 唤醒要明说这条是冲它来的');
+  const byKeyword = h.buildWakePromptV2(key, 'keyword:大肥鱼');
+  assert.match(byKeyword, /不等于在跟你说话/);
+});
+
 // 线上事故（2026-10-13 11:57 群 1050666134）：owner 发的 B 站卡片触发 question 唤醒，撞上频率上限，
 // 旧代码直接 return 把唤醒原因丢了 → 那条消息永远没人处理，群里看到的就是「AI 没回我」。
 await test('唤醒频率超限不能丢掉：要暂存，额度恢复后自动补投', async (h) => {
