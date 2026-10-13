@@ -656,28 +656,7 @@ function loadConfig() {
       },
       // 排队超过该时长就强制清空忙标记并补投（0 = 禁用看门狗）
       busyRecoveryMs: 480000,
-      wake: {
-        defaultMode: 'diving',
-        preSleepWaitEnabled: true,      // 沉睡前强制观察窗口开关：防止 AI 聊两句就潜水
-        preSleepWaitMs: 300000,          // 默认沉睡前至少等待/观察 5 分钟（后台可调）
-        recommendedDefaultInfinite: true, // 默认下一次唤醒是否无限期（true=永久潜水等条件；false=有限时长）
-        sleepMinMs: 60000,
-        sleepMaxMs: 0,
-        recommendedSleepMinMs: 300000,
-        recommendedSleepMaxMs: 7200000,
-        recommendedProbability: 0.05,
-        recommendedKeywords: ['小鲸鱼', 'DeepSeek', 'deepseek', 'DS', 'D老师', 'd老师', 'D指导', 'd指导', 'D师傅', 'd师傅', '深度求索', '大肥鱼', '鲸鱼', 'DeepSeek V3', 'DeepSeek R1', 'R1'],
-        recommendedAtMention: true,
-        recommendedNameMention: true,
-        recommendedQuestion: true,
-        recommendedPoke: true,
-        recommendedHint: '如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
-        batchWindowMs: 8000,
-        maxWakePerMinute: 1,
-        maxWakePerHour: 12,
-        noActionLimit: 3,
-        maxWakeConfigReminders: 2
-      },
+      wake: { ...DEFAULT_WAKE_CONFIG },
       send: {
         burstEnabled: true,
         // 放宽到 24：复杂任务（分析/查资料后的结论/给方案）本来就需要把一件事讲清楚，
@@ -879,6 +858,10 @@ function loadConfig() {
     ...(cfg.socialV2.proactive ?? {})
   };
 
+  // socialV2.wake 深度合并：config.json 里的 wake 是历史全量快照，缺键会把代码默认值弄丢
+  // （线上踩过：快照把 recommendedProbability 钉死在 0.05，改代码默认值也不生效）。
+  cfg.socialV2.wake = { ...DEFAULT_WAKE_CONFIG, ...(cfg.socialV2.wake ?? {}) };
+
   // socialV2.sticker.collect 也需要深度合并，避免旧配置缺失 collect 子项时丢默认值。
   cfg.socialV2.sticker = {
     enabled: true,
@@ -1032,6 +1015,35 @@ const convKey = (kind, id) => `${kind}:${id}`;
  * 于是它一遍遍开同一个话题（线上表现：每次主动冒泡都是电竞/赛事）。
  * 这里给一批互相拉开距离的方向，随机点几个，逼它换抓手。
  */
+// 主动唤醒配置（socialV2.wake）的默认值。
+// 为什么提成常量：config.json 里存的是**历史全量快照**，浅合并会让「快照里没有的键」直接丢掉默认值，
+// 深度合并又需要一份权威默认值。线上踩过：快照把 recommendedProbability 钉死在 0.05，改代码默认值也不生效，
+// 机器人就一路潜水到 0.02，群友以为它死了。
+const DEFAULT_WAKE_CONFIG = Object.freeze({
+      defaultMode: 'diving',
+      preSleepWaitEnabled: true,      // 沉睡前强制观察窗口开关：防止 AI 聊两句就潜水
+      preSleepWaitMs: 300000,          // 默认沉睡前至少等待/观察 5 分钟（后台可调）
+      recommendedDefaultInfinite: true, // 默认下一次唤醒是否无限期（true=永久潜水等条件；false=有限时长）
+      sleepMinMs: 60000,
+      sleepMaxMs: 0,
+      recommendedSleepMinMs: 300000,
+      recommendedSleepMaxMs: 7200000,
+      // 实测（2026-10-13）：推荐值写 0.05 时模型会一路压到 0.02~0.08，群里等于不参与，
+      // 群友看到的就是「机器人回到潜水模式了」。给一个有参与感的基准值。
+      recommendedProbability: 0.2,
+      recommendedKeywords: ['小鲸鱼', 'DeepSeek', 'deepseek', 'DS', 'D老师', 'd老师', 'D指导', 'd指导', 'D师傅', 'd师傅', '深度求索', '大肥鱼', '鲸鱼', 'DeepSeek V3', 'DeepSeek R1', 'R1'],
+      recommendedAtMention: true,
+      recommendedNameMention: true,
+      recommendedQuestion: true,
+      recommendedPoke: true,
+      recommendedHint: '如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率**别低于 0.15**（推荐 0.2；线上实测 0.05 会把你自己憋成「潜水模式」，群友会以为你死了，owner 私聊更要保持 anyMessage=true）；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
+      batchWindowMs: 8000,
+      maxWakePerMinute: 1,
+      maxWakePerHour: 12,
+      noActionLimit: 3,
+      maxWakeConfigReminders: 2
+});
+
 const DEFAULT_PROACTIVE_DOMAINS = Object.freeze([
   '科技 / AI 圈的新东西', '生活里的琐事与吐槽', '影视 / 动画 / 番剧',
   '音乐 / 歌单', '游戏（非电竞赛事）', '社会新闻里的小事', '冷知识 / 科普',

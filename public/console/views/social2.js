@@ -38,7 +38,7 @@ const FIELDS = [
   { id: 'v2PreSleepWaitMin', path: 'wake.preSleepWaitMs', unit: 60000, def: 5, min: 0 },
   { id: 'v2RecSleepMin', path: 'wake.recommendedSleepMinMs', unit: 60000, def: 5, min: 1 },
   { id: 'v2RecSleepMax', path: 'wake.recommendedSleepMaxMs', unit: 60000, def: 120, min: 1 },
-  { id: 'v2RecProb', path: 'wake.recommendedProbability', def: 0.05, min: 0, max: 1 },
+  { id: 'v2RecProb', path: 'wake.recommendedProbability', def: 0.2, min: 0, max: 1 },
   { id: 'v2RecKeywords', path: 'wake.recommendedKeywords', type: 'list', def: [] },
   { id: 'v2RecAt', path: 'wake.recommendedAtMention', type: 'bool', def: true },
   { id: 'v2RecName', path: 'wake.recommendedNameMention', type: 'bool', def: true },
