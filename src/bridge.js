@@ -14878,6 +14878,37 @@ async function main() {
     return `${roleLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
 
+  // 频率受限/忙导致「唤醒没送出去」时的补投：定时器只负责触发，投递仍走 sendWakePromptV2
+  //（它会再查一次频率与忙标记；仍然超限就再次暂存，所以不会丢）。
+  const wakeRetryTimers = new Map();
+  function scheduleWakeRetryV2(key, waitMs) {
+    if (wakeRetryTimers.has(key)) return; // 已排过一次，多个原因共用一次补投
+    const delay = Math.max(5000, Math.min(5 * 60 * 1000, Math.round(Number(waitMs) || 0) || 60000));
+    const timer = setTimeout(() => {
+      wakeRetryTimers.delete(key);
+      void retryPendingWakeV2(key);
+    }, delay);
+    timer.unref?.();
+    wakeRetryTimers.set(key, timer);
+  }
+
+  /** 补投队首的一条暂存唤醒（定时器到点、或回合结束后的补投都走它）。 */
+  async function retryPendingWakeV2(key) {
+    const st = getSocialV2State(key);
+    const item = Array.isArray(st?.pendingWakeReasons) ? st.pendingWakeReasons[0] : null;
+    if (!item || typeof item !== 'object' || !item.reason) return false;
+    if (isConversationBusyV2(key, st)) { scheduleWakeRetryV2(key, 60000); return false; }
+    st.pendingWakeReasons.shift();
+    saveSocialV2State();
+    try {
+      await sendWakePromptV2(key, item.reason);
+      return true;
+    } catch (error) {
+      log(`[reserved2] 补投暂存唤醒失败 ${key}（${item.reason}）:`, error?.message ?? error);
+      return false;
+    }
+  }
+
   async function sendWakePromptV2(key, reason) {
     if (cfg.socialV2?.enabled === false) return;
     if (currentMode !== 'reserved2' || socialV2.paused) return;
@@ -14953,7 +14984,23 @@ async function main() {
     const recentMinute = (st.wakeTimes || []).filter((t) => now - t < 60000).length;
     const recentHour = (st.wakeTimes || []).filter((t) => now - t < 3600000).length;
     if ((maxPerMinute > 0 && recentMinute >= maxPerMinute) || (maxPerHour > 0 && recentHour >= maxPerHour)) {
-      log(`[reserved2] 唤醒频率超限，跳过 ${key}（${reason}）`);
+      // **不能直接丢**：线上事故（2026-10-13 11:57 群 1050666134）owner 发的 B 站卡片触发 question
+      // 唤醒，恰好撞上频率上限（前几次 busyRecovery 先把额度吃掉了），于是这条消息**永远没人处理**——
+      // 群里看到的只是「AI 没回我」。改为暂存 + 排一个补投定时器，额度一放开就补投。
+      if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
+      const seq = st.lastUnreadSeq || 0;
+      if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
+        st.pendingWakeReasons.push({ reason, seq });
+        if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
+      }
+      const minuteOldest = (st.wakeTimes || []).filter((t) => now - t < 60000).sort((a, b) => a - b)[0] || now;
+      const hourOldest = (st.wakeTimes || []).filter((t) => now - t < 3600000).sort((a, b) => a - b)[0] || now;
+      const waitMs = (maxPerMinute > 0 && recentMinute >= maxPerMinute)
+        ? Math.max(5000, 60000 - (now - minuteOldest) + 500)
+        : Math.max(5000, 3600000 - (now - hourOldest) + 500);
+      log(`[reserved2] 唤醒频率超限，暂存待补投 ${key}（${reason}@seq${seq}，约 ${Math.round(waitMs / 1000)}s 后重试）`);
+      saveSocialV2State();
+      scheduleWakeRetryV2(key, waitMs);
       return;
     }
     st.pendingSince = 0;

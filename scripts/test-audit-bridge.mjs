@@ -1188,6 +1188,26 @@ await testWith(
   }
 );
 
+// 线上事故（2026-10-13 11:57 群 1050666134）：owner 发的 B 站卡片触发 question 唤醒，撞上频率上限，
+// 旧代码直接 return 把唤醒原因丢了 → 那条消息永远没人处理，群里看到的就是「AI 没回我」。
+await test('唤醒频率超限不能丢掉：要暂存，额度恢复后自动补投', async (h) => {
+  h.setMode('reserved2');
+  const key = 'group:456';
+  const st = h.getSocialV2State(key);
+  st.wakeTimes = [Date.now()]; // maxWakePerMinute 默认 1：这一分钟的额度已用掉
+  const before = h.calls.prompts.length;
+  await h.sendWakePromptV2(key, 'question');
+  assert.equal(h.calls.prompts.length, before, '超限时确实不该投递');
+  assert.equal(st.pendingWakeReasons.length, 1, '必须暂存，不能像以前那样直接丢');
+  assert.match(JSON.stringify(st.pendingWakeReasons[0]), /question/, '暂存的是这条唤醒原因');
+
+  st.wakeTimes = []; // 额度恢复
+  const delivered = await h.retryPendingWakeV2(key);
+  assert.equal(delivered, true, '补投要成功');
+  assert.equal(st.pendingWakeReasons.length, 0, '补投后出队');
+  assert.ok(h.calls.prompts.length > before, '这一次真的把唤醒投给模型了');
+});
+
 await test('主动开话题：更早开过的头要带时间摆出来（避免隔天又来一遍）', async (h) => {
   const now = Date.now();
   const st = {
