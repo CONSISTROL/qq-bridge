@@ -10650,25 +10650,35 @@ async function main() {
             sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
             return;
           }
+          // 单条消息可能有很多张图（线上实例：一条「七宗罪」发了 7 张，而单次上限 5 张），
+          // 所以要支持翻页——否则多出来的图对 AI 就是「被吞了」，而且它自己也拿不到。
+          const imageOffset = Math.max(0, Math.round(Number(url.searchParams.get('imageOffset')) || 0));
+          const wantLimit = Math.round(Number(url.searchParams.get('imageLimit')) || 0);
+          const pageLimit = wantLimit > 0 ? Math.min(20, wantLimit) : 0; // 0 = 用默认上限
+          const pageSize = pageLimit > 0 ? pageLimit : MAX_MEDIA_COUNT;
           // 两级读取：① 先用桥接缓存里的 media（含机器人自己发的图，已主动记录）；
           // ② 缓存没有、或缓存里的地址抓不到（过期/超限）时，改用网关 get_msg 兜底。
           let media = findMessageMedia(key, messageId);
           let images = [];
           if (media.length) {
-            try { images = await fetchMediaData(media); } catch (error) { log(`图片查询（缓存）失败 ${key} ${messageId}: ${error?.message ?? error}`); }
+            const page = media.slice(imageOffset, imageOffset + pageSize);
+            try { images = await fetchMediaData(page, { maxCount: pageSize }); } catch (error) { log(`图片查询（缓存）失败 ${key} ${messageId}: ${error?.message ?? error}`); }
           }
           if (!images.length) {
             const fallback = await fetchMediaFromOneBot(messageId);
             if (fallback.length) {
               if (!media.length) media = fallback;
+              const page = fallback.slice(imageOffset, imageOffset + pageSize);
               try {
-                images = await fetchMediaData(fallback);
+                images = await fetchMediaData(page, { maxCount: pageSize });
                 if (images.length) log(`[image] 已用 get_msg 兜底读到图片（${key} ${messageId}）`);
               } catch (error) {
                 log(`图片查询（get_msg 兜底）失败 ${key} ${messageId}: ${error?.message ?? error}`);
               }
             }
           }
+          // 编号要接着上一批（第二批显示「图片6/图片7」，而不是又从 1 开始）
+          if (imageOffset > 0) images = images.map((img) => ({ ...img, index: (Number(img.index) || 0) + imageOffset }));
           if (!media.length) {
             sendJson({ ok: true, messageId, media: [], images: [], note: '该消息没有可读取的图片/表情元数据' });
             return;
@@ -10677,7 +10687,14 @@ async function main() {
             sendJson({ ok: true, messageId, media, images: [], note: '图片元数据存在，但取字节失败（链接可能已过期或超出读图体积上限）' });
             return;
           }
-          sendJson({ ok: true, messageId, media, images });
+          const total = media.length;
+          const loaded = Math.min(pageSize, Math.max(0, total - imageOffset));
+          const hasMore = imageOffset + loaded < total;
+          const nextOffset = Math.min(total, imageOffset + loaded);
+          sendJson({
+            ok: true, messageId, media, images, total, offset: imageOffset, hasMore,
+            ...(hasMore ? { note: `本条消息共 ${total} 个图片/表情，本次给了第 ${imageOffset + 1}~${nextOffset} 个；要看后面的，再调用一次并传 imageOffset=${nextOffset}。` } : {}),
+          });
           return;
         }
 

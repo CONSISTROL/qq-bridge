@@ -281,6 +281,38 @@ await testWith({ config: pixivProxyCfg, globals: {
 // ── 防重复发图：同一张图（按 pixiv 作品 id / URL 身份）在窗口内只发一次 ──
 const dedupeCfg = { socialV2: { image: { allowRemoteUrl: true, pixiv: { enabled: true, proxy: 'http://127.0.0.1:7897' } } } };
 const pngFetch = { safeFetchBuffer: async (u) => ({ url: String(u), statusCode: 200, buffer: PNG12 }) };
+
+// 线上实例（2026-10-13 群 1050666134）：一条「大肥鱼的七宗罪」发了 7 张图，单次上限 5 张，
+// 后两张被跳过，而 AI 没有任何翻页手段，只能在群里说「后两张我被吞了没看着」。
+await testWith({ globals: pngFetch }, '一条消息图多时要能翻页：告诉 AI 还剩几张、怎么拿，编号接着上一批', async (h) => {
+  const server = h.startConsoleServer();
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+    h.setMode('reserved2');
+    const key = 'group:456';
+    const st = h.getSocialV2State(key);
+    const media = Array.from({ length: 7 }, (_, i) => ({ kind: 'image', file: `img${i + 1}.jpg`, url: `https://public.invalid/img${i + 1}.jpg` }));
+    h.appendSocialV2Message(key, '米哈游㍿', '[图片]', '[图片]', false, false, 620001, media, '1472298635', [], null, null);
+    const base = `/api/images/message?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=620001`;
+    const first = await apiRequest(server, base, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(first.status, 200);
+    assert.equal(first.body.images.length, 5, '默认一次 5 张');
+    assert.equal(first.body.total, 7, '要报总共有几张');
+    assert.equal(first.body.hasMore, true);
+    assert.match(String(first.body.note ?? ''), /imageOffset=5/, '要告诉 AI 怎么拿剩下的，别让它以为图被吞了');
+
+    const second = await apiRequest(server, `${base}&imageOffset=5`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(second.status, 200);
+    assert.equal(second.body.images.length, 2, '第二页拿到剩下 2 张');
+    assert.equal(second.body.hasMore, false);
+    assert.deepEqual(second.body.images.map((i) => i.index), [6, 7], '编号要接着上一批（第二批是图片6/7）');
+
+    const limited = await apiRequest(server, `${base}&imageLimit=2`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(limited.body.images.length, 2, 'imageLimit 生效');
+    assert.equal(limited.body.hasMore, true);
+    assert.match(String(limited.body.note ?? ''), /imageOffset=2/);
+  } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
+});
 await testWith({ config: dedupeCfg, globals: pngFetch }, 'imageIdentityKey：不同镜像/尺寸算同一张', async (h) => {
   assert.equal(h.imageIdentityKey('https://pixiv.re/91401787.png'), 'pixiv:91401787');
   assert.equal(h.imageIdentityKey('https://i.pximg.net/img-original/img/2021/07/21/22/53/00/91401787_p0.png'), 'pixiv:91401787');

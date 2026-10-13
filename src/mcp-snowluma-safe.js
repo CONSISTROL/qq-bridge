@@ -1090,15 +1090,21 @@ if (cfg.socialV2?.tools?.getImages !== false) {
     '获取指定 QQ 消息中的图片/表情，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[动画表情]、[表情] 或 hasMedia=true 时调用。'
       + '**卡片消息也算**：B站小程序卡、链接分享卡自带封面/预览图（媒体标签是 [卡片封面]），群友聊「封面」时看的正是它，不要让人再发一遍。'
       + '返回里会逐项标明是「图片」还是「表情包」（QQ 动画表情）——表情包本来就是反复用的，别因为同一个人发过同一张就说「你发过了/重复了」。'
-      + '支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
+      + '支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。'
+      + '**图片多的一条消息会分批给**（默认一次 5 张）：返回里会写明「共 N 个、本次给了第几到第几」，'
+      + '要看剩下的就再调用一次并传 imageOffset=<上次的下一张序号>——**不要因为只看到前几张就说「图被吞了/看不到」**。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      imageOffset: z.number().optional().describe('从第几张开始取（0 起，默认 0）；返回里 hasMore=true 时用它继续翻页'),
+      imageLimit: z.number().optional().describe('本次最多取几张（默认 5，上限 20）；一次别贪多，图片很费上下文'),
       token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
     },
-    async ({ key, messageId, token }) => {
+    async ({ key, messageId, imageOffset, imageLimit, token }) => {
       try {
         const q = new URLSearchParams({ key, messageId: String(messageId) });
+        if (imageOffset != null) q.set('imageOffset', String(imageOffset));
+        if (imageLimit != null) q.set('imageLimit', String(imageLimit));
         const data = await agentApi(`/api/images/message?${q.toString()}`, {
           headers: token ? { 'x-agent-token': token } : {},
           timeoutMs: 180000
@@ -1119,7 +1125,8 @@ if (cfg.socialV2?.tools?.getImages !== false) {
           }
         }
         if (textParts.length) {
-          content.unshift({ type: 'text', text: `消息 ${messageId} 的媒体内容（${images.length} 项）：\n${textParts.join('\n')}` });
+          const head = `消息 ${messageId} 的媒体内容（本次 ${images.length} 项${data?.total ? `／本条共 ${data.total} 项` : ''}）：`;
+          content.unshift({ type: 'text', text: `${head}\n${textParts.join('\n')}${data?.note ? `\n⚠️ ${data.note}` : ''}` });
         }
         return { content };
       } catch (error) {
