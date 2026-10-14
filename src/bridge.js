@@ -1296,7 +1296,7 @@ async function main() {
   // ── 工作车道（work lane）────────────────────────────────────────────────
   // 问题：一个 QQ 会话 = 一个 DSH session，而 DSH 同一时刻只跑一个 turn。
   // 只要这一轮里有慢工具（pixiv 取图链上限 110s、十几 MB 的图发送几十秒、B 站视频），
-  // 群里再问什么都得压到回合结束才回 —— 用户感受就是「AI 不理我了」。
+  // 群里再问什么都得压到回合结束才回，用户感受就是「AI 不理我了」。
   //
   // 解法：给每个 QQ 会话开**独立的**工作车道会话。长任务丢进去跑，聊天会话保持随时可应答；
   // 工作车道跑完把结论回投给聊天会话，由主 AI 决定怎么跟群友说。
@@ -1860,7 +1860,7 @@ async function main() {
           rejected.oneBotRejected = true;
           throw rejected;
         }
-        // WS 返回 { status, retcode, data }；HTTP 分支返回 body.data —— 统一成 data
+        // WS 返回 { status, retcode, data }；HTTP 分支返回 body.data，统一成 data
         return resp && typeof resp === 'object' && 'data' in resp ? resp.data : resp;
       } catch (error) {
         // ── 写类动作：只要「可能已经送出去了」就绝不重发 ────────────────────
@@ -2663,7 +2663,7 @@ async function main() {
         // ⑤ 第三方代理 pixiv.re（Cloudflare 现拉，20s+；现在更多是 522/超时）
         stages.push(['pixiv.re 原图', fetchStage(`https://pixiv.re/${pixivId}.png`, { timeoutMs: 45000 }), 'original']);
         // ⑥ 缩略图（几 KB / 220px）：只保证「有图」。AI 给的缩略图放这一档，不再提前
-        //    —— i.pximg 的缩略图同样要经代理取（本机直连不通）。
+        //   ，i.pximg 的缩略图同样要经代理取（本机直连不通）。
         if (givenIsFetchable && givenRendition === 'thumb') {
           stages.push(['缩略图（AI 给的）', fetchStage(raw, { headers: pixivHeaders, proxy: pixivProxy }), 'thumb']);
         }
@@ -2925,7 +2925,7 @@ async function main() {
         log(`[image] ${key} 送达未确认（${Math.round(fastMs / 1000)}s 内探针未打通），回合不等待，转后台确认（不重发以免重复）`);
         trackDeliverCheck(confirmImageDeliveredInBackground(key, data?.message_id, deliverCheckMs));
       } else if (check.conclusive) {
-        // 探针查到了这条消息、且它确实没被 QQ 接受 —— 只有这种确定情况下才重发。
+        // 探针查到了这条消息、且它确实没被 QQ 接受，只有这种确定情况下才重发。
         log(`[image] ${key} 图片发出后 ${Math.round(fastMs / 1000)}s 内没被 QQ 收下，自动重发一次`);
         let retry;
         try {
@@ -2995,7 +2995,7 @@ async function main() {
    * `message_seq` 变成真实序号、图片段从 `base64://…` 换成 QQ CDN 的 http 地址；
    * 被 QQ 静默丢掉的消息则一直停在本地待发状态（`message_seq=0`、url 仍是 `base64://`）。
    * 2026-09 实测 10 条历史图片消息：9 条送达的全部满足前者，唯一没送达的那条正是后者
-   * —— 一张露骨的 pixiv 原图（网关回 ok、群里没有、AI 却跟群友说「两张都发出去了」）。
+   *，一张露骨的 pixiv 原图（网关回 ok、群里没有、AI 却跟群友说「两张都发出去了」）。
    */
   function imageMessageDelivered(data) {
     const seq = Number(data?.message_seq);
@@ -3217,7 +3217,7 @@ async function main() {
   // ── 忙标记看门狗 ────────────────────────────────────────────────────────
   // 背景：桥接的“会话是否忙”由内存标记（v2TurnStartAt / collectors / promptQueues /
   // pendingWakeKeys）推断。若桥接在回合中途重启、或 DSH 侧回合异常结束而终帧丢失，
-  // 这些标记会永久残留 —— 表现为「会话繁忙，暂存唤醒原因」无限排队、AI 再也不回话。
+  // 这些标记会永久残留，表现为「会话繁忙，暂存唤醒原因」无限排队、AI 再也不回话。
   // 这里做个兜底：排队超过 busyRecoveryMs（默认 8 分钟）就强制清标记并补投一次唤醒。
   let busyWatchdogTimer = null;
 
@@ -3999,7 +3999,7 @@ async function main() {
 
   /**
    * 建一条工作车道。
-   * 与聊天会话同 preset —— 走和 ensureSession 一样的 fail-closed：群聊模式下拿不到
+   * 与聊天会话同 preset，走和 ensureSession 一样的 fail-closed：群聊模式下拿不到
    * qq-chat* preset 就拒绝创建，绝不让 DSH 用默认 preset 把本地工具暴露给 QQ 群。
    */
   async function createWorkLaneSession(key) {
@@ -4681,7 +4681,7 @@ async function main() {
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
     const parts = [timeLine];
     // MC 里那个角色就是 QQ 侧 agent 本人（同一个"我"）：这边聊 QQ，那边是它的角色在玩。
-    // 注入的是"你自己此刻在游戏里的情况"，用第一人称写 —— 见 mc-state.js 的 formatMcStatusBlock。
+    // 注入的是"你自己此刻在游戏里的情况"，用第一人称写，见 mc-state.js 的 formatMcStatusBlock。
     // 不注入的话，群友问「你干嘛呢 / 玩到哪一步了」它答不上来。
     // 单独一个作用域，避免和后面各段的局部常量重名。
     {
@@ -5184,7 +5184,7 @@ async function main() {
           log('桥接模式已确定为 reserved2，恢复有限睡眠定时器');
           // 重启期间被丢掉的一次唤醒：pendingWakeReasons 是「回合进行中收到消息、等回合结束再补投」
           // 的队列。它只在 turn/end 被消费，所以桥接恰好在回合中途重启，这条意图就永远不会被执行
-          // —— 表现为「AI 明明在线却对那条消息毫无反应」。这里重启后主动补投一次。
+          //，表现为「AI 明明在线却对那条消息毫无反应」。这里重启后主动补投一次。
           // 延迟 3 秒，等事件流与 pendingWakeKeys 之类的内存标记都就位再投。
           for (const key of socialV2.conversations.keys()) {
             const st = getSocialV2State(key);
@@ -5734,7 +5734,7 @@ async function main() {
           let dshSynced = false;
           try {
             // unwrap() 在 result.ok 为 false 时直接抛错，所以能执行到下一行即代表写穿已成功
-            // （不要在这里再判断 updated?.ok —— 解包后的值恒为真，那样的分支是死代码）。
+            // （不要在这里再判断 updated?.ok，解包后的值恒为真，那样的分支是死代码）。
             unwrap(await api.settings.update({ ns: 'qq-mode', patch: { mode: body.mode } }), 'settings.update');
             dshSynced = true;
           } catch (error) {
@@ -11133,7 +11133,7 @@ async function main() {
   // QQ 发送队列：**按会话**串行（顺序发送 + 间隔，避免触发频率限制）。
   //
   // 为什么不是全局一条链：base64 图片走 WS 要推十几秒到几十秒（pixiv 原图 10~26MB），
-  // 全局链会把所有会话的文字/表情/图片全都堵在它后面 —— 表现就是「A 会话在发大图，
+  // 全局链会把所有会话的文字/表情/图片全都堵在它后面，表现就是「A 会话在发大图，
   // B 会话问什么 AI 都没反应」。跨会话本来就不需要保序：顺序只对「同一个会话里
   // 先文字后表情/先问后补」有意义。所以这里按 key 各排各的。
   const sendChains = new Map(); // key -> Promise（该会话的发送队尾）
@@ -11461,7 +11461,11 @@ async function main() {
 
   // 动图不能只喂第一帧。线上事故：27 帧的「兔耳蹲着」动图，只取第 1 帧时就是一张
   // 静止蹲姿，AI 根本不知道它在动，还按静图去描述。
-  const VISION_ANIM_FRAMES = 4;     // 动图最多抽几帧（帧多，单帧尺寸必须压小）
+  const VISION_ANIM_FRAMES = 6;     // 动图最多抽几帧（帧多，单帧尺寸必须压小）
+  // 为什么从 4 提到 6：线上（2026-10-14 群 1050666134）一张 143 帧的表情包只抽了 4 帧，
+  // 刚好把收尾的「抬手遮脸」当成了全部动作，AI 断言「拿我形象做哭图」，群友当场纠正「没有哭」。
+  // 抽得越稀，越容易把过渡动作当成结论。
+  const VISION_ANIM_LONG_FRAMES = 40; // 超过这么多帧的动图，按上限多抽几帧
   const VISION_ANIM_LONGSIDE = 512; // 动图每帧长边
 
   /** 读图片元信息（格式/尺寸/是否动图/是否有透明通道）。读不出来返回 null。 */
@@ -11516,17 +11520,43 @@ async function main() {
          [800, 'webp', 64], [800, 'png', 0], [1024, 'jpeg', 74]]
       : [[4096, 'jpeg', 86], [3200, 'jpeg', 84], [2560, 'jpeg', 82], [2048, 'jpeg', 82],
          [1600, 'jpeg', 82], [1600, 'jpeg', 68], [1280, 'jpeg', 72], [1024, 'jpeg', 66], [800, 'jpeg', 60]];
-    for (const [longSide, format, quality] of ladder) {
+    // 明文逐档试有两个代价：① 编码次数多（每档都是一次全尺寸重编码，24MB 的噪点图要跑 5 次）；
+    // ② 单元测试里这类大图会把整套审计拖过 60s 超时（真实踩过：spawnSync ETIMEDOUT）。
+    // 所以先用「源图字节/像素」估一个上界，跳过注定塞不下的大档，再在剩下的档里二分——
+    // 字节数随档位单调下降，二分 2~3 次就能定位「塞得下的最大档」，结果与逐档扫描一致或更优。
+    const dims = getImageDimensions(buf);
+    const srcPixels = dims ? dims.width * dims.height : 0;
+    const aspect = dims && dims.width && dims.height ? Math.min(dims.width, dims.height) / Math.max(dims.width, dims.height) : 1;
+    const rungPixels = (longSide) => longSide * longSide * aspect;
+    let start = 0;
+    if (srcPixels > 0) {
+      const bpp = buf.length / srcPixels;
+      // 1.6 是「降质量还能再小一截」的余量：估得太紧会把本来塞得下的档跳过，画质白丢。
+      const estPixels = (maxBytes / Math.max(0.05, bpp)) * 1.6;
+      while (start < ladder.length - 1 && rungPixels(ladder[start][0]) > estPixels) start += 1;
+    }
+    let lo = start;
+    let hi = ladder.length - 1;
+    let best = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [longSide, format, quality] = ladder[mid];
+      let out;
       try {
-        const out = await encodeVisionImage(buf, { longSide, format, quality });
-        if (out.length <= maxBytes) return { buffer: out, mimeType: `image/${format}`, longSide };
+        out = await encodeVisionImage(buf, { longSide, format, quality });
       } catch (error) {
         // 解不开（图片炸弹/损坏）就直接放弃，不要把异常抛给消息链路
         log(`图片压缩失败（长边 ${longSide}，${format} ${quality}）: ${error?.message ?? error}`);
         return null;
       }
+      if (out.length <= maxBytes) {
+        best = { buffer: out, mimeType: `image/${format}`, longSide };
+        hi = mid - 1; // 还有更大的档能试
+      } else {
+        lo = mid + 1; // 太大，往小档找
+      }
     }
-    return null;
+    return best;
   }
 
   /** 归一化一张待投喂的图片：撞硬上限则必压（压不动就 null），只在舒适区内才原样返回。 */
@@ -11569,14 +11599,34 @@ async function main() {
    * 只喂第一帧的话，AI 会把某一瞬间当静图描述（线上：27 帧的动图被当成一张蹲姿照片）。
    * @returns {Array<{buffer:Buffer, mimeType:string, frameText:string}>}
    */
+  /**
+   * 动图抽帧计划：等间隔取样、包含首尾两帧。
+   * 长动图（>40 帧）抽满 VISION_ANIM_FRAMES，短动图 4 帧够看——抽得越稀，越容易把过渡动作
+   * 当成整段动作的结论（线上：143 帧的表情包抽 4 帧，收尾的「抬手遮脸」被读成「哭图」）。
+   */
+  function planAnimFrames(totalFrames) {
+    const total = Math.max(1, Math.round(Number(totalFrames) || 1));
+    if (total <= 1) return { shown: 1, pages: [0] };
+    const want = total > VISION_ANIM_LONG_FRAMES ? VISION_ANIM_FRAMES : Math.min(4, VISION_ANIM_FRAMES);
+    const shown = Math.min(want, total);
+    const pages = [];
+    for (let i = 0; i < shown; i += 1) pages.push(shown === 1 ? 0 : Math.round((i * (total - 1)) / (shown - 1)));
+    return { shown, pages };
+  }
+
+  /** 抽帧给模型看时的说明：点明这是稀疏抽样，别把某一帧的表情当结论。 */
+  function animFrameText(index, shown, total) {
+    return `动图第 ${index + 1}/${shown} 帧（原图共 ${total} 帧，稀疏抽样：单帧里的抬手/眯眼/背身可能只是动作过渡，别据此断言情绪）`;
+  }
+
   async function normalizeImageForVision(buf, url = '') {
     if (!buf?.length) return [];
     const meta = await probeImageMeta(buf);
     if (meta && meta.frames > 1) {
-      const shown = Math.min(VISION_ANIM_FRAMES, meta.frames);
+      const { shown, pages } = planAnimFrames(meta.frames);
       const parts = [];
       for (let i = 0; i < shown; i += 1) {
-        const page = shown === 1 ? 0 : Math.round((i * (meta.frames - 1)) / (shown - 1));
+        const page = pages[i] ?? 0;
         try {
           const frame = await sharp(buf, { pages: 1, page, failOn: 'none', limitInputPixels: MAX_MEDIA_PIXELS })
             .resize({ width: VISION_ANIM_LONGSIDE, height: VISION_ANIM_LONGSIDE, fit: 'inside', withoutEnlargement: true })
@@ -11585,7 +11635,7 @@ async function main() {
           parts.push({
             buffer: frame,
             mimeType: 'image/webp',
-            frameText: `动图第 ${i + 1}/${shown} 帧（原图共 ${meta.frames} 帧，按顺序播放）`
+            frameText: animFrameText(i, shown, meta.frames)
           });
         } catch (error) {
           log(`动图抽帧失败（第 ${page} 帧）: ${error?.message ?? error}`);
@@ -12277,7 +12327,7 @@ async function main() {
         if (!hit) return;
         const age = relativeTimeLabel(hit.opener.at);
         log(`[proactive] 自我重复闸门拦下一条（${key}，相似度 ${hit.sim.toFixed(2)}，对照 ${age}）：${outgoing[0].slice(0, 40)}`);
-        const err = new Error(`这句和你 ${age}主动开的头几乎一样（相似度 ${hit.sim.toFixed(2)}）：「${String(hit.opener.text).replace(/\s+/g, ' ').slice(0, 40)}」——换个题、或至少换一个完全不同的角度再发。`);
+        const err = new Error(`这句和你 ${age}主动开的头几乎一样（相似度 ${hit.sim.toFixed(2)}）：「${String(hit.opener.text).replace(/\s+/g, ' ').slice(0, 40)}」，换个题，或至少换一个完全不同的角度再发。`);
         err.selfRepeat = true;
         err.detail = { sim: hit.sim, at: hit.opener.at, text: String(hit.opener.text).slice(0, 120) };
         throw err;
@@ -12441,8 +12491,8 @@ async function main() {
       }
       // 归组：所有 QQ 会话挂到同一个 workspace（幂等创建），GUI 里不再散落「未分组」
       // 创建顺序有安全含义：
-      //   1) workspace + agentPreset —— 正常路径；
-      //   2) workspace 无 preset     —— 仅 closed-agent 允许的降级（那里本就是完整工具面）；
+      //   1) workspace + agentPreset，正常路径；
+      //   2) workspace 无 preset    ，仅 closed-agent 允许的降级（那里本就是完整工具面）；
       //      群聊模式绝不走这一步：DSH 会给「无 preset 会话」套上默认 preset（standard）。
       for (const withPreset of strictPreset ? [true] : [true, false]) {
         try {
@@ -14727,11 +14777,11 @@ async function main() {
           + '\n';
       }
       if (repeatHead) {
-        out += `**而且你的起头方式本身就在重复**：最近 ${recentOpeners.length} 次里不止一次是用「${repeatHead}」开头的——`
+        out += `**而且你的起头方式本身就在重复**：最近 ${recentOpeners.length} 次里不止一次是用「${repeatHead}」开头的，`
           + '这次**必须换一种起法**（直接抛结论、问一句、吐槽、报个刚看到的小事都行），再用这个套路群里一眼就看出你在复读。\n';
       }
       if (repeatGenre) {
-        out += `**题材也在重复**：最近几次里不止一次都是「${repeatGenre.name}」这一类（换个角度也算同一处取材）——`
+        out += `**题材也在重复**：最近几次里不止一次都是「${repeatGenre.name}」这一类（换个角度也算同一处取材），`
           + '这次**别再挑这一类**，从上面给你的方向里挑一个别的。\n';
       }
       out += '\n';
@@ -14773,6 +14823,10 @@ async function main() {
       + '**不要**说「你发过了 / 第二遍了 / 图库存重了」这类话，也别提自己的图库/素材来源。'
       + '**动图会一次给你好几帧**（带「第 k/n 帧」标注）：那是**同一个表情**的不同瞬间，不是对方发了好几张图，'
       + '要按「这个动图在做什么动作、什么情绪」整体理解，别只看第一帧就下结论、也别逐帧当独立图片描述。'
+      + '**但别把某一帧的表情当成整张表情包的结论**：抽帧是稀疏采样，抬手、眯眼、背身很可能只是动作过渡；'
+      + '**不要据此断言「在哭 / 在生气 / 在鄙视你」**，更别拿它当调侃的由头（判错情绪会当场被群友纠正）'
+      + '（线上真事：143 帧的表情包只抽了 4 帧，把收尾的「抬手遮脸」读成「哭图」，群友立刻回「图里的大肥鱼没有哭」）。'
+      + '拿不准就只描述动作本身（例如「最后那帧抬手挡着脸」），或者按整体氛围回应。'
       + '想接就接梗、描述画面或直接回应；不想接就正常划走。\n\n';
     // 被挑衅可以还嘴。模型默认会往「礼貌、讲道理、我不跟你计较」上走，那不是这个角色的活法；
     // 这里明确给许可 + 划边界（对等、只打挑衅者、不碰家人/地域/歧视/性侮辱、对方收手就停）。
@@ -14949,18 +15003,18 @@ async function main() {
   function describeWakeReasonV2(reason) {
     const r = String(reason ?? '').trim();
     if (!r) return '未知';
-    if (r === 'atMention') return '有人 @ 你，或引用了你的消息 —— **这条是对你说的**';
-    if (r === 'nameMention') return '有人叫了你的名字 —— 大概率在找你';
+    if (r === 'atMention') return '有人 @ 你，或引用了你的消息，**这条是对你说的**';
+    if (r === 'nameMention') return '有人叫了你的名字，大概率在找你';
     if (r === 'question') return '有人在问你（指向你的提问）';
-    if (r === 'private') return '私聊消息 —— 对你说';
+    if (r === 'private') return '私聊消息，对你说';
     if (r === 'anyMessage') return '这个会话开了「任何消息都醒」（不一定在跟你说话）';
-    if (r.startsWith('keyword:')) return `消息里出现了你设的关键词「${r.slice('keyword:'.length)}」—— **不等于在跟你说话**，先看再决定`;
-    if (r.startsWith('speaker:')) return `你关注的群友「${r.slice('speaker:'.length)}」发言了 —— **不是在跟你说话**，只是他说话了，先判断要不要接`;
-    if (r === 'probability') return '按概率随机醒来看一眼 —— 没人找你';
-    if (r === 'proactiveCheck') return '主动机会检查 —— 没人找你，你可以自己开个话题，也可以继续睡';
-    if (r === 'replyCheck') return '你刚回过话，回来看有没有人接 —— 没人接就算了';
+    if (r.startsWith('keyword:')) return `消息里出现了你设的关键词「${r.slice('keyword:'.length)}」，**不等于在跟你说话**，先看再决定`;
+    if (r.startsWith('speaker:')) return `你关注的群友「${r.slice('speaker:'.length)}」发言了，**不是在跟你说话**，只是他说话了，先判断要不要接`;
+    if (r === 'probability') return '按概率随机醒来看一眼，没人找你';
+    if (r === 'proactiveCheck') return '主动机会检查，没人找你，你可以自己开个话题，也可以继续睡';
+    if (r === 'replyCheck') return '你刚回过话，回来看有没有人接，没人接就算了';
     if (r === 'busyRecovery') return '上一轮卡住了，补醒一次看看有没有漏掉的消息';
-    if (r === 'timeout') return '你自己设的潜水时间到了 —— 没人找你';
+    if (r === 'timeout') return '你自己设的潜水时间到了，没人找你';
     if (r === 'restartRecovery') return '桥接重启，补投积压的唤醒';
     if (r === 'admin') return '管理员手动叫醒你';
     return r;
@@ -15000,14 +15054,14 @@ async function main() {
       const staleTurn = staleTurnMarkerV2(key, busyMarkers);
       // 兜底 2：DSH 侧明确报告该会话空闲时，内存里的 collector / promptQueue.running /
       // pendingWakeKey 只可能是残留（真在跑回合时 DSH 必然 running=true）。staleTurnMarkerV2
-      // 依赖 turn 起点，而桥接中途重启正好会丢掉它 —— 那种情况下这里必须救回来，
+      // 依赖 turn 起点，而桥接中途重启正好会丢掉它，那种情况下这里必须救回来，
       // 否则表现就是「AI 明明在线，却把每条消息都判成会话繁忙、永不回复」。
       //
       // 探针必须包在 try 里：它只是个「要不要提前清忙标记」的优化判断，探针本身出任何错
       // （RPC 失败、字段变了、甚至写成 ReferenceError）都**绝不能把这次唤醒弄丢** ——
       // 探针炸了就当「不确定，不清理」，老老实实走下面的暂存队列，等回合结束补投。
       // 这里踩过真坑：探针里一个变量名拼错（sessionIdleCache vs sessionIdCache）让
-      // `await` 直接抛 ReferenceError，把整个函数打断在 push 之前 —— 于是「回合进行中
+      // `await` 直接抛 ReferenceError，把整个函数打断在 push 之前，于是「回合进行中
       // 收到新消息」这条最常见的路径既不暂存也不补投，唤醒被静默丢掉，表现就是 AI 不回话。
       let staleByIdle = false;
       if (!staleTurn) {
@@ -15155,7 +15209,7 @@ async function main() {
   /**
    * 列出当前让会话被判为「忙」的具体标记。
    * 原实现只能回答「忙/不忙」，出问题时日志里只有一句「会话繁忙」，
-   * 无法判断到底是 DSH 真有回合在跑、还是某个内存标记残留 —— 排查要翻代码猜。
+   * 无法判断到底是 DSH 真有回合在跑、还是某个内存标记残留，排查要翻代码猜。
    * 现在把标记名（含 turn 已经跑了多久）带出来，日志直接可读。
    */
   function busyMarkersV2(key, st) {

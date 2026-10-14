@@ -23,15 +23,24 @@ const tests = [
   'test-stop-guard.mjs',
 ];
 let failed = 0;
+// 单脚本超时：原本 60s，但 test-audit-bridge 现在有 150+ 个用例，其中一批是**真实等待**的时序用例
+// （送达探针 deliverCheckMs、写类超时 wsTimeoutMs、重发退避……合计 30s 以上），60s 会偶发
+// `spawnSync /usr/bin/node ETIMEDOUT`——那是超时不是断言失败，排查时会被误导（真实踩过两次）。
+// 抬到 120s 留出余量；真卡住的用例仍然会在两分钟内暴露。
+const SCRIPT_TIMEOUT_MS = 120000;
 for (const test of tests) {
   console.log(`\nRunning ${test}`);
+  const startedAt = Date.now();
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', test)], {
-    cwd: root, stdio: 'inherit', timeout: 60000,
+    cwd: root, stdio: 'inherit', timeout: SCRIPT_TIMEOUT_MS,
     env: { ...process.env, QQ_BRIDGE_TEST_LIVE: '0' },
   });
+  const seconds = Math.round((Date.now() - startedAt) / 1000);
   if (result.status !== 0 || result.error) {
     failed++;
-    console.error(`FAILED ${test}: ${result.error?.message || `exit ${result.status}`}`);
+    console.error(`FAILED ${test}: ${result.error?.message || `exit ${result.status}`}（用时 ${seconds}s）`);
+  } else {
+    console.log(`(${test} 用时 ${seconds}s)`);
   }
 }
 console.log(`\nAudit suite: ${tests.length - failed}/${tests.length} scripts passed.`);

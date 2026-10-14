@@ -1223,6 +1223,39 @@ await test('读消息时要能看出「谁在跟谁说话」：aboutYou / replie
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
 });
 
+// 线上事故（2026-10-14 群 1050666134）：面包屑发了一张 **143 帧**的动画表情，桥接只等间隔抽了 4 帧
+// （0/47/95/142），最后那帧是收尾的「抬手遮脸」，AI 就断言「拿我形象做哭图再发回来，你是懂二创的」，
+// 群友当场纠正「图里的大肥鱼没有哭，我冤枉啊」。帧是稀疏采样，过渡动作不能被当成结论。
+await test('动图抽帧：长动图要多抽几帧，且帧说明里必须点明「稀疏抽样」', async (h) => {
+  const long = h.planAnimFrames(143);
+  assert.equal(long.shown, 6, '长动图（>40 帧）要抽满 6 帧，而不是 4 帧');
+  assert.equal(long.pages[0], 0, '要含第一帧');
+  assert.equal(long.pages[long.pages.length - 1], 142, '要含最后一帧');
+  assert.deepEqual([...long.pages], [...long.pages].sort((a, b) => a - b), '帧号要有序');
+
+  const short = h.planAnimFrames(8);
+  assert.equal(short.shown, 4, '短动图 4 帧够看，不用多花上下文');
+  assert.deepEqual([...h.planAnimFrames(1).pages], [0], '单帧图不炸');
+
+  const label = h.animFrameText(3, 6, 143);
+  assert.match(label, /第 4\/6 帧/, '要标清第几帧／共抽几帧');
+  assert.match(label, /143 帧/, '要给出原图总帧数');
+  assert.match(label, /稀疏抽样/, '要说明这是稀疏抽样');
+  assert.match(label, /别据此断言情绪/, '要明确别拿单帧表情下情绪结论');
+});
+
+await test('各种唤醒原因的提示文本都不能出现字面破折号', async (h) => {
+  // 规则文本自己用破折号＝在示范这种句式（项目里已有同类测试，这里覆盖到「原因」那一段，
+  // 因为 describeWakeReasonV2 会按原因返回不同文案，之前只在 reason='message' 下被测过）。
+  h.setMode('reserved2');
+  const key = 'group:456';
+  h.getSocialV2State(key);
+  for (const reason of ['message', 'atMention', 'nameMention', 'speaker:kafka', 'keyword:大肥鱼', 'proactiveCheck', 'probability', 'replyCheck', 'busyRecovery', 'timeout', 'admin']) {
+    const prompt = h.buildWakePromptV2(key, reason);
+    assert.equal((prompt.match(/——/g) || []).length, 0, '原因 ' + reason + ' 的提示里有字面破折号');
+  }
+});
+
 await test('唤醒提示要讲清「是不是在跟你说话」', async (h) => {
   h.setMode('reserved2');
   const key = 'group:456';
