@@ -1658,6 +1658,38 @@ await test('身份术语：一代批次提示只在这批真有管理员消息�
   finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
 }
 
+// 线上事故（2026-10-14 群 1050666134）：**同一张痛车图**，私聊抓到的版本在视觉舒适区内 → 原样投喂，
+// 车身上的字看得清（AI 认出「赛马娘 玉藻十字」）；群里抓到 7.5MB 原图 → 走压缩阶梯，而阶梯顶端只有
+// 1600px，第一档压出 482KB 就直接采用（4MB 预算只用了 1/8），细节全丢 → AI 只能说「糊成一团认不出来」。
+// 阶梯必须**从大往小试**，让预算决定档位。
+await test('大图压缩要让预算决定档位：4MB 预算下不能一律压到 1600px', async (h) => {
+  const W = 4032, H = 3024;
+  const raw = Buffer.alloc(W * H * 3);
+  let seed = 7;
+  for (let y = 0; y < H; y += 4) {
+    for (let x = 0; x < W; x += 4) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const v = seed & 0xff;
+      for (let dy = 0; dy < 4 && y + dy < H; dy++) {
+        for (let dx = 0; dx < 4 && x + dx < W; dx++) {
+          const i = ((y + dy) * W + (x + dx)) * 3;
+          raw[i] = v; raw[i + 1] = (v * 3) & 0xff; raw[i + 2] = (v * 7) & 0xff;
+        }
+      }
+    }
+  }
+  const big = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 96 }).toBuffer();
+  assert.ok(big.length > h.MAX_MEDIA_BYTES, `测试图要超过硬上限（实际 ${Math.round(big.length / 1024)}KB）`);
+  const fitted = await h.fitMediaBuffer(big, 'https://x/car.jpg');
+  assert.ok(fitted, '要能压出来');
+  assert.ok(fitted.buffer.length <= h.MAX_MEDIA_BYTES, `压完必须在预算内（${Math.round(fitted.buffer.length / 1024)}KB）`);
+  assert.ok(fitted.longSide >= 2048, `4MB 预算下要尽量用高分辨率（实际长边 ${fitted.longSide}，修前固定 1600）`);
+
+  // 预算小的时候该更小：证明档位是被预算决定的，而不是固定值
+  const tiny = await h.shrinkMediaBuffer(big, 300 * 1024);
+  assert.ok(tiny && tiny.longSide < fitted.longSide, `预算 300KB 时应该更小（实际 ${tiny?.longSide}）`);
+});
+
 // 线上事故：QQ 手机直出照片 4.35MB，超过 4MB 的投喂上限，桥接直接把它丢掉，
 // AI 只回「图我这边没取到」，用户连发三张都看不到。上限本身不能无限抬（模型/内存吃不下），
 // 正确做法是**抓下来后本地压缩再投喂**。这条钉住：超限图必须能压到上限内，小图不做无谓重编码。

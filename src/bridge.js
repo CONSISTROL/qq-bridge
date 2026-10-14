@@ -11506,14 +11506,20 @@ async function main() {
     if (!buf?.length) return null;
     const alpha = !!(await probeImageMeta(buf))?.hasAlpha;
     // 有透明的走 webp/png（浏览器与视觉模型都支持），没有的走 jpeg。逐档降尺寸/质量。
+    // **从大往小试**：能塞进预算就用高分辨率。
+    // 线上事故（2026-10-14 群 1050666134）：同一张痛车图，私聊抓到的版本在舒适区内→原样投喂，
+    // 车身上的字看得清；群里抓到 7.5MB 原图，却被阶梯第一档 1600px 压成 482KB——明明有 4MB
+    // 预算只用了 1/8，细节全丢，AI 只能说「糊成一团认不出来」。所以顶端要够高，让预算决定档位。
     const ladder = alpha
-      ? [[1600, 'webp', 86], [1600, 'webp', 72], [1280, 'webp', 74], [1024, 'webp', 70],
+      ? [[4096, 'webp', 86], [3200, 'webp', 86], [2560, 'webp', 86], [2048, 'webp', 86],
+         [1600, 'webp', 86], [1600, 'webp', 72], [1280, 'webp', 74], [1024, 'webp', 70],
          [800, 'webp', 64], [800, 'png', 0], [1024, 'jpeg', 74]]
-      : [[1600, 'jpeg', 82], [1600, 'jpeg', 68], [1280, 'jpeg', 72], [1024, 'jpeg', 66], [800, 'jpeg', 60]];
+      : [[4096, 'jpeg', 86], [3200, 'jpeg', 84], [2560, 'jpeg', 82], [2048, 'jpeg', 82],
+         [1600, 'jpeg', 82], [1600, 'jpeg', 68], [1280, 'jpeg', 72], [1024, 'jpeg', 66], [800, 'jpeg', 60]];
     for (const [longSide, format, quality] of ladder) {
       try {
         const out = await encodeVisionImage(buf, { longSide, format, quality });
-        if (out.length <= maxBytes) return { buffer: out, mimeType: `image/${format}` };
+        if (out.length <= maxBytes) return { buffer: out, mimeType: `image/${format}`, longSide };
       } catch (error) {
         // 解不开（图片炸弹/损坏）就直接放弃，不要把异常抛给消息链路
         log(`图片压缩失败（长边 ${longSide}，${format} ${quality}）: ${error?.message ?? error}`);
@@ -11533,7 +11539,7 @@ async function main() {
     if (overHardLimit) {
       const shrunk = await shrinkMediaBuffer(buf);
       if (shrunk) {
-        log(`图片已本地压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(shrunk.buffer.length / 1024)}KB${tooManyPixels ? `，${dims.width}x${dims.height}` : ''}）`);
+        log(`图片已本地压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(shrunk.buffer.length / 1024)}KB，长边 ${shrunk.longSide ?? '?'}${dims ? `，源 ${dims.width}x${dims.height}` : ''}）`);
         return shrunk;
       }
       log(`图片过大且压缩后仍不可用，已跳过（${Math.round(buf.length / 1024)}KB${tooManyPixels ? `，${dims.width}x${dims.height}` : ''}）`);
@@ -11544,9 +11550,14 @@ async function main() {
     if (buf.length > VISION_SOFT_BYTES || pixels > VISION_SOFT_PIXELS) {
       const softer = await shrinkMediaBuffer(buf, VISION_SOFT_BYTES);
       if (softer && softer.buffer.length < buf.length) {
-        log(`图片超视觉舒适区，已压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(softer.buffer.length / 1024)}KB${pixels ? `，${dims.width}x${dims.height}` : ''}）`);
+        log(`图片超视觉舒适区，已压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(softer.buffer.length / 1024)}KB，长边 ${softer.longSide ?? '?'}${pixels ? `，源 ${dims.width}x${dims.height}` : ''}）`);
         return softer;
       }
+    }
+    // 原样投喂也记一笔：线上排查「同一张图私聊看得清、群里糊」时，就是靠对比两条路的
+    // 「拿到多少 KB / 多少像素」定位到「群里抓到 7.5MB 原图被压到 1600px」的。
+    if (buf.length > 256 * 1024) {
+      log(`图片原样投喂（${Math.round(buf.length / 1024)}KB${dims ? `，${dims.width}x${dims.height}` : ''}）`);
     }
     return { buffer: buf, mimeType: mimeFromBuffer(buf) || mimeFromUrl(url) };
   }
