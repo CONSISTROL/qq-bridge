@@ -2834,16 +2834,18 @@ async function main() {
     // 防重发：同一张图（按 pixiv 作品 id / URL 身份）在窗口内只发一次，避免 AI 反复刷同一张。
     const repeatWindow = repeatGuardWindowMs();
     const identity = imageIdentityKey(source, path.basename(String(source ?? '').trim()));
-    if (repeatWindow > 0 && identity && recentSentImageKeys(key, repeatWindow).has(identity)) {
-      const mins = Math.round(repeatWindow / 60000);
-      throw new Error(`这张图本会话最近发过了（${identity}，${mins} 分钟内不重复发）。换一张：可以再调 qq_search_images 换个关键词，或挑结果里的另一项；群友明确要求重发同一张时先跟他说明再让他确认`);
-    }
-    // 上一次这张图「结果不确定」（WS 超时、网关没回执）：既不能算发过、也不能重发。
-    // 这是重复发图事故的另一半——超时被当成失败 → AI 换个档位再试一次 → 群里两张。
+    // **顺序有讲究**：先查「结果不确定」，再查「最近发过」。
+    // 不确定是更具体的状态（这张图既没回执、也没落进 recentMessages 的判定里），而且它的提示更有用
+    // （让 AI 先去核实，而不是"换一张"）。反过来的话，同一张图会因为落库时机不同而报错文案漂移
+    // ——测试里就踩到过这种竞态（期望"不确定"，拿到"最近发过了"）。
     const uncertainAt = imageSendUncertainAt(key, identity);
     if (uncertainAt) {
       const mins = Math.max(1, Math.round((Date.now() - uncertainAt) / 60000));
       throw new Error(`这张图在 ${mins} 分钟前的发送结果**不确定**（WS 超时，网关没回执，消息可能已经发出去了），所以不能自动重发，重发就会变成两张。请先用 qq_get_recent_messages / qq_get_my_recent_messages 确认到底发出去没有：已经发了就照常接话，确实没发再换一张，别拿同一张硬试。`);
+    }
+    if (repeatWindow > 0 && identity && recentSentImageKeys(key, repeatWindow).has(identity)) {
+      const mins = Math.round(repeatWindow / 60000);
+      throw new Error(`这张图本会话最近发过了（${identity}，${mins} 分钟内不重复发）。换一张：可以再调 qq_search_images 换个关键词，或挑结果里的另一项；群友明确要求重发同一张时先跟他说明再让他确认`);
     }
     const resolved = await resolveImageBuffer(source, options);
     assertSendAllowed();
@@ -14811,6 +14813,9 @@ async function main() {
       // 「别老用」被模型读成了「偶尔用没关系」——线上实测这条规则挂了一轮，「行，」照样一天出现两次。
       // 所以改成绝对禁止，并把总结标签单列（「总结：」是线上点名的那一条）。
       + '② **下列写法一个都不要用**（不是「少用」）：句首的「行，」「好的，」「所以」「其实，」「确实，」「说白了」「本质上」；'
+      // 「X 了，」确认收到式开场：owner 点名「认了/搜了/懂了」这类词 AI 味重。模型对具体字眼敏感，
+      // 所以把它和「行，」并列点名；出站还会机械削一遍（src/speech-style.js）兜底。
+      + '还有句首的「X 了，」这种**确认收到式开场**（「懂了，」「知道了，」「明白了，」「了解了，」「记下了，」「收到了，」「看到了，」「搜了，」「查了，」「认了，」），群里没人先回一句「收到」再说话，那是助理语气，直接说内容就行；'
       + '以及任何**总结标签**（「总结：」「结论：」「综上」「总而言之」「总的来说」「一句话」）。想收尾就把结论直接说出来，别贴标签（线上实例：「总结：加钱才有那一档体验」→ 直接说「加钱才有那一档体验」）；'
       + '③ 别写「不是……而是……」「一方面……另一方面」这种对偶/排比腔；'
       + '④ 闲聊一条 1~10 字，最多十来字，**别一段话**，群友平均 10 个字，你动不动四五十字，一眼就是 AI；'
