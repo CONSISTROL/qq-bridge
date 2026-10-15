@@ -730,7 +730,8 @@ function loadConfig() {
         maxBytes: 50 * 1024 * 1024, // 文件下载上限（owner 要求 50M；QQ 群文件常见几 MB 到几十 MB）
         maxPages: 4,                // 扫描件最多渲染几页（都是图片，很费上下文）
         renderDpi: 110,             // 扫描件渲染分辨率（高了更清楚也更占体积）
-        maxTextChars: 20000,        // PDF/文本最多给多少字（超出截断并说明）
+        maxTextChars: 0,            // 0 = 不限（owner 要求不要字数限制）；>0 才截断
+  toolChunkChars: 40000,      // 工具每次取多少字（略低于 DSH 修剪阈值 50000，避免中间被剪掉）
         timeoutMs: 60000            // pdftotext / 下载的单步上限
       },
       video: {
@@ -10709,6 +10710,10 @@ const agentTokenOk = (key, token) => {
           if (agentToken && !v2ToolEnabled('getFile')) { sendJson({ ok: false, error: '工具未启用：qq_get_message_file' }, 403); return; }
           const fcfg = cfg.socialV2?.file ?? {};
           if (fcfg.enabled === false) { sendJson({ ok: false, error: '文件读取未启用（socialV2.file.enabled）' }, 403); return; }
+          // 分页参数：maxChars=0（默认）＝不限，返回全文；工具侧会按 harness 的修剪阈值分块取。
+          const offset = Math.max(0, Math.round(Number(url.searchParams.get('offset')) || 0));
+          const wantMax = Number(url.searchParams.get('maxChars'));
+          const pageChars = Number.isFinite(wantMax) && wantMax > 0 ? Math.min(5_000_000, Math.round(wantMax)) : 0;
           let files = (findMessageMedia(key, messageId) ?? []).filter((m) => m?.kind === 'file');
           if (!files.length) {
             const fallback = await fetchMediaFromOneBot(messageId);
@@ -10735,10 +10740,16 @@ const agentTokenOk = (key, token) => {
               options: {
                 maxPages: fcfg.maxPages,
                 renderDpi: fcfg.renderDpi,
+                // 抽取层默认不限（0）；分页只在下面按 offset/maxChars 切
                 maxTextChars: fcfg.maxTextChars,
                 timeoutMs: Math.max(5000, Number(fcfg.timeoutMs) || 60000)
               }
             });
+            const fullText = String(result.text ?? '');
+            const totalChars = fullText.length;
+            const pageText = pageChars > 0 ? fullText.slice(offset, offset + pageChars) : fullText.slice(offset);
+            const consumed = offset + pageText.length;
+            const hasMore = consumed < totalChars;
             // 扫描件渲染出来的页面图也要过「图片投喂安全区」（DSH 读大图会爆栈）
             const images = [];
             for (const [i, img] of (result.images ?? []).entries()) {
@@ -10752,7 +10763,7 @@ const agentTokenOk = (key, token) => {
                 text: `PDF 第 ${img.page} 页（渲染图）`
               });
             }
-            log(`[file] ${key} ${messageId} 读取「${meta.name}」：${result.kind}${result.text ? ` ${result.text.length} 字` : ''}${images.length ? ` + ${images.length} 张页面图` : ''}`);
+            log(`[file] ${key} ${messageId} 读取「${meta.name}」：${result.kind}${totalChars ? ` 共 ${totalChars} 字，本次给 ${pageText.length}` : ''}${images.length ? ` + ${images.length} 张页面图` : ''}`);
             sendJson({
               ok: true,
               messageId,
@@ -10761,7 +10772,11 @@ const agentTokenOk = (key, token) => {
               kind: result.kind,
               pages: result.pages ?? 0,
               truncated: !!result.truncated,
-              text: result.text ?? '',
+              text: pageText,
+              totalChars,
+              offset,
+              hasMore,
+              ...(hasMore ? { note: `正文共 ${totalChars} 字，本次给了第 ${offset + 1} 到 ${consumed} 字；要继续读，再调用一次并传 offset=${consumed}。` } : {}),
               notes: result.notes ?? [],
               images
             });

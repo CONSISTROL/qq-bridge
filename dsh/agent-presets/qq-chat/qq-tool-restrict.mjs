@@ -42,6 +42,11 @@ const SAFE_PREFIXES = [
 const SAFE_EXACT = new Set([
   'ask_user_question',
   'todo_write',
+  // 子 agent：长文档分块读、多源并行调研（owner 要求放开）。
+  // 注意子 agent 侧另有 toolFilter 禁掉所有 qq_send_*，它只能把结论回报给父 agent。
+  'subagent',
+  'subagent_fork',
+  'interrupt_agent',
 ])
 
 export function apply(ctx) {

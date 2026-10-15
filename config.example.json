@@ -419,8 +419,9 @@
       "maxBytes": 52428800,
       "maxPages": 4,
       "renderDpi": 110,
-      "maxTextChars": 20000,
-      "timeoutMs": 60000
+      "maxTextChars": 0,
+      "timeoutMs": 60000,
+      "toolChunkChars": 40000
     }
   },
   "moderation": {

@@ -1143,15 +1143,23 @@ if (cfg.socialV2?.tools?.getFile !== false) {
     '读聊天消息里的**文件**（PDF / 文本）。当消息里出现 [文件 xxx.pdf] 或提示里有【文件】时调用。'
       + 'PDF：返回**正文文字**（最多两万字，超了会说明截断）；**扫描件**（没有文字层）会渲染前几页图像给你看；'
       + '纯文本文件直接返回内容；其它类型（压缩包/安装包等）只能给你文件名和大小。'
-      + '大文件要下载+解析，可能要等十几秒。',
+      + '大文件要下载+解析，可能要等十几秒。'
+      + '**长文档分页**：一次给大约四万字，返回里写明「共 N 字、本次给了第几到第几」；没读完就用 offset=上次结束位置继续调用，直到没有「还有内容」为止——这样整份文件都能读到（一次要太多反而会被上层修剪掉中段）。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       messageId: z.union([z.number(), z.string()]).describe('带文件的那条消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      offset: z.number().optional().describe('从第几个字开始读（0 起，默认 0）；返回里说「还有内容」时用它的结束位置继续'),
+      maxChars: z.number().optional().describe('本次最多取多少字（默认取配置，约 4 万）；一般不用手动传'),
       token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
     },
-    async ({ key, messageId, token }) => {
+    async ({ key, messageId, offset, maxChars, token }) => {
       try {
+        // 长文档分页：一次取 toolChunkChars（默认 4 万字，略低于 DSH 的 5 万字修剪阈值，
+        // 免得中间那段被上层剪掉）。返回里带 hasMore/offset，模型可以接着读完整份。
+        const chunk = maxChars != null ? Number(maxChars) : (Number(cfg.socialV2?.file?.toolChunkChars) || 40000);
         const q = new URLSearchParams({ key, messageId: String(messageId) });
+        if (offset != null) q.set('offset', String(offset));
+        if (Number.isFinite(chunk) && chunk > 0) q.set('maxChars', String(chunk));
         const data = await agentApi(`/api/files/message?${q.toString()}`, {
           headers: token ? { 'x-agent-token': token } : {},
           timeoutMs: 180000
@@ -1160,14 +1168,19 @@ if (cfg.socialV2?.tools?.getFile !== false) {
         const images = Array.isArray(data?.images) ? data.images : [];
         const head = `文件「${data?.name ?? '未知'}」`
           + (data?.size ? `（${Math.round(Number(data.size) / 1024)}KB` + (data?.pages ? `，${data.pages} 页` : '') + '）' : '')
+          + (data?.totalChars ? `，正文共 ${data.totalChars} 字` : '')
           + `：`;
         const notes = Array.isArray(data?.notes) && data.notes.length ? `\n注意：${data.notes.join('；')}` : '';
         if (!text && !images.length) {
           return { content: [{ type: 'text', text: `${head}${data?.note || '没读到可用内容'}${notes}` }] };
         }
+        const startAt = Number(data?.offset || 0);
+        const more = data?.hasMore
+          ? `\n【还有内容】本次给了第 ${startAt + 1} 到 ${startAt + text.length} 字；要继续读，再调用一次并传 offset=${startAt + text.length}。`
+          : '';
         const content = [{
           type: 'text',
-          text: `${head}\n${text || '（没有文字层，下面是渲染出来的页面图像）'}${notes}`
+          text: `${head}\n${text || '（没有文字层，下面是渲染出来的页面图像）'}${notes}${more}`
         }];
         for (const img of images) {
           if (img?.data && img?.mimeType) content.push({ type: 'image', mimeType: img.mimeType, data: img.data });

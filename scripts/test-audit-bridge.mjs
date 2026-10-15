@@ -3010,6 +3010,17 @@ await testWith({
     assert.ok((res.body.notes ?? []).some((n) => /标题/.test(n)), 'PDF 元信息要带出来');
     assert.equal((res.body.images ?? []).length, 1, '扫描件/页面图要一起返回');
     assert.equal(capturedFetch?.maxBytes, 50 * 1024 * 1024, '默认下载上限必须是 50MB');
+    assert.equal(res.body.totalChars, 5, '要报出正文总字数');
+    assert.equal(res.body.hasMore, false, '短文档一次给完');
+
+    // **不设字数限制**：不带参数就要拿全文；分页只在显式传 maxChars 时生效
+    const page1 = await apiRequest(server, `/api/files/message?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=700002&offset=0&maxChars=3`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(page1.body.text, '正文一', '按 maxChars 分页');
+    assert.equal(page1.body.hasMore, true, '还有剩下的要说明');
+    assert.match(String(page1.body.note ?? ''), /offset=3/, '要告诉下一段从哪读');
+    const page2 = await apiRequest(server, `/api/files/message?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=700002&offset=3&maxChars=3`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(page2.body.text, '二三', '第二段接得上');
+    assert.equal(page2.body.hasMore, false, '读完了');
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
 });
 

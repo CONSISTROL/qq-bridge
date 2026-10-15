@@ -58,7 +58,7 @@ export async function extractPdfText({ filePath, exec = defaultExec, fromPage = 
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  const truncated = text.length > maxChars;
+  const truncated = maxChars > 0 && text.length > maxChars;
   return { text: truncated ? text.slice(0, maxChars) : text, chars: text.length, truncated };
 }
 
@@ -93,7 +93,8 @@ export async function readTextFile({ filePath, maxChars = 20000 }) {
   const binary = sample.includes(0) || sample.toString('utf8').includes('\uFFFD');
   if (binary) return { text: '', chars: 0, truncated: false, binary: true };
   const raw = buf.toString('utf8').replace(/\r\n?/g, '\n');
-  const truncated = raw.length > maxChars;
+  // maxChars=0 ＝ 不限（同 PDF 分支；owner 要求不要字数限制）
+  const truncated = maxChars > 0 && raw.length > maxChars;
   return { text: truncated ? raw.slice(0, maxChars) : raw, chars: raw.length, truncated, binary: false };
 }
 
@@ -103,7 +104,9 @@ export async function readTextFile({ filePath, maxChars = 20000 }) {
  */
 export async function extractFileContent({ filePath, name = '', mimeType = '', tmpDir, exec = defaultExec, options = {} }) {
   const kind = classifyFile(name, mimeType);
-  const maxChars = Math.max(500, Math.min(200000, Number(options.maxTextChars) || 20000));
+  // maxTextChars = 0 表示**不限**（owner 要求：不要字数限制）。>0 才截断。
+  const rawMax = Number(options.maxTextChars);
+  const maxChars = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(5_000_000, Math.max(500, rawMax)) : 0;
   const maxPages = Math.max(1, Math.min(20, Number(options.maxPages) || 4));
   const renderDpi = Math.max(60, Math.min(200, Number(options.renderDpi) || 110));
   const notes = [];

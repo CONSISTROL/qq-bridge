@@ -76,6 +76,9 @@ console.log('\n## PDF 文字抽取（假 exec，确定性）');
 
   const big = await extractPdfText({ filePath: '/x/a.pdf', exec: async () => ({ stdout: 'x'.repeat(500) }), maxChars: 100 });
   check('超长要截断并标记', big.truncated === true && big.text.length === 100 && big.chars === 500);
+  // owner 要求：不要字数限制 → maxTextChars=0（默认）必须原样给全
+  const full = await extractPdfText({ filePath: '/x/a.pdf', exec: async () => ({ stdout: 'y'.repeat(500) }), maxChars: 0 });
+  check('maxChars=0 时不截断（不限字数）', full.truncated === false && full.text.length === 500 && full.chars === 500);
 }
 
 console.log('\n## 扫描件兜底（抽不到文字 → 渲染页面图像）');

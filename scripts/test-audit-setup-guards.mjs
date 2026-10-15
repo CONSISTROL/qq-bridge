@@ -15,6 +15,10 @@ for (const preset of ['qq-chat', 'qq-chat-v2']) {
   } });
   assert.equal(typeof guard, 'function');
   assert.ok(restricted.includes('dev_install_package'));
+  // 子 agent 工具要放行（read_file/bash 仍然拒绝：不给通用文件系统权限）
+  for (const name of ['subagent', 'subagent_fork', 'interrupt_agent']) {
+    assert.equal(guard({ name }), undefined, `${preset}: expected allowed ${name}`);
+  }
   for (const name of ['ask_user_question', 'todo_write', 'mcp__snowluma__qq_send_message',
     'mcp__snowluma-host__snowluma_status', 'mcp__web-search-safe__web_fetch']) {
     assert.equal(guard({ name }), undefined, `${preset}: expected allowed ${name}`);
