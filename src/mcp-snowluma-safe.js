@@ -1136,6 +1136,50 @@ if (cfg.socialV2?.tools?.getImages !== false) {
   );
 }
 
+// ── 聊天文件读取工具（PDF / 文本） ─────────────────────────────────────────
+if (cfg.socialV2?.tools?.getFile !== false) {
+  defineTool(
+    'qq_get_message_file',
+    '读聊天消息里的**文件**（PDF / 文本）。当消息里出现 [文件 xxx.pdf] 或提示里有【文件】时调用。'
+      + 'PDF：返回**正文文字**（最多两万字，超了会说明截断）；**扫描件**（没有文字层）会渲染前几页图像给你看；'
+      + '纯文本文件直接返回内容；其它类型（压缩包/安装包等）只能给你文件名和大小。'
+      + '大文件要下载+解析，可能要等十几秒。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      messageId: z.union([z.number(), z.string()]).describe('带文件的那条消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
+    },
+    async ({ key, messageId, token }) => {
+      try {
+        const q = new URLSearchParams({ key, messageId: String(messageId) });
+        const data = await agentApi(`/api/files/message?${q.toString()}`, {
+          headers: token ? { 'x-agent-token': token } : {},
+          timeoutMs: 180000
+        });
+        const text = String(data?.text ?? '').trim();
+        const images = Array.isArray(data?.images) ? data.images : [];
+        const head = `文件「${data?.name ?? '未知'}」`
+          + (data?.size ? `（${Math.round(Number(data.size) / 1024)}KB` + (data?.pages ? `，${data.pages} 页` : '') + '）' : '')
+          + `：`;
+        const notes = Array.isArray(data?.notes) && data.notes.length ? `\n注意：${data.notes.join('；')}` : '';
+        if (!text && !images.length) {
+          return { content: [{ type: 'text', text: `${head}${data?.note || '没读到可用内容'}${notes}` }] };
+        }
+        const content = [{
+          type: 'text',
+          text: `${head}\n${text || '（没有文字层，下面是渲染出来的页面图像）'}${notes}`
+        }];
+        for (const img of images) {
+          if (img?.data && img?.mimeType) content.push({ type: 'image', mimeType: img.mimeType, data: img.data });
+        }
+        return { content };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `读取文件失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
 // ── 聊天视频查看工具（看消息里的 QQ 视频） ──────────────────────────────────
 if (cfg.socialV2?.tools?.getMessageVideo !== false) {
   defineTool(

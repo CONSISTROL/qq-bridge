@@ -2953,4 +2953,88 @@ await testWith({ config: { socialV2: { style: { scrubFormulaic: false } } }, glo
   assert.ok(texts.includes('行，我先按S31那个价位看'), `关掉后不该削：${JSON.stringify(texts)}`);
 });
 
+// ── 聊天文件消息（群友发 PDF 问「这里面讲了什么」）───────────────────────────
+// 线上真实需求：群里有人发了 6.3MB 的 PDF 并 @ 机器人问内容；旧版本只把它渲染成
+// `[文件 xxx.pdf]`，media 是空的，AI 完全不知道有这个文件。
+await test('文件消息：入库要带文件名/大小，提示要告诉 AI 用哪个工具读', async (h) => {
+  h.setMode('reserved2');
+  const key = 'group:456';
+  h.appendSocialV2Message(key, '米哈游㍿', '[文件指南.pdf]', '[文件指南.pdf]', false, false, 700001,
+    [{ kind: 'file', file: 'f.pdf', fileId: 'fid-1', url: 'https://x/a.pdf', name: '指南.pdf', size: 6 * 1024 * 1024 }], '1472298635');
+  const st = h.getSocialV2State(key);
+  const msg = (st.recentMessages ?? []).find((m) => String(m.messageId) === '700001');
+  assert.ok(msg, '消息要入库');
+  assert.ok((msg.media ?? []).some((m) => m.kind === 'file' && m.name === '指南.pdf'), '文件段要进 media');
+  const hint = h.mediaHintFor(key, '700001', msg.media);
+  assert.match(hint, /【文件】/, '提示里要标出这是文件');
+  assert.match(hint, /指南\.pdf/, '要带文件名');
+  assert.match(hint, /qq_get_message_file/, '要告诉 AI 用哪个工具读');
+  assert.match(hint, /6\.0MB/, '带体积，好让 AI 判断值不值得读');
+});
+
+let capturedFetch = null;
+await testWith({
+  globals: {
+    safeFetchToFile: async (u, maxBytes, filePath) => {
+      capturedFetch = { url: String(u), maxBytes };
+      fs.writeFileSync(filePath, '%PDF-1.4 fake');
+      return { bytes: 12 };
+    },
+    extractFileContent: async () => ({
+      kind: 'pdf',
+      text: '正文一二三',
+      pages: 7,
+      truncated: true,
+      notes: ['PDF 标题：测试文档'],
+      images: [{ page: 1, buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' }]
+    })
+  }
+}, '文件端点：按 50MB 上限下载，把正文与渲染页面交给 AI', async (h) => {
+  const stopKeepAlive = h.keepLoopAlive();
+  const server = h.startConsoleServer();
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+    h.setMode('reserved2');
+    const key = 'group:456';
+    const st = h.getSocialV2State(key);
+    h.appendSocialV2Message(key, '米哈游㿿', '[文件指南.pdf]', '[文件指南.pdf]', false, false, 700002,
+      [{ kind: 'file', file: 'f.pdf', fileId: 'fid-2', url: 'https://gzc-download.ftn.qq.com/x/a.pdf', name: '指南.pdf', size: 6 * 1024 * 1024 }], '1472298635');
+    const res = await apiRequest(server, `/api/files/message?token=fixture-console-token&key=${encodeURIComponent(key)}&messageId=700002`, { method: 'GET', agentToken: st.agentToken });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.ok, true);
+    assert.equal(res.body.name, '指南.pdf');
+    assert.equal(res.body.kind, 'pdf');
+    assert.equal(res.body.pages, 7);
+    assert.match(String(res.body.text), /正文一二三/, 'PDF 正文要返回给 AI');
+    assert.equal(res.body.truncated, true, '截断要如实说明');
+    assert.ok((res.body.notes ?? []).some((n) => /标题/.test(n)), 'PDF 元信息要带出来');
+    assert.equal((res.body.images ?? []).length, 1, '扫描件/页面图要一起返回');
+    assert.equal(capturedFetch?.maxBytes, 50 * 1024 * 1024, '默认下载上限必须是 50MB');
+  } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+});
+
+// 线上机器人自己发现的问题：它被要求在**私聊会话**里读**群里**的那份 PDF，手里只有私聊令牌，
+// 用群 key 调就「令牌无效」，只好拿私聊 key 配群消息 id 绕过去。读操作（看图/读文件）应允许
+// 任一有效会话令牌；写操作仍然严格按会话。
+await test('跨会话读文件：任一有效会话令牌都该放行（写操作不放开）', async (h) => {
+  h.setMode('reserved2');
+  const a = h.getSocialV2State('group:456');
+  const b = h.getSocialV2State('private:1472298635');
+  const tokenA = String(a.agentToken);
+  const tokenB = String(b.agentToken);
+  assert.notEqual(tokenA, tokenB, '两个会话令牌不同');
+  assert.equal(h.anyAgentTokenOk(tokenA), true);
+  assert.equal(h.anyAgentTokenOk(tokenB), true, '别的会话的有效令牌也算有效（读操作要用）');
+  assert.equal(h.anyAgentTokenOk('nope'.repeat(6)), false, '陌生令牌仍然拒绝');
+  assert.equal(h.anyAgentTokenOk(''), false, '空令牌拒绝');
+  // 会话自己的校验依然严格（写操作靠它）
+  assert.equal(h.agentTokenOk('group:456', tokenA), true);
+  assert.equal(h.agentTokenOk('group:456', tokenB), false, '写操作不能被别的会话令牌放行');
+  // 宽限期内的旧令牌同样算有效
+  const old = String(b.agentToken);
+  await h.sendWakePromptV2('private:1472298635', 'admin').catch(() => {});
+  h.retireSession('private:1472298635');
+  assert.equal(h.anyAgentTokenOk(old), true, '宽限期内的旧令牌也放行读操作');
+});
+
 if (failures) process.exitCode = 1;

@@ -11,6 +11,7 @@ import * as markdown from '../src/md-to-plain.js';
 import * as sensitive from '../src/sensitive.js';
 import * as wait from '../src/v2-wait.js';
 import * as safeFetch from '../src/safe-fetch.js';
+import * as fileExtract from '../src/file-extract.js';
 import * as forward from '../src/forward.js';
 import * as slang from '../src/slang-learner.js';
 import * as sticker from '../src/sticker-lib.js';
@@ -234,7 +235,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     // 桥接必须把这个身份带给 AI（否则 AI 会把表情包当成照片，见线上那次「发第二遍了」）。
     imageSegmentLabel, segmentsToText, mediaHintFor, appendSocialV2Message,
     // 掉线补拉：断线期间的消息网关不重发，靠这条逻辑补回来（含唤醒闸门）。
-    backfillMissedMessages, retireSession, agentTokenOk,
+    backfillMissedMessages, retireSession, agentTokenOk, anyAgentTokenOk,
     // 出站口播清洗：AI 文本发送的唯一收口就是 sendMessagesV2，这里验证它真的会削。
     sendMessagesV2,
     // 假 QQ 的调用记录（发出去的消息文本在 calls.sent 里）。
@@ -291,7 +292,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s, sharp,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp, ...memoryAdmin, ...imageAdmin, ...sentImages, ...contentFilter, ...topicExplore, ...selfProfile,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...fileExtract, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp, ...memoryAdmin, ...imageAdmin, ...sentImages, ...contentFilter, ...topicExplore, ...selfProfile,
     // 假 QQ 的调用记录：用例要断言「实际发出去的文本」（口播清洗发生在发送收口里）。
     __auditCalls: calls,
     ...globals,

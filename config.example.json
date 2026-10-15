@@ -413,6 +413,14 @@
       "maxMessages": 100,
       "wakeMaxMessages": 15,
       "wakeMaxAgeMs": 600000
+    },
+    "file": {
+      "enabled": true,
+      "maxBytes": 52428800,
+      "maxPages": 4,
+      "renderDpi": 110,
+      "maxTextChars": 20000,
+      "timeoutMs": 60000
     }
   },
   "moderation": {

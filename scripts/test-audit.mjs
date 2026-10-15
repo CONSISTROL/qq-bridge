@@ -18,6 +18,8 @@ const tests = [
   'test-speech-style.mjs',
   // 机器人资料的纯逻辑（内容校验/广告识别/变更历史/回滚取值）
   'test-self-profile.mjs',
+  // 聊天文件读取（PDF → 文本；扫描件 → 渲染页面图）的纯逻辑 + 真 poppler 集成
+  'test-file-extract.mjs',
   // stop.sh 的兜底清理：只认真实的 node 进程，不能按命令行子串误杀调用方
   // （实测 `node --check src/bridge.js && ./restart.sh` 会把执行它的 shell 杀掉）。
   'test-stop-guard.mjs',

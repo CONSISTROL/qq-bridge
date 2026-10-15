@@ -18,6 +18,7 @@ import { mdToPlain, splitForQQ } from './md-to-plain.js';
 import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
+import { classifyFile, extractFileContent } from './file-extract.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -724,6 +725,14 @@ function loadConfig() {
       // 聊天里收到的 QQ 视频：AI 原来只能看到一行「[视频]」，回一句「打不开」。
       // 这里把视频抓下来抽帧给视觉模型看（抽帧要 ffmpeg；没装则退化成封面缩略图）。
       // 注意：**不做语音转写**——本机没有 ASR，视频里说的话 AI 听不到，只看得见画面。
+      file: {
+        enabled: true,              // 聊天文件（PDF/文本）读取总开关
+        maxBytes: 50 * 1024 * 1024, // 文件下载上限（owner 要求 50M；QQ 群文件常见几 MB 到几十 MB）
+        maxPages: 4,                // 扫描件最多渲染几页（都是图片，很费上下文）
+        renderDpi: 110,             // 扫描件渲染分辨率（高了更清楚也更占体积）
+        maxTextChars: 20000,        // PDF/文本最多给多少字（超出截断并说明）
+        timeoutMs: 60000            // pdftotext / 下载的单步上限
+      },
       video: {
         enabled: true,             // QQ 视频理解总开关
         maxBytes: 32 * 1024 * 1024, // 视频抓取上限（超了不下载，改用封面）
@@ -1219,6 +1228,18 @@ function extractMediaFromSegments(segments) {
       media.push({
         kind: 'face',
         faceId: String(d.id ?? '')
+      });
+    } else if (seg.type === 'file') {
+      // QQ 文件段（PDF/文本/压缩包…）：url 是下载直链，file/file_id 是网关侧句柄。
+      // 线上需求：群里发 PDF 问「这里面讲了什么」——不记下来 AI 就完全不知道有这个文件。
+      media.push({
+        kind: 'file',
+        file: String(d.file ?? ''),
+        fileId: String(d.file_id ?? d.id ?? ''),
+        url: String(d.url ?? ''),
+        name: String(d.name ?? d.file ?? '文件'),
+        size: Number(d.size ?? d.file_size ?? 0) || 0,
+        label: '[文件]'
       });
     } else if (seg.type === 'video') {
       // QQ 聊天视频段：file/url 是视频本体，thumb 是封面图。
@@ -5271,6 +5292,21 @@ async function main() {
 // （"agent token 无效"），连 qq_send_message 都失败，用户看到的就是「机器人哑了」。
 // 旧令牌本来就属于同一个会话，给 30 分钟宽限，安全代价可以忽略。
 const AGENT_TOKEN_GRACE_MS = 30 * 60 * 1000;
+    // 读操作（看图/读文件）允许**任一有效会话令牌**：AI 是一个整体，
+    // 线上它就在私聊会话里被要求去读群里的 PDF，手里只有私聊的令牌；
+    // 拿群 key 调就会「令牌无效」（它自己发现的，还专门报告了这件事）。
+    // 写操作（发消息）仍然严格按会话校验，避免一个令牌就能往别的会话发东西。
+    const anyAgentTokenOk = (token) => {
+      if (!token) return false;
+      const now = Date.now();
+      for (const st of socialV2.conversations.values()) {
+        if (!st) continue;
+        if (st.agentToken === token) return true;
+        const prev = Array.isArray(st.prevAgentTokens) ? st.prevAgentTokens : [];
+        if (prev.some((e) => e && e.token === token && Number(e.until) > now)) return true;
+      }
+      return false;
+    };
 const agentTokenOk = (key, token) => {
   const canonical = canonicalV2Key(key);
   const st = socialV2.conversations.get(canonical ?? key);
@@ -10658,6 +10694,85 @@ const agentTokenOk = (key, token) => {
           }
         }
         // ── 图片/表情查询端点（MCP qq_get_message_images 走这里） ────────────
+        // 读聊天文件（PDF/文本）。与图片端点同样的鉴权；文件不像图片能在提示里内联，
+        // 所以完全按需：AI 看到【文件】提示后调 qq_get_message_file。
+        if (req.method === 'GET' && url.pathname === '/api/files/message') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const messageId = String(url.searchParams.get('messageId') ?? '').trim();
+          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (!messageId) { sendJson({ ok: false, error: 'messageId 不能为空' }, 400); return; }
+          if (currentMode === 'reserved2' && !agentToken) { sendJson({ ok: false, error: 'reserved2 模式读取文件必须携带 agent token' }, 403); return; }
+          // 读文件同样允许跨会话（同图片端点，理由见 anyAgentTokenOk）
+          if (agentToken && !agentTokenOk(key, agentToken) && !anyAgentTokenOk(agentToken)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (agentToken && !v2ToolEnabled('getFile')) { sendJson({ ok: false, error: '工具未启用：qq_get_message_file' }, 403); return; }
+          const fcfg = cfg.socialV2?.file ?? {};
+          if (fcfg.enabled === false) { sendJson({ ok: false, error: '文件读取未启用（socialV2.file.enabled）' }, 403); return; }
+          let files = (findMessageMedia(key, messageId) ?? []).filter((m) => m?.kind === 'file');
+          if (!files.length) {
+            const fallback = await fetchMediaFromOneBot(messageId);
+            files = (fallback ?? []).filter((m) => m?.kind === 'file');
+            if (files.length) log(`[file] 已用 get_msg 兜底读到文件段（${key} ${messageId}）`);
+          }
+          if (!files.length) { sendJson({ ok: true, messageId, files: [], note: '该消息里没有可读取的文件' }); return; }
+          const item = files[0];
+          const meta = { name: item.name || '文件', size: Number(item.size) || 0, kind: classifyFile(item.name, '') };
+          if (!item.url) {
+            sendJson({ ok: true, messageId, ...meta, text: '', images: [], note: '这个文件没有下载直链（QQ 离线文件可能只给了 file_id，网关不支持下载）' });
+            return;
+          }
+          const maxBytes = Math.max(256 * 1024, Math.min(64 * 1024 * 1024, Number(fcfg.maxBytes) || 50 * 1024 * 1024));
+          const tmpDir = fs.mkdtempSync(path.join(STATE_DIR, 'file-tmp-'));
+          const safeName = String(meta.name).replace(/[^\w.\-\u4e00-\u9fa5]/g, '_').slice(-80) || 'file';
+          const filePath = path.join(tmpDir, safeName);
+          try {
+            const got = await safeFetchToFile(item.url, maxBytes, filePath, { timeoutMs: Math.max(5000, Number(fcfg.timeoutMs) || 60000) });
+            const result = await extractFileContent({
+              filePath,
+              name: meta.name,
+              tmpDir,
+              options: {
+                maxPages: fcfg.maxPages,
+                renderDpi: fcfg.renderDpi,
+                maxTextChars: fcfg.maxTextChars,
+                timeoutMs: Math.max(5000, Number(fcfg.timeoutMs) || 60000)
+              }
+            });
+            // 扫描件渲染出来的页面图也要过「图片投喂安全区」（DSH 读大图会爆栈）
+            const images = [];
+            for (const [i, img] of (result.images ?? []).entries()) {
+              const fitted = await fitMediaBuffer(img.buffer, '');
+              if (!fitted) continue;
+              images.push({
+                index: i + 1,
+                kind: 'image',
+                mimeType: fitted.mimeType,
+                data: fitted.buffer.toString('base64'),
+                text: `PDF 第 ${img.page} 页（渲染图）`
+              });
+            }
+            log(`[file] ${key} ${messageId} 读取「${meta.name}」：${result.kind}${result.text ? ` ${result.text.length} 字` : ''}${images.length ? ` + ${images.length} 张页面图` : ''}`);
+            sendJson({
+              ok: true,
+              messageId,
+              name: meta.name,
+              size: got.bytes,
+              kind: result.kind,
+              pages: result.pages ?? 0,
+              truncated: !!result.truncated,
+              text: result.text ?? '',
+              notes: result.notes ?? [],
+              images
+            });
+          } catch (error) {
+            log(`读取文件失败 ${key} ${messageId}: ${error?.message ?? error}`);
+            sendJson({ ok: false, error: `读取文件失败：${error?.message ?? error}` }, 500);
+          } finally {
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 清理失败不影响结果 */ }
+          }
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/images/message') {
           const key = String(url.searchParams.get('key') ?? '').trim();
           const messageId = String(url.searchParams.get('messageId') ?? '').trim();
@@ -10673,7 +10788,8 @@ const agentTokenOk = (key, token) => {
             sendJson({ ok: false, error: '一代 chat/reserved 模式图片已自动内联，按需图片工具仅 reserved2 模式可用' }, 403);
             return;
           }
-          if (agentToken && !agentTokenOk(key, agentToken)) {
+          // 读图允许跨会话：用任一有效会话令牌即可（AI 可能在私聊会话里被要求看群里的图）
+          if (agentToken && !agentTokenOk(key, agentToken) && !anyAgentTokenOk(agentToken)) {
             sendJson({ ok: false, error: 'agent token 无效' }, 403);
             return;
           }
@@ -12154,6 +12270,11 @@ const agentTokenOk = (key, token) => {
 
   function mediaHintFor(key, messageRef, mediaList) {
     if (!Array.isArray(mediaList) || mediaList.length === 0 || !messageRef) return '';
+    const fileItem = mediaList.find((m) => m?.kind === 'file');
+    if (fileItem) {
+      const mb = fileItem.size ? `（${(fileItem.size / 1024 / 1024).toFixed(1)}MB）` : '';
+      return `\n【文件】本条消息包含文件「${fileItem.name}」${mb}（消息ID=${messageRef}）。你看不到文件内容：要读它请调用 mcp__snowluma__qq_get_message_file（key="${key}", messageId="${messageRef}"）——PDF 会返回正文文字，扫描件会渲染页面图像给你看，纯文本文件直接返回内容。`;
+    }
     const hasVideo = mediaList.some((m) => m?.kind === 'video');
     if (hasVideo) {
       const videoNote = `\n【视频】本条消息包含视频（消息ID=${messageRef}）。你看不到视频本身，要看画面就调用 qq_get_message_video`
@@ -14345,7 +14466,9 @@ const agentTokenOk = (key, token) => {
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
     const safeMedia = Array.isArray(media) ? media.map((m) => {
-      const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : 'image');
+      // 注意 kind 要保真：以前这里把非 face/video 一律当 image，
+      // 于是**文件段**（PDF 等）会被悄悄降级成图片，AI 再也看不到「有文件」这件事。
+      const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : (m?.kind === 'file' ? 'file' : 'image'));
       return {
         kind,
         file: m?.file ? String(m.file) : undefined,
@@ -14353,14 +14476,21 @@ const agentTokenOk = (key, token) => {
         // 视频封面：视觉模型可以先看这一帧，抽不了帧时也至少有画面。
         ...(kind === 'video' && m?.thumb ? { thumb: String(m.thumb) } : {}),
         faceId: m?.faceId ? String(m.faceId) : undefined,
+        // 文件段带文件名/大小：提示里要写「文件《x.pdf》（6.0MB）」让 AI 判断值不值得读。
+        ...(kind === 'file' ? {
+          name: m?.name ? String(m.name).slice(0, 200) : '文件',
+          size: Number(m?.size) || 0,
+          ...(m?.fileId ? { fileId: String(m.fileId) } : {})
+        } : {}),
         // 表情包（QQ 动画表情）与普通图片必须让 AI 分得清：默认的 [图片] 标签会把
         // 「玄真又发了一遍同一个表情包」误判成「你在重复发同一张照片」。
-        label: kind === 'face' ? '表情' : (kind === 'video' ? '视频' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary }))),
+        label: kind === 'face' ? '表情' : (kind === 'video' ? '视频' : (kind === 'file' ? '[文件]' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary })))),
         ...(kind === 'image' ? { subType: m?.subType ? String(m.subType) : undefined, summary: m?.summary ? String(m.summary) : undefined } : {})
       };
     }).filter((m) => {
       if (m.kind === 'face') return !!m.faceId;
       if (m.kind === 'video') return !!(m.file || m.url || m.thumb);
+      if (m.kind === 'file') return !!(m.url || m.file || m.fileId);
       return !!(m.file || m.url);
     }) : [];
     const safeForwardIds = (Array.isArray(forwardIds) ? forwardIds : []).map(sanitizeForwardId).filter(Boolean);
@@ -14598,6 +14728,20 @@ const agentTokenOk = (key, token) => {
             url: String(d.url ?? ''),
             thumb: String(d.thumb ?? d.thumbUrl ?? ''),
             label: '[视频]'
+          });
+        }
+        // 文件段同样要兜底：老消息（本功能上线前入库的）缓存里没有 media，
+        // 线上那条「发 PDF 问讲了什么」的消息就是这种情况。
+        if (seg && seg.type === 'file') {
+          const d = seg.data || {};
+          out.push({
+            kind: 'file',
+            file: String(d.file ?? ''),
+            fileId: String(d.file_id ?? d.id ?? ''),
+            url: String(d.url ?? ''),
+            name: String(d.name ?? d.file ?? '文件'),
+            size: Number(d.size ?? d.file_size ?? 0) || 0,
+            label: '[文件]'
           });
         }
         continue;
