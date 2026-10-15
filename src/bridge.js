@@ -2206,6 +2206,17 @@ async function main() {
   }
 
   // 会话当前语境文本（最近几条群友消息 + 最后一条消息）
+  // 严肃语境判定只该看**最后一条别人发的消息**（见 sticker-picker 里的说明）：
+  // 拿整段窗口做子串匹配会把「早翻篇的顺嘴一提」也当成严肃话题，整轮禁掉表情。
+  function lastIncomingTextV2(st) {
+    const msgs = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m && !m.isSelf) return String(m.text || m.plain || '');
+    }
+    return '';
+  }
+
   function pickContextTextV2(st, extra = '') {
     const msgs = (Array.isArray(st.recentMessages) ? st.recentMessages : []).slice(-6);
     const incoming = msgs.filter((m) => m && !m.isSelf).map((m) => String(m.text || m.plain || '')).filter(Boolean);
@@ -2218,7 +2229,7 @@ async function main() {
     const pickCfg = readPickConfig();
     const st = stIn || getSocialV2State(key);
     const ctx = pickContextTextV2(st, [context, topic].filter(Boolean).join(' '));
-    const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx });
+    const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx, lastIncomingText: lastIncomingTextV2(st) });
     let qqItems = stickerEntries;
     try {
       const synced = await syncStickerLibrary(false);
@@ -2263,7 +2274,7 @@ async function main() {
       if (pickCfg.enabled === false || pickCfg.hintInPrompt === false) return '';
       const st = stIn || getSocialV2State(key);
       const ctx = pickContextTextV2(st);
-      const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx });
+      const moment = evaluateMoment(st, { cfg: pickCfg, context: ctx, lastIncomingText: lastIncomingTextV2(st) });
       const top = buildPickPlan({
         qqItems: stickerEntries,
         libraryItems: pickCfg.includeLibrary ? stickerLibraryItems() : [],
@@ -2403,7 +2414,7 @@ async function main() {
   async function sendPickedStickerV2(key, spec, { candidates = [], online = [] } = {}) {
     const pickCfg = readPickConfig();
     const st = getSocialV2State(key);
-    const moment = evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st) });
+    const moment = evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st), lastIncomingText: lastIncomingTextV2(st) });
     if (!moment.allowed) throw new Error(`现在不适合发表情包：${moment.reason}`);
     const wanted = String(spec?.id ?? spec?.ref ?? spec?.url ?? '').trim();
     if (!wanted) throw new Error('send 需要 id（候选列表里的 id）或 url（联网候选里的地址）');
@@ -7430,7 +7441,7 @@ const agentTokenOk = (key, token) => {
           for (const [key, st] of socialV2.conversations) {
             const moment = pickCfg.enabled === false
               ? null
-              : evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st) });
+              : evaluateMoment(st, { cfg: pickCfg, context: pickContextTextV2(st), lastIncomingText: lastIncomingTextV2(st) });
             list.push({
               key,
               wakeConfig: st.wakeConfig,

@@ -266,14 +266,26 @@ export function buildStickerMomentHint(moment, { top = [] } = {}) {
   if (moment.allowed === false) {
     return `【此刻发表情包】不适合：${moment.reason}。没到时机就别硬塞表情。`;
   }
-  const level = moment.level === 'good' ? '合适' : '一般';
+  // 措辞与"下一步"都改成行动导向（2026-10-15 复盘）：原来普通闲聊渲染成「一般」+
+  // 「要发就先 pick 确认…别凭印象瞎发」，语义上是"可选项+有门槛"，模型就直接跳过了
+  // （历史上只发过 2 次）。现在明确「可以发/很适合发」，并给**一步发送**的具体参数。
+  const good = moment.level === 'good';
+  const level = good ? '这轮很适合发一张' : '可以发一张（不勉强）';
   const bits = [`【此刻发表情包】${level}：${moment.reason}`];
-  if (moment.lastStickerMinAgo != null) bits.push(`上次发表情：${moment.lastStickerMinAgo} 分钟前`);
+  if (moment.lastStickerMinAgo != null && moment.lastStickerMinAgo < 20) bits.push(`上次发表情：${moment.lastStickerMinAgo} 分钟前`);
   const list = Array.isArray(top) ? top.filter(Boolean).slice(0, 3) : [];
+  const first = list[0];
   if (list.length) {
-    bits.push('本地瞄到的候选：' + list.map((c) => `${c.label}${c.score != null ? `(${c.score})` : ''}`).join(' / '));
+    bits.push('本地候选：' + list.map((c) => `${c.label}${c.score != null ? `(${c.score})` : ''}`).join(' / '));
   }
-  bits.push('要发就用 qq_pick_sticker 确认时机与候选（它会先查本地、不够再联网找），别凭印象瞎发。');
+  if (first && first.id) {
+    // 一步到位：qq_pick_sticker 自带 send 参数，传了就**直接发出去**（不用再调 qq_send_sticker）。
+    // 这里把 top1 的 id 直接写出来，省掉"先查候选再发"的第二步——那是模型不发的主要原因之一。
+    bits.push(`想发就一步发出去：qq_pick_sticker(key="<本会话 key>", token="<会话令牌>", send={id:"${first.id}"})` +
+      `（它会直接发出这张：${first.label}${good ? '，这轮时机正好' : ''}）`);
+  } else {
+    bits.push('要发就用 qq_pick_sticker 看候选与时机（本地不够它会联网找），别凭印象瞎发');
+  }
   return bits.join('；');
 }
 

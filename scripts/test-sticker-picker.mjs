@@ -22,6 +22,7 @@ import {
   buildPickPlan,
   STYLE_KEYWORDS
 } from '../src/sticker-picker.js';
+import { buildStickerMomentHint } from '../src/sticker-lib.js';
 
 let pass = 0;
 let fail = 0;
@@ -46,6 +47,11 @@ ok('detectIntents 自己人设', detectIntents('deepseek 你又开始胡说八�
 eq('detectIntents 空文本', detectIntents(''), []);
 ok('looksSerious 命中', looksSerious('他奶奶住院了，最近在跑医院'));
 ok('looksSerious 不误伤', !looksSerious('今天打游戏赢麻了'));
+// 2026-10-15 复盘：考试/面试/离职这类日常话题不该整轮禁掉表情（"加油/抱抱"正是这种场合）
+ok('考试不再算严肃', !looksSerious('明天要考试了好紧张'));
+ok('面试不再算严肃', !looksSerious('下午有个面试'));
+ok('裁员不再算严肃', !looksSerious('我们组裁员了'));
+ok('真正沉重的话题仍然拦', looksSerious('他家里老人去世了'));
 ok('mentionsSelf 命中', mentionsSelf('小鲸鱼今天怎么这么安静'));
 ok('mentionsSelf 不误伤', !mentionsSelf('今天天气不错'));
 
@@ -104,6 +110,11 @@ ok('情绪语境=合适', m1.allowed === true && m1.level === 'good', JSON.strin
 
 const m2 = evaluateMoment(baseState, { cfg, now, context: '他奶奶住院了，最近在跑医院' });
 ok('严肃语境=拦住', m2.allowed === false && m2.level === 'no', m2.reason);
+// 严肃判定只看最后一条进来的消息：窗口里早先那条严肃的不该继续拦（那是上一轮的事）
+const m2b = evaluateMoment(baseState, { cfg, now, context: '他奶奶住院了，随便聊聊；哈哈这也太离谱了', lastIncomingText: '哈哈这也太离谱了' });
+ok('严肃判定只看最后一条', m2b.allowed === true, m2b.reason);
+const m2c = evaluateMoment(baseState, { cfg, now, context: '哈哈这也太离谱了', lastIncomingText: '他奶奶住院了' });
+ok('最后一条严肃就拦住', m2c.allowed === false, m2c.reason);
 
 const m3 = evaluateMoment({ ...baseState, recentMessages: [{ kind: 'sticker', isSelf: true, time: now - 10000 }], lastStickerAt: now - 10000 }, { cfg, now, context: '哈哈' });
 ok('冷却期内=拦住', m3.allowed === false && m3.cooldownLeftMs > 0, m3.reason);
@@ -160,6 +171,23 @@ ok('阈值高时判定为不够', buildPickPlan({ qqItems: [qqRaw], libraryItems
 ok('serious 语境可被识别', buildPickPlan({ qqItems: [], libraryItems: [], context: '他住院了', options: {} }).serious === true);
 ok('onlineQuery 有值', typeof plan.onlineQuery === 'string' && plan.onlineQuery.length > 0, plan.onlineQuery);
 ok('includeLibrary=false 时池子只剩收藏表情', buildPickPlan({ qqItems: [qqRaw], libraryItems: [libRaw], context: 'x', options: { cfg: { includeLibrary: false } } }).poolSize === 1);
+
+// ── 4. 时机提示的措辞与「一步发送」指引（2026-10-15 新增）─────────────────
+console.log('\n[4] 时机提示：行动导向 + 一步发送');
+const okMoment = { allowed: true, level: 'ok', reason: '群里静了一会儿', lastStickerMinAgo: null };
+const goodMoment = { allowed: true, level: 'good', reason: '语境带情绪（laugh）', lastStickerMinAgo: 30 };
+const topCand = [{ id: '2840404638_0_0_0_AAA', label: '猫猫无语', score: 46 }, { id: 'lib:x.png', label: '图库图', score: 31 }];
+const okLine = buildStickerMomentHint(okMoment, { top: topCand });
+ok('ok 不再是「一般」而是可以发', /可以发一张/.test(okLine), okLine);
+ok('给了 top1 的 id（一步发送）', okLine.includes('2840404638_0_0_0_AAA'), okLine);
+ok('明确说了 qq_pick_sticker 能直接发', /qq_pick_sticker\(key=/.test(okLine) && /send=\{id:/.test(okLine), okLine);
+const goodLine = buildStickerMomentHint(goodMoment, { top: topCand });
+ok('good 明确说很适合发', /很适合发一张/.test(goodLine), goodLine);
+const noCandLine = buildStickerMomentHint(okMoment, { top: [] });
+ok('没有候选时才保留「别凭印象瞎发」', /别凭印象瞎发/.test(noCandLine), noCandLine);
+ok('有候选时不再吓唬它', !/别凭印象瞎发/.test(okLine), okLine);
+const blockedLine = buildStickerMomentHint({ allowed: false, reason: '冷却中' }, { top: topCand });
+ok('拦截时仍然明确说不适合', /不适合/.test(blockedLine) && !/send=\{/.test(blockedLine), blockedLine);
 
 console.log(`\n结果：${pass} 项通过 / ${fail} 项失败`);
 process.exit(fail === 0 ? 0 : 1);

@@ -68,10 +68,12 @@ const INTENTS = [
 ];
 
 // 严肃/敏感语境：硬抑制发表情包（桥接侧判断，AI 侧策略提示里也写了同一条）。
+// 硬门词表：只留**真的不该配表情**的沉重/冲突话题。
+// 注意（2026-10-15 复盘）：原来把「面试/答辩/考试/挂科/离职/裁员/欠钱/借钱」也算严肃，
+// 结果群里一聊这些就整轮禁掉表情——而这些恰恰是「加油/抱抱/拍拍」这类表情最该出现的场合。
 const SERIOUS_WORDS = [
   '分手', '去世', '死了', '生病', '住院', '手术', '抑郁', '自杀', '事故', '车祸',
-  '吵架', '闹翻', '报警', '投诉', '被封', '封号', '违法', '举报', '葬礼', '悼念',
-  '面试', '答辩', '考试', '挂科', '离职', '裁员', '欠钱', '借钱', '医院'
+  '吵架', '闹翻', '报警', '投诉', '被封', '封号', '违法', '举报', '葬礼', '悼念', '医院'
 ];
 
 /** 从上下文文本里识别意图标签（可能多个）。 */
@@ -281,7 +283,10 @@ export function evaluateMoment(state = {}, opts = {}) {
 
   const silentMin = lastIncomingAt ? (now - lastIncomingAt) / 60000 : 0;
   const incomingText = String(opts.context ?? '');
-  const serious = looksSerious(incomingText);
+  // 严肃判定只看**最后一条别人发的消息**：以前拿整段上下文做子串匹配，窗口里任意一条
+  // 提到「医院/投诉」就整轮禁掉表情（多数时候那只是顺嘴一提，且早翻篇了）。
+  const seriousText = opts.lastIncomingText != null ? String(opts.lastIncomingText) : incomingText;
+  const serious = looksSerious(seriousText);
 
   const base = {
     cooldownLeftMs: 0,
