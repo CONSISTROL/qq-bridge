@@ -16966,7 +16966,19 @@ const agentTokenOk = (key, token) => {
           }
         }
       } catch (error) {
-        log('事件流中断:', error?.message ?? error);
+        const streamErr = String(error?.message ?? error);
+        log('事件流中断:', streamErr);
+        // DSH 重启后 launch token 会变。401 说明手里那枚已经失效——必须重新发现一次，
+        // 否则就是永久 401 死循环（2026-10-15 线上实测：DSH 重启后事件流刷了一屏
+        // "DSH *** failed: HTTP 401"，QQ 消息全卡在队列里，直到手动重启桥接才恢复）。
+        if (/\b401\b|unauthor/i.test(streamErr)) {
+          try {
+            api.invalidateAuth();
+            log('事件流 401：已重新发现 DSH launch token，重连中');
+          } catch (authError) {
+            log('重新发现 DSH token 失败：', authError?.message ?? authError);
+          }
+        }
       } finally {
         // WebSocket 正常关闭和异常中断都会走到这里；必须清掉旧 turn 相关状态，
         // 否则重连后旧 collector/标记残留会导致回复重复累加或误判。

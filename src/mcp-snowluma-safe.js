@@ -1164,7 +1164,11 @@ if (cfg.socialV2?.tools?.getFile !== false) {
           headers: token ? { 'x-agent-token': token } : {},
           timeoutMs: 180000
         });
-        const text = String(data?.text ?? '').trim();
+        // 注意：展示用 trim，但**下一段的 offset 必须按未 trim 的长度算**——
+        // 否则首尾空白会被"跳过"，长文档续读时可能漏掉正文（线上实测被模型发现：
+        // 它算出第 200001~239999 字，而实际给了 240000 字）。
+        const rawText = String(data?.text ?? '');
+        const text = rawText.trim();
         const images = Array.isArray(data?.images) ? data.images : [];
         const head = `文件「${data?.name ?? '未知'}」`
           + (data?.size ? `（${Math.round(Number(data.size) / 1024)}KB` + (data?.pages ? `，${data.pages} 页` : '') + '）' : '')
@@ -1175,8 +1179,9 @@ if (cfg.socialV2?.tools?.getFile !== false) {
           return { content: [{ type: 'text', text: `${head}${data?.note || '没读到可用内容'}${notes}` }] };
         }
         const startAt = Number(data?.offset || 0);
+        const nextOffset = startAt + rawText.length;
         const more = data?.hasMore
-          ? `\n【还有内容】本次给了第 ${startAt + 1} 到 ${startAt + text.length} 字；要继续读，再调用一次并传 offset=${startAt + text.length}。`
+          ? `\n【还有内容】本次给了第 ${startAt + 1} 到 ${nextOffset} 字；要继续读，再调用一次并传 offset=${nextOffset}。`
           : '';
         const content = [{
           type: 'text',
