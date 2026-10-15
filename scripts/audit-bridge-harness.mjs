@@ -229,12 +229,12 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
     resetEpoch() { sessionEpoch++; },
     // 图片压缩兜底：超限图片必须本地缩放后再投喂，而不是直接丢掉（线上 4.35MB 月饼图取不到）。
-    fitMediaBuffer, shrinkMediaBuffer, MAX_MEDIA_BYTES, MAX_MEDIA_FETCH_BYTES, imagePassthroughBytes,
+    fitMediaBuffer, shrinkMediaBuffer, MAX_MEDIA_BYTES, MAX_MEDIA_FETCH_BYTES, imagePassthroughBytes, imageSoftPixels,
     // 表情包 vs 图片：网关用 sub_type=1 / summary=[动画表情] 标 QQ 动画表情，
     // 桥接必须把这个身份带给 AI（否则 AI 会把表情包当成照片，见线上那次「发第二遍了」）。
     imageSegmentLabel, segmentsToText, mediaHintFor, appendSocialV2Message,
     // 掉线补拉：断线期间的消息网关不重发，靠这条逻辑补回来（含唤醒闸门）。
-    backfillMissedMessages,
+    backfillMissedMessages, retireSession, agentTokenOk,
     // 出站口播清洗：AI 文本发送的唯一收口就是 sendMessagesV2，这里验证它真的会削。
     sendMessagesV2,
     // 假 QQ 的调用记录（发出去的消息文本在 calls.sent 里）。

@@ -615,7 +615,8 @@ function loadConfig() {
         maxBytes: 5 * 1024 * 1024,
         // 单张图「原样投喂」上限（默认 8MB）：以内的图不再本地重编码，交给 DSH 归一化；
         // 超过才压到这个值以内。调小 = 更省上下文但更糊，调大 = 更清晰但更费内存/带宽。
-        passthroughBytes: 8 * 1024 * 1024,
+        passthroughBytes: 1536 * 1024,
+        softPixels: 2500000,
         maxPerMinute: 5,
         maxPerHour: 30,
         // 防重复发图窗口（毫秒）：同一张图（按 pixiv 作品 id / URL 身份）在这段时间内不再发第二次。
@@ -5082,8 +5083,16 @@ async function main() {
       // 否则刚发出去的唤醒提示会带着一个已撤销的令牌，整个回合调不动任何工具。
       KNOWN_AGENT_TOKENS.add(st.agentToken);
     } else if (st) {
-      // 保留旧 token 在脱敏集合中，但撤销它的调用权限。
+      // 轮换令牌：旧的记进宽限名单（在跑的那个回合还拿着它），过期后自然失效；
+      // 脱敏集合里也继续保留旧值，避免它出现在日志里。
+      const oldToken = String(st.agentToken || '');
       st.agentToken = crypto.randomBytes(24).toString('hex');
+      if (oldToken) {
+        KNOWN_AGENT_TOKENS.add(oldToken);
+        const prev = Array.isArray(st.prevAgentTokens) ? st.prevAgentTokens : [];
+        prev.push({ token: oldToken, until: Date.now() + 30 * 60 * 1000 });
+        st.prevAgentTokens = prev.slice(-2); // 最多记两枚，防止无限增长
+      }
       KNOWN_AGENT_TOKENS.add(st.agentToken);
       st.bootstrapSent = false;
     }
@@ -5256,6 +5265,22 @@ async function main() {
     setInterval(checkDsh, 5000);
   }
 
+// 令牌校验：当前令牌，或**刚被轮换掉的上一枚令牌**（宽限期内仍可用）。
+// 为什么需要宽限期（2026-10-15 事故）：会话重建（DSH 重启 / preset 刷新）时桥接会轮换令牌并
+// 立刻撤销旧的，但**已经在跑的那个回合手里还是旧令牌**——于是它每一次工具调用都被拒
+// （"agent token 无效"），连 qq_send_message 都失败，用户看到的就是「机器人哑了」。
+// 旧令牌本来就属于同一个会话，给 30 分钟宽限，安全代价可以忽略。
+const AGENT_TOKEN_GRACE_MS = 30 * 60 * 1000;
+const agentTokenOk = (key, token) => {
+  const canonical = canonicalV2Key(key);
+  const st = socialV2.conversations.get(canonical ?? key);
+  if (!st || !st.agentToken || !token) return false;
+  if (token === st.agentToken) return true;
+  const now = Date.now();
+  const prev = Array.isArray(st.prevAgentTokens) ? st.prevAgentTokens : [];
+  return prev.some((e) => e && e.token === token && Number(e.until) > now);
+};
+
   // ── 本地控制台（独立 Web 面板，不依赖 DSH WebUI） ───────────────────────────
   // 模式/角色/静默状态都存 state/*.json，桥接即时感知；此服务只读写这些文件。
   function startConsoleServer() {
@@ -5269,11 +5294,6 @@ async function main() {
     if (!configuredToken) log(`控制台未配置 consoleToken，已自动生成：${String(consoleToken).slice(0, 6)}…（完整值保存在 state/console-token）`);
     // 二代会话级隔离：MCP 工具调用时若带 x-agent-token，则必须匹配该会话的 agentToken。
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
-    const agentTokenOk = (key, token) => {
-      const canonical = canonicalV2Key(key);
-      const st = socialV2.conversations.get(canonical ?? key);
-      return !!st && !!st.agentToken && token === st.agentToken;
-    };
     // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     const v2ToolEnabled = (flag) => cfg.socialV2?.tools?.[flag] !== false;
@@ -6683,7 +6703,7 @@ async function main() {
           if (body.image && typeof body.image === 'object') {
             const cur = current.image ?? {};
             merged.image = { ...cur, ...body.image };
-            for (const k of ['maxBytes', 'passthroughBytes', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs', 'deliverCheckMs', 'deliverCheckFastMs']) {
+            for (const k of ['maxBytes', 'passthroughBytes', 'softPixels', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs', 'deliverCheckMs', 'deliverCheckFastMs']) {
               if (merged.image[k] !== undefined) {
                 const n = Number(merged.image[k]);
                 merged.image[k] = Number.isFinite(n) && n >= 0 ? Math.round(n) : (cur[k] ?? 0);
@@ -11468,13 +11488,22 @@ async function main() {
 
   const MAX_MEDIA_COUNT = 5; // 单条消息最多内联/返回的图片/表情数
   const MAX_MEDIA_BYTES = 4 * 1024 * 1024; // 单条消息图片的合计预算（fetchMediaData 的 maxTotalBytes 兜底）
-  // **单张图「原样投喂」的上限**：这个值以内的图不再本地重编码，直接交给 DSH ——
-  // DSH 附件层的准入是 20MB/64MP/8192px，而且它自己会归一化（缩到 ≤2048x2048 像素、编码到 ≤4MB，
-  // 自带质量阶梯）。我们原来的 4MB 硬顶 + 1.5MB 软压是**更严的重复劳动**：
-  // owner 反馈「裁剪后发的图能认出来、群里的大图认不出来」，根因就是 1.5MB 以上先被砍了一刀。
+  // **单张图「原样投喂」的安全区**：这个范围内不重编码，超过就本地压到安全区里。
+  //
+  // 为什么必须是保守值（2026-10-15 事故复盘）：曾经把这里放宽到 8MB 想「少压一点、细节更好」，
+  // 结果 owner 发的那张 7.4MB / 4096x3072 的图被原样投给 DSH，DSH 读图时**爆栈**：
+  //   [image unavailable: image/jpeg; Maximum call stack size exceeded; raw image data remains available…]
+  // 模型收到的是「图不可用」，用户看到的就是「读图那步报错了」（同一张图当时压缩后只有 482KB 时是能认的）。
+  // DSH 附件层虽然准入 20MB/64MP，但它内部的图片处理扛不住大图——**字节和像素两个维度都要卡**。
+  // 另外注意：DSH 自己会归一化，所以这里压小不会白压（只是我们比它更早、更保守地做）。
   const imagePassthroughBytes = () => {
     const raw = Number(cfg.socialV2?.image?.passthroughBytes);
-    return Math.max(256 * 1024, Math.min(16 * 1024 * 1024, Number.isFinite(raw) && raw > 0 ? raw : 8 * 1024 * 1024));
+    return Math.max(256 * 1024, Math.min(16 * 1024 * 1024, Number.isFinite(raw) && raw > 0 ? raw : 1536 * 1024));
+  };
+  // 像素安全区：爆栈那次的图是 12.6MP，能正常读的是 2~3MP 级（旧软上限 2.5MP 一直没出过事）。
+  const imageSoftPixels = () => {
+    const raw = Number(cfg.socialV2?.image?.softPixels);
+    return Math.max(100_000, Math.min(MAX_MEDIA_PIXELS, Number.isFinite(raw) && raw > 0 ? raw : 2_500_000));
   };
   const MAX_MEDIA_PIXELS = 64_000_000; // 单张图片像素上限，防止“图片炸弹”解码拖垮 DSH
   // 抓原图时的硬上限：先抓下来、再本地压缩。QQ 手机直出照片常在 4~8MB，
@@ -11530,7 +11559,7 @@ async function main() {
    * 把过大的图片压到能投喂为止：先原尺寸降质量，再逐档缩边长。
    * 只为「看得见」服务，不追求画质；整张图仍然超限时返回 null，由调用方按取不到处理。
    */
-  async function shrinkMediaBuffer(buf, maxBytes = MAX_MEDIA_BYTES) {
+  async function shrinkMediaBuffer(buf, maxBytes = MAX_MEDIA_BYTES, maxPixels = 0) {
     if (!buf?.length) return null;
     const alpha = !!(await probeImageMeta(buf))?.hasAlpha;
     // 有透明的走 webp/png（浏览器与视觉模型都支持），没有的走 jpeg。逐档降尺寸/质量。
@@ -11552,6 +11581,8 @@ async function main() {
     const srcPixels = dims ? dims.width * dims.height : 0;
     const aspect = dims && dims.width && dims.height ? Math.min(dims.width, dims.height) / Math.max(dims.width, dims.height) : 1;
     const rungPixels = (longSide) => longSide * longSide * aspect;
+    // 像素上限（0 = 不限）：DSH 读大图会爆栈，所以档位必须**同时**满足字节与像素两个约束。
+    const pixelCap = Number(maxPixels) > 0 ? Number(maxPixels) : 0;
     let start = 0;
     if (srcPixels > 0) {
       const bpp = buf.length / srcPixels;
@@ -11573,7 +11604,8 @@ async function main() {
         log(`图片压缩失败（长边 ${longSide}，${format} ${quality}）: ${error?.message ?? error}`);
         return null;
       }
-      if (out.length <= maxBytes) {
+      const fits = out.length <= maxBytes && (!pixelCap || rungPixels(longSide) <= pixelCap);
+      if (fits) {
         best = { buffer: out, mimeType: `image/${format}`, longSide };
         hi = mid - 1; // 还有更大的档能试
       } else {
@@ -11590,14 +11622,15 @@ async function main() {
     const pixels = dims ? dims.width * dims.height : 0;
     const tooManyPixels = pixels > MAX_MEDIA_PIXELS;
     const passthrough = imagePassthroughBytes();
-    const overLimit = buf.length > passthrough || tooManyPixels;
+    const softPixels = imageSoftPixels();
+    const overLimit = buf.length > passthrough || pixels > softPixels || tooManyPixels;
     if (overLimit) {
-      const shrunk = await shrinkMediaBuffer(buf, passthrough);
+      const shrunk = await shrinkMediaBuffer(buf, passthrough, tooManyPixels ? MAX_MEDIA_PIXELS : softPixels);
       if (shrunk) {
         log(`图片已本地压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(shrunk.buffer.length / 1024)}KB，长边 ${shrunk.longSide ?? '?'}${dims ? `，源 ${dims.width}x${dims.height}` : ''}）`);
         return shrunk;
       }
-      log(`图片过大且压缩后仍不可用，已跳过（${Math.round(buf.length / 1024)}KB${tooManyPixels ? `，${dims.width}x${dims.height}` : ''}）`);
+      log(`图片过大且压缩后仍不可用，已跳过（${Math.round(buf.length / 1024)}KB${dims ? `，${dims.width}x${dims.height}` : ''}）`);
       return null;
     }
     // 原样投喂也记一笔：线上排查「同一张图私聊看得清、群里糊」时，就是靠对比两条路的
@@ -12866,6 +12899,13 @@ async function main() {
             lastUnreadSeq: Number(val.lastUnreadSeq) || 0,
             // 网关侧 message_seq 水位：不读回来，掉线补拉就没有基线（存了不读等于没存）。
             lastGwSeq: Number(val.lastGwSeq) || 0,
+            // 令牌宽限名单（旧令牌在 until 之前仍然可用，见 agentTokenOk 的说明）
+            prevAgentTokens: Array.isArray(val.prevAgentTokens)
+              ? val.prevAgentTokens
+                .filter((e) => e && typeof e.token === 'string' && e.token)
+                .map((e) => ({ token: String(e.token), until: Number(e.until) || 0 }))
+                .slice(-2)
+              : [],
             deliveredSeq: Number(val.deliveredSeq) || 0,
             // 「回合进行中收到消息、等回合结束再补投」的队列。它只能靠 turn/end 消费，
             // 所以必须持久化：桥接在回合中途重启时会丢掉内存副本，那条消息就再也没人处理。
@@ -12964,6 +13004,9 @@ async function main() {
           lastUnreadSeq: st.lastUnreadSeq || 0,
           // 网关侧 message_seq 水位：掉线补拉靠它定位「从哪接着补」，丢了就补不了（见 backfillMissedMessages）。
           lastGwSeq: Number(st.lastGwSeq) || 0,
+          prevAgentTokens: Array.isArray(st.prevAgentTokens)
+            ? st.prevAgentTokens.filter((e) => e && e.token).slice(-2).map((e) => ({ token: String(e.token), until: Number(e.until) || 0 }))
+            : [],
           // 投递水位必须落盘：丢了会导致升级/重启后重复或漏投（见 markDeliveredV2）。
           deliveredSeq: Number(st.deliveredSeq) || 0,
           // 暂存队列必须落盘：见 loadSocialV2State 里的说明（重启丢掉等于那条消息没人处理）。

@@ -1769,7 +1769,7 @@ await test('身份术语：一代批次提示只在这批真有管理员消息�
 // 车身上的字看得清（AI 认出「赛马娘 玉藻十字」）；群里抓到 7.5MB 原图 → 走压缩阶梯，而阶梯顶端只有
 // 1600px，第一档压出 482KB 就直接采用（4MB 预算只用了 1/8），细节全丢 → AI 只能说「糊成一团认不出来」。
 // 阶梯必须**从大往小试**，让预算决定档位。
-await test('大图压缩要让预算决定档位：不能一律压到 1600px', async (h) => {
+await test('大图压缩：字节与像素两个上限都要满足，且预算是决定档位的依据', async (h) => {
   const W = 4032, H = 3024;
   const raw = Buffer.alloc(W * H * 3);
   let seed = 7;
@@ -1790,8 +1790,10 @@ await test('大图压缩要让预算决定档位：不能一律压到 1600px', a
   assert.ok(big.length > h.imagePassthroughBytes(), `测试图要超过原样阈值（实际 ${Math.round(big.length / 1024)}KB）`);
   const fitted = await h.fitMediaBuffer(big, 'https://x/car.jpg');
   assert.ok(fitted, '要能压出来');
-  assert.ok(fitted.buffer.length <= h.imagePassthroughBytes(), `压完必须在阈值内（${Math.round(fitted.buffer.length / 1024)}KB）`);
-  assert.ok(fitted.longSide >= 2048, `预算允许时要用高分辨率（实际长边 ${fitted.longSide}，修前固定 1600）`);
+  assert.ok(fitted.buffer.length <= h.imagePassthroughBytes(), `压完必须在字节安全区内（${Math.round(fitted.buffer.length / 1024)}KB）`);
+  const px = fitted.longSide * fitted.longSide * (Math.min(W, H) / Math.max(W, H));
+  assert.ok(px <= h.imageSoftPixels(), `压完必须在像素安全区内（${(px / 1e6).toFixed(2)}MP）`);
+  assert.ok(fitted.longSide >= 1280, `安全区允许的前提下别压太狠（实际长边 ${fitted.longSide}）`);
 
   // 预算小的时候该更小：证明档位是被预算决定的，而不是固定值
   const tiny = await h.shrinkMediaBuffer(big, 300 * 1024);
@@ -2508,11 +2510,11 @@ await testWith({ forwardFixtures: FORWARD_FIXTURES }, '多层合并转发：递�
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
 });
 
-// owner 反馈「裁剪后发的图能认出来、群里的大图认不出来」，并问「收到的图片还会被压缩吗」。
-// 原来有一道「视觉舒适区」软上限（>1.5MB 或 >2.5MP 就重编码），它比 DSH 自己的归一化更严：
-// DSH 附件层准入 20MB/64MP，并且会自己缩到 ≤2048x2048 / 编码到 ≤4MB（自带质量阶梯）。
-// 所以那道软压是**重复劳动**，还会先砍掉一层细节。现在：**8MB 以内原样投喂**（超过才压到 8MB 以内）。
-await test('图片不再被软压：阈值（默认 8MB）以内的图原样投喂，超过才压', async (h) => {
+// 图片投喂安全区的**反向回归**（2026-10-15）：曾经为了「少压一点、细节更好」把原样投喂阈值放宽到 8MB，
+// 结果 owner 那张 7.4MB / 4096x3072 的图被原样投给 DSH，DSH 读图爆栈：
+//   [image unavailable: image/jpeg; Maximum call stack size exceeded; …]
+// 模型收到「图不可用」，用户看到「读图那步报错了」。所以字节与像素两个维度都必须卡住安全区。
+await test('图片投喂安全区：超 1.5MB 或 2.5MP 必须重编码（DSH 读大图会爆栈）', async (h) => {
   const W = 1920, H = 2560;
   const raw = Buffer.alloc(W * H * 3);
   let seed = 4242;
@@ -2520,18 +2522,21 @@ await test('图片不再被软压：阈值（默认 8MB）以内的图原样投�
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
     raw[i] = seed & 0xff;
   }
-  // 2.3MB 左右：以前会被软压到 1.5MB 以内，现在必须**原样**投喂
+  // 1920x2560 = 4.9MP / 2.3MB：两个维度都超安全区 → 必须重编码
   const midJpeg = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
-  assert.ok(midJpeg.length > 1.5 * 1024 * 1024 && midJpeg.length < h.imagePassthroughBytes(),
-    `测试图要在旧软上限与新阈值之间（实际 ${Math.round(midJpeg.length / 1024)}KB）`);
+  assert.ok(midJpeg.length > h.imagePassthroughBytes(), `测试图要超字节安全区（实际 ${Math.round(midJpeg.length / 1024)}KB）`);
+  assert.ok(W * H > h.imageSoftPixels(), '测试图也要超像素安全区');
   const kept = await h.fitMediaBuffer(midJpeg, 'https://x/a.jpg');
-  assert.equal(kept.buffer.length, midJpeg.length, '阈值以内不许重编码（否则又会掉细节）');
-  assert.equal(kept.longSide, undefined, '原样返回没有长边信息');
+  assert.ok(kept, '要能压出来');
+  assert.ok(kept.buffer.length <= h.imagePassthroughBytes(), `压到字节安全区内（${Math.round(kept.buffer.length / 1024)}KB）`);
+  const keptPixels = kept.longSide * kept.longSide * (Math.min(W, H) / Math.max(W, H));
+  assert.ok(keptPixels <= h.imageSoftPixels(), `压到像素安全区内（${(keptPixels / 1e6).toFixed(2)}MP）`);
+  assert.ok(kept.longSide < Math.max(W, H), '必须真的降了分辨率');
 
-  // 小图同样原样
+  // 安全区内的小图原样返回
   const small = await sharp(raw.subarray(0, 320 * 240 * 3), { raw: { width: 320, height: 240, channels: 3 } }).jpeg({ quality: 70 }).toBuffer();
   const same = await h.fitMediaBuffer(small, 'https://x/b.jpg');
-  assert.equal(same.buffer.length, small.length, '小图原样返回');
+  assert.equal(same.buffer.length, small.length, '安全区内原样返回');
 });
 
 // 整蛊/钓鱼：模型默认会老实地纠正/自证，那正好是对方要的效果。
@@ -2708,6 +2713,29 @@ await testWith({
   // 归位：补回的消息时间更早，必须排在「断线后新收到的那条」前面
   const order = st.recentMessages.map((m) => m.text);
   assert.ok(order.indexOf('断线前最后一条') < order.indexOf('断线期间第一条'), '按时间归位，不能直接 append');
+});
+
+// 线上事故（2026-10-15 14:46 私聊）：会话重建（DSH 重启）时桥接轮换了 agent token 并立刻撤销旧的，
+// 但**已经在跑的那个回合手里还是旧令牌** → 它所有工具调用被拒（"agent token 无效"），连发消息都失败，
+// 用户看到的就是「机器人哑了」。旧令牌本来就属于同一会话，给 30 分钟宽限期。
+await test('会话重建后旧令牌要有宽限期（否则在跑的那个回合会全废）', async (h) => {
+  h.setMode('reserved2');
+  const key = 'group:456';  // 用白名单内的群（private:456 不在装置白名单里，唤醒会被跳过）
+  const st = h.getSocialV2State(key);
+  // 先真建一个会话（retireSession 只对「有会话」的会话做事）
+  await h.sendWakePromptV2(key, 'admin').catch(() => {});
+  const oldToken = String(st.agentToken);
+  assert.equal(h.agentTokenOk(key, oldToken), true, '当前令牌当然可用');
+
+  h.retireSession(key); // 不带 keepIdentity → 轮换令牌
+  assert.notEqual(String(st.agentToken), oldToken, '令牌要换新');
+  assert.equal(h.agentTokenOk(key, String(st.agentToken)), true, '新令牌可用');
+  assert.equal(h.agentTokenOk(key, oldToken), true, '旧令牌在宽限期内仍然可用（在跑的回合靠它）');
+  assert.equal(h.agentTokenOk(key, 'deadbeef'.repeat(4)), false, '陌生令牌依然拒绝');
+
+  // 宽限期过后旧令牌失效
+  st.prevAgentTokens = [{ token: oldToken, until: Date.now() - 1000 }];
+  assert.equal(h.agentTokenOk(key, oldToken), false, '宽限期过后必须失效');
 });
 
 // 线上事故（2026-10-15 13:23）：owner 在故障窗口发了「hi」，网关恢复后桥接补拉却报「没有缺口」。

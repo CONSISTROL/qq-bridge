@@ -412,7 +412,8 @@ const CFG_SCHEMA = {
     fields: [
       { path: 'enabled', label: '启用图片功能', type: 'bool' },
       { path: 'allowRemoteUrl', label: '允许远程 URL', type: 'bool', hint: '关闭后只能用本地图库/base64，AI 不能抓网络图' },
-      { path: 'passthroughBytes', label: '图片原样投喂上限（字节）', type: 'number', hint: '这个值以内的图不再本地压缩，直接交给 DSH 归一化（默认 8MB＝8388608）。调小更省内存/带宽但更糊，调大更清晰；DSH 侧准入是 20MB/64MP，别超过它' },
+      { path: 'passthroughBytes', label: '图片原样投喂上限（字节）', type: 'number', hint: '这个值以内的图不再本地压缩（默认 1.5MB＝1572864）。**别调大**：DSH 读大图会爆栈（历史事故：7.4MB/4096x3072 的图原样投喂 → Maximum call stack size exceeded → 模型只看到「图不可用」）；调大前先用大图实测' },
+      { path: 'softPixels', label: '图片原样投喂像素上限', type: 'number', hint: '像素维度同样要卡（默认 2500000＝2.5MP）。爆栈那次是 12.6MP；实测 2MP 级稳定。改大同样有风险' },
       { path: 'rating', label: '图片年龄分级', type: 'select', hint: '只决定「搜图返回什么」，不影响发送/收藏。r18 档只有「真实 pixiv」源能给出（bobopic 镜像里没有 R-18）；限制级（explicit）任何档位都不返回', options: [{ value: 'safe', label: 'safe — 只返回全年龄（默认）' }, { value: 'mild', label: 'mild — 允许轻度擦边（水着/黑丝/大腿等标签）' }, { value: 'r18', label: 'r18 — 允许 R-18（需真实 pixiv + 登录 cookie）' }] },
       { path: 'pixiv.enabled', label: '真实 pixiv（走代理）', type: 'bool', hint: '开启后搜图直接打 pixiv 官方接口（结果比 bobopic 镜像多得多）；本机直连不通，必须填代理' },
       { path: 'pixiv.proxy', label: 'pixiv 代理地址', type: 'text', placeholder: 'http://127.0.0.1:7897', hint: '只对 pixiv 系域名生效（bobopic / B 站仍然直连）。填 Clash 的混合端口' },
