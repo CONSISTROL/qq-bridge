@@ -81,6 +81,7 @@ const FIELDS = [
   { id: 'v2ProactiveProbability', path: 'proactive.probability', def: 0.3, min: 0, max: 1 },
   // 反重复：记住最近主动开的头 + 随机点方向 + 主动开口时别碰的词
   { id: 'v2ProactiveRememberOpeners', path: 'proactive.rememberOpeners', def: 20, min: 0, max: 20 },
+  { id: 'v2ProactiveRememberSelfSaid', path: 'proactive.rememberSelfSaid', def: 40, min: 10, max: 60 },
   { id: 'v2ProactiveSuggestDomains', path: 'proactive.suggestDomains', def: 3, min: 0, max: 8 },
   { id: 'v2ProactiveDomainCooldown', path: 'proactive.domainCooldown', def: 2, min: 0, max: 6 },
   // 语义查重闸门：主动开口前和最近的盘比向量相似度，太像就不发（0.75 = 实测同话题 0.83 / 不同话题 0.32~0.47）

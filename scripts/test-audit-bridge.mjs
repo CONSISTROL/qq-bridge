@@ -1290,6 +1290,80 @@ await test('唤醒频率超限不能丢掉：要暂存，额度恢复后自动�
   assert.ok(h.calls.prompts.length > before, '这一次真的把唤醒投给模型了');
 });
 
+// owner 反馈「AI 还是会在群里发已经发过的话题」，并问「AI 自己发过的话有加入记忆吗」。
+// 查证：旧记忆只记 proactiveCheck 那一轮的「主动开的头」，**回复里讲过的内容完全不在参照池里**。
+// 真实案例：电车服务区充电先说在回复里，5 天后又当新话题开了一次（语义相似度 0.764）。
+await test('旧状态补种：从已有发言推导出 selfSaid（含回复），并把开盘标的认出来', async (h) => {
+  const now = Date.now();
+  const derived = h.deriveSelfSaid({
+    recentMessages: [
+      { sender: '我', isSelf: true, text: '刷到个视频，有电车车主在服务区排队充电，前面排着179辆车', time: now - 5 * 86400000 },
+      { sender: 'kafka', isSelf: false, text: '哈哈', time: now - 5 * 86400000 + 1000 },
+      { sender: '我', isSelf: true, text: '另外今年多个新变量：高速免费七天', time: now - 4 * 86400000 },
+    ],
+    proactiveOpeners: [{ text: '另外今年多个新变量：高速免费七天', at: now - 4 * 86400000 }],
+  });
+  assert.equal(derived.length, 2, '只补种自己发的、有文字的');
+  assert.equal(derived[0].kind, 'reply', '对不上开盘记录的按回复处理');
+  assert.equal(derived[1].kind, 'opener', '与 proactiveOpeners 对上的标成开盘');
+  assert.ok(derived[0].at > 0, '要带上原始时间（提示里要显示「5 天前」）');
+
+  // 已经有 selfSaid 的状态：原样沿用，不重复补种
+  const kept = h.deriveSelfSaid({ selfSaid: [{ text: '已有记忆', at: 1, kind: 'reply' }], recentMessages: [{ isSelf: true, text: '别的', time: 2 }] });
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].text, '已有记忆');
+});
+
+await test('自己说过的话要进记忆：回复里的内容也算（kind=reply），开盘轮算 opener', async (h) => {
+  h.setMode('reserved2');
+  const key = 'group:456';
+  const st = h.getSocialV2State(key);
+  st.lastWakeReason = 'speaker:kafka';           // 回复轮
+  h.recordSentMessagesV2(key, ['刷到个视频，有电车车主在服务区排队充电，前面排着179辆车']);
+  assert.equal(st.selfSaid.length, 1, '回复里说过的话也要记下来');
+  assert.equal(st.selfSaid[0].kind, 'reply', '要区分是回复还是主动开盘');
+  st.lastWakeReason = 'proactiveCheck';          // 主动开盘轮
+  h.recordSentMessagesV2(key, ['另外今年多个新变量：高速免费七天']);
+  assert.equal(st.selfSaid.length, 2);
+  assert.equal(st.selfSaid[1].kind, 'opener');
+  // 落盘/载入要保留（否则重启后又开始复读）
+  assert.ok(Array.isArray(st.selfSaid) && typeof st.selfSaid[0].text === 'string');
+});
+
+await testWith(
+  { globals: { EmbeddingClient: FakeRepeatEmbedder, scrubFormulaicSpeech, describeScrub } },
+  '查重闸门要拿「自己说过的话」当参照池：回复里讲过的题，别再当新话题开', async (h) => {
+  const stopKeepAlive = h.keepLoopAlive();
+  const server = h.startConsoleServer();
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+    h.setMode('reserved2');
+    const key = 'group:456';
+    const st = h.getSocialV2State(key);
+    // 两天前「回复」里讲过耳虫；主动开盘的记忆里没有它
+    st.selfSaid = [{ text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: Date.now() - 2 * 86400000, kind: 'reply' }];
+    st.proactiveOpeners = [];
+    await h.sendWakePromptV2(key, 'proactiveCheck').catch(() => {});
+    const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      body: { key, messages: '一段旋律在我脑子里单曲循环到现在，这叫耳虫' }, agentToken: st.agentToken,
+    });
+    assert.equal(res.body.selfRepeat, true, '回复里讲过的同话题开盘要被拦');
+    assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 0, '拦下就不发');
+  } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+}
+);
+
+await test('主动开口提示要摆出「你最近说过的话」（避免换个说法再讲一遍）', async (h) => {
+  const block = h.buildProactiveTopicBlock({
+    proactiveOpeners: [],
+    selfSaid: [{ text: '刷到个视频，有电车车主在服务区排队充电，前面排着179辆车', at: Date.now() - 5 * 86400000, kind: 'reply' }],
+    proactiveDomains: [],
+  });
+  assert.match(block, /你最近在这个群说过的话/, '要把自己说过的话摆出来');
+  assert.match(block, /电车车主在服务区排队充电/, '内容要带上');
+  assert.match(block, /5 天前/, '要标时间');
+});
+
 await test('主动开话题：更早开过的头要带时间摆出来（避免隔天又来一遍）', async (h) => {
   const now = Date.now();
   const st = {

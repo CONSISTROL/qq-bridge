@@ -765,6 +765,7 @@ function loadConfig() {
         // 这里记下最近几次「你主动开的头」，下一轮原样摆给它并要求换方向；
         // 再从 domains 里随机点几个方向，给它一个不同于近期记忆的抓手。
         rememberOpeners: 20,       // 记住最近几条主动开的话题（0 = 不记）；20 条才够覆盖「隔天又来一遍」
+        rememberSelfSaid: 40,
         openerChars: 120,          // 每条记多少字（太长会挤占上下文）
         suggestDomains: 3,         // 每次随机点几个方向（0 = 不点）
         domainCooldown: 2,         // 最近几轮建议过的方向先避开（0 = 纯随机，实测容易连抽同类）
@@ -846,6 +847,7 @@ function loadConfig() {
     idleThresholdMs: 15 * 60 * 1000,
     probability: 0.3,
     rememberOpeners: 20,
+    rememberSelfSaid: 40,
     openerChars: 120,
     suggestDomains: 3,
     domainCooldown: 2,
@@ -6790,7 +6792,7 @@ async function main() {
             if (merged.proactive.enabled !== undefined) merged.proactive.enabled = merged.proactive.enabled === true;
             if (merged.proactive.probability !== undefined) merged.proactive.probability = Math.min(1, Math.max(0, Number(merged.proactive.probability) || 0));
             // 反重复参数：避免主动开口每次都聊同一个圈子。
-            for (const k of ['rememberOpeners', 'suggestDomains', 'domainCooldown', 'openerChars', 'repeatWindowHours']) {
+            for (const k of ['rememberOpeners', 'rememberSelfSaid', 'suggestDomains', 'domainCooldown', 'openerChars', 'repeatWindowHours']) {
               if (merged.proactive[k] !== undefined) {
                 const n = Number(merged.proactive[k]);
                 merged.proactive[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : (Number(current.proactive?.[k]) || 0);
@@ -12228,7 +12230,11 @@ async function main() {
     const windowHours = Math.max(0, numOr(p.repeatWindowHours, 168));
     const since = windowHours > 0 ? Date.now() - windowHours * 3600 * 1000 : 0;
     // 最多比 12 条：embedder 是 8 条一批的小批量模型（批量大会 OOM），pool 太小又覆盖不到隔天的。
-    const pool = (Array.isArray(st?.proactiveOpeners) ? st.proactiveOpeners : [])
+    // 参照池 = 自己说过的话（主动开盘 + 回复），旧状态没有 selfSaid 时退回只比开盘。
+    const source = (Array.isArray(st?.selfSaid) && st.selfSaid.length)
+      ? st.selfSaid
+      : (Array.isArray(st?.proactiveOpeners) ? st.proactiveOpeners : []);
+    const pool = source
       .filter((o) => o && o.text && (!since || (Number(o.at) || 0) >= since))
       .slice(-12);
     if (!pool.length) return null;
@@ -12865,6 +12871,7 @@ async function main() {
                 .slice(-20)
               : [],
             // 最近几轮「建议过的方向」：方向池纯随机很容易连抽同类，靠它做轮换。
+            selfSaid: deriveSelfSaid(val),
             proactiveDomains: Array.isArray(val.proactiveDomains)
               ? val.proactiveDomains
                 .filter((r) => r && typeof r === 'object' && Array.isArray(r.names))
@@ -12953,6 +12960,9 @@ async function main() {
           // 主动开过的话题：反重复要用，必须跨重启保留（否则重启后又开始复读）。
           proactiveOpeners: Array.isArray(st.proactiveOpeners)
             ? st.proactiveOpeners.filter((o) => o && o.text).slice(-20).map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0 }))
+            : [],
+          selfSaid: Array.isArray(st.selfSaid)
+            ? st.selfSaid.filter((o) => o && o.text).slice(-60).map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0, kind: o.kind === 'opener' ? 'opener' : 'reply' }))
             : [],
           proactiveDomains: Array.isArray(st.proactiveDomains)
             ? st.proactiveDomains.filter((r) => r && Array.isArray(r.names)).slice(-8).map((r) => ({ names: r.names.map((n) => String(n)).slice(0, 8), at: Number(r.at) || 0 }))
@@ -14245,6 +14255,36 @@ async function main() {
   }
 
   // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
+  /**
+   * 自己说过的话（含**回复**）的规范化 / 补种。
+   * 为什么要补种：旧状态里没有 selfSaid 字段，不补的话新逻辑要等好几天才生效，
+   * 而线上那次「电车充电」重复（先说在回复里、5 天后又当新话题开）正好发生在补丁之前。
+   * 补种时能对上的（文本前 40 字与 proactiveOpeners 相同）标成 opener，其余按 reply 处理。
+   */
+  function deriveSelfSaid(val) {
+    const normalize = (o) => ({
+      text: String(o.text).slice(0, 400),
+      at: Number(o.at) || 0,
+      kind: o.kind === 'opener' ? 'opener' : 'reply'
+    });
+    const saved = Array.isArray(val?.selfSaid)
+      ? val.selfSaid
+        .filter((o) => o && typeof o === 'object' && typeof o.text === 'string' && o.text.trim())
+        .map(normalize)
+        .slice(-60)
+      : [];
+    if (saved.length) return saved;
+    const openerTexts = new Set((Array.isArray(val?.proactiveOpeners) ? val.proactiveOpeners : [])
+      .map((o) => String(o?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)));
+    return (Array.isArray(val?.recentMessages) ? val.recentMessages : [])
+      .filter((m) => m && m.isSelf && typeof m.text === 'string' && m.text.trim())
+      .slice(-60)
+      .map((m) => {
+        const text = String(m.text).replace(/\s+/g, ' ').trim().slice(0, 400);
+        return { text, at: Number(m.time) || 0, kind: openerTexts.has(text.slice(0, 40)) ? 'opener' : 'reply' };
+      });
+  }
+
   function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null, card = null, gwSeq = null, atSelf = false) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -14397,6 +14437,22 @@ async function main() {
       });
     }
     if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+    // **自己说过的话**（不只是主动开盘）：线上问题——同一话题先在「回复」里讲过，过几天又当新话题
+    // 开了一遍（真实案例：电车服务区充电，先说在回复里，5 天后又主动开一次，相似度 0.76），而旧的
+    // 反重复记忆只记 proactiveCheck 那一轮，回复里的内容完全不在防重复的参照池里。
+    // 这里把每次发出的文本都记进 selfSaid（带上是不是主动开盘），供①查重闸门 ②提示词摆给模型看。
+    {
+      const isOpenerTurn = st.lastWakeReason === 'proactiveCheck';
+      const chars = Math.max(20, Math.min(400, numOr(cfg.socialV2?.proactive?.openerChars, 120)));
+      if (!Array.isArray(st.selfSaid)) st.selfSaid = [];
+      for (let i = 0; i < list.length; i++) {
+        const t = String(list[i] ?? '').replace(/\s{2,}/g, ' ').trim();
+        if (!t) continue;
+        st.selfSaid.push({ text: t.slice(0, chars), at: now + i * 1000, kind: isOpenerTurn ? 'opener' : 'reply' });
+      }
+      const keepSaid = Math.max(10, Math.min(60, numOr(cfg.socialV2?.proactive?.rememberSelfSaid, 40)));
+      if (st.selfSaid.length > keepSaid) st.selfSaid.splice(0, st.selfSaid.length - keepSaid);
+    }
     // 记下「这一轮是你主动起的话头」：下一轮主动开话题时会把这些原样摆出来要求换方向，
     // 否则模型会顺着记忆/群里最近的热点一遍遍开同一个话题（线上表现：每次都聊同一个圈子）。
     if (st.lastWakeReason === 'proactiveCheck' && list.length) {
@@ -14759,6 +14815,16 @@ async function main() {
         st.proactiveDomains.push({ names: picked.slice(), at: Date.now() });
         if (st.proactiveDomains.length > 8) st.proactiveDomains.splice(0, st.proactiveDomains.length - 8);
       }
+    }
+    // ①.5 说过的话（尤其回复里讲过的）也要摆出来：它们不在「主动开的头」那份清单里，
+    //     但同样不该过几天又被当成新话题讲一遍（线上：电车充电先说在回复里，5 天后又开一次）。
+    const saidRecent = (Array.isArray(st?.selfSaid) ? st.selfSaid : [])
+      .filter((o) => o && o.text && o.kind !== 'opener')
+      .slice(-8);
+    if (p.avoidRepeat !== false && saidRecent.length) {
+      out += '【你最近在这个群说过的话 · 别再当新话题讲一遍】\n'
+        + saidRecent.map((o) => `- [${relativeTimeLabel(o.at)}] ${String(o.text).replace(/\s+/g, ' ').slice(0, 34)}`).join('\n')
+        + '\n这些是你自己讲过的内容：要接着聊就明确接着说，别换个说法当成新发现再讲一遍。\n\n';
     }
     // ② 最关键的一条：记忆和群史是「背景」，不是「题材」。
     out += '【别拿记忆和群史当题材】上面的【群聊上下文】【进行中的话题】只是让你知道群里在聊什么，'
