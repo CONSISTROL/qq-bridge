@@ -613,6 +613,9 @@ function loadConfig() {
         allowRemoteUrl: false,
         libraryDir: 'assets/stickers',
         maxBytes: 5 * 1024 * 1024,
+        // 单张图「原样投喂」上限（默认 8MB）：以内的图不再本地重编码，交给 DSH 归一化；
+        // 超过才压到这个值以内。调小 = 更省上下文但更糊，调大 = 更清晰但更费内存/带宽。
+        passthroughBytes: 8 * 1024 * 1024,
         maxPerMinute: 5,
         maxPerHour: 30,
         // 防重复发图窗口（毫秒）：同一张图（按 pixiv 作品 id / URL 身份）在这段时间内不再发第二次。
@@ -6666,7 +6669,7 @@ async function main() {
           if (body.image && typeof body.image === 'object') {
             const cur = current.image ?? {};
             merged.image = { ...cur, ...body.image };
-            for (const k of ['maxBytes', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs', 'deliverCheckMs', 'deliverCheckFastMs']) {
+            for (const k of ['maxBytes', 'passthroughBytes', 'maxPerMinute', 'maxPerHour', 'repeatGuardMs', 'deliverCheckMs', 'deliverCheckFastMs']) {
               if (merged.image[k] !== undefined) {
                 const n = Number(merged.image[k]);
                 merged.image[k] = Number.isFinite(n) && n >= 0 ? Math.round(n) : (cur[k] ?? 0);
@@ -11450,17 +11453,20 @@ async function main() {
   }
 
   const MAX_MEDIA_COUNT = 5; // 单条消息最多内联/返回的图片/表情数
-  const MAX_MEDIA_BYTES = 4 * 1024 * 1024; // 投喂给模型的单张图片字节上限
+  const MAX_MEDIA_BYTES = 4 * 1024 * 1024; // 单条消息图片的合计预算（fetchMediaData 的 maxTotalBytes 兜底）
+  // **单张图「原样投喂」的上限**：这个值以内的图不再本地重编码，直接交给 DSH ——
+  // DSH 附件层的准入是 20MB/64MP/8192px，而且它自己会归一化（缩到 ≤2048x2048 像素、编码到 ≤4MB，
+  // 自带质量阶梯）。我们原来的 4MB 硬顶 + 1.5MB 软压是**更严的重复劳动**：
+  // owner 反馈「裁剪后发的图能认出来、群里的大图认不出来」，根因就是 1.5MB 以上先被砍了一刀。
+  const imagePassthroughBytes = () => {
+    const raw = Number(cfg.socialV2?.image?.passthroughBytes);
+    return Math.max(256 * 1024, Math.min(16 * 1024 * 1024, Number.isFinite(raw) && raw > 0 ? raw : 8 * 1024 * 1024));
+  };
   const MAX_MEDIA_PIXELS = 64_000_000; // 单张图片像素上限，防止“图片炸弹”解码拖垮 DSH
   // 抓原图时的硬上限：先抓下来、再本地压缩。QQ 手机直出照片常在 4~8MB，
   // 若直接按 MAX_MEDIA_BYTES 去抓，连图都拿不到——线上事故：4.35MB 的月饼图，
   // AI 只回「图我这边没取到」，用户连发三张都看不到。
   const MAX_MEDIA_FETCH_BYTES = 16 * 1024 * 1024;
-  // 给视觉模型的「舒适区」：模型侧本来就会把图缩到 ~1MP 级别，原样塞一张 3.75MB 的
-  // 1920×2560 PNG 既费上下文、又会把上层的图片归一化压垮（实测抛
-  // `Maximum call stack size exceeded`）。所以即使没撞硬上限，也主动压到舒适区内。
-  const VISION_SOFT_BYTES = 1.5 * 1024 * 1024;
-  const VISION_SOFT_PIXELS = 2_500_000;
   const MAX_MEDIA_STORE_PER_KEY = 500; // 每个会话最多缓存多少条消息的媒体元数据，防止无限增长
 
   // 动图不能只喂第一帧。线上事故：27 帧的「兔耳蹲着」动图，只取第 1 帧时就是一张
@@ -11569,24 +11575,16 @@ async function main() {
     const dims = getImageDimensions(buf);
     const pixels = dims ? dims.width * dims.height : 0;
     const tooManyPixels = pixels > MAX_MEDIA_PIXELS;
-    const overHardLimit = buf.length > MAX_MEDIA_BYTES || tooManyPixels;
-    if (overHardLimit) {
-      const shrunk = await shrinkMediaBuffer(buf);
+    const passthrough = imagePassthroughBytes();
+    const overLimit = buf.length > passthrough || tooManyPixels;
+    if (overLimit) {
+      const shrunk = await shrinkMediaBuffer(buf, passthrough);
       if (shrunk) {
         log(`图片已本地压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(shrunk.buffer.length / 1024)}KB，长边 ${shrunk.longSide ?? '?'}${dims ? `，源 ${dims.width}x${dims.height}` : ''}）`);
         return shrunk;
       }
       log(`图片过大且压缩后仍不可用，已跳过（${Math.round(buf.length / 1024)}KB${tooManyPixels ? `，${dims.width}x${dims.height}` : ''}）`);
       return null;
-    }
-    // 软上限：没超硬限但离舒适区太远（大 PNG 截图最典型），压到舒适区内。
-    // 压完反而更大（本来就压得很狠的 JPEG）就保留原图，不做无谓重编码。
-    if (buf.length > VISION_SOFT_BYTES || pixels > VISION_SOFT_PIXELS) {
-      const softer = await shrinkMediaBuffer(buf, VISION_SOFT_BYTES);
-      if (softer && softer.buffer.length < buf.length) {
-        log(`图片超视觉舒适区，已压缩后投喂（${Math.round(buf.length / 1024)}KB → ${Math.round(softer.buffer.length / 1024)}KB，长边 ${softer.longSide ?? '?'}${pixels ? `，源 ${dims.width}x${dims.height}` : ''}）`);
-        return softer;
-      }
     }
     // 原样投喂也记一笔：线上排查「同一张图私聊看得清、群里糊」时，就是靠对比两条路的
     // 「拿到多少 KB / 多少像素」定位到「群里抓到 7.5MB 原图被压到 1600px」的。
@@ -12025,9 +12023,9 @@ async function main() {
    * `maxCount` 默认沿用单条消息的上限（MAX_MEDIA_COUNT）；合并转发那种「一条消息里
    * 塞了几十张图」的场景由调用方显式放宽——但**不会**无限放宽，见 forward-media 端点。
    */
-  async function fetchMediaData(mediaList, { maxCount = MAX_MEDIA_COUNT, maxTotalBytes = MAX_MEDIA_BYTES } = {}) {
+  async function fetchMediaData(mediaList, { maxCount = MAX_MEDIA_COUNT, maxTotalBytes = imagePassthroughBytes() } = {}) {
     const cap = Math.max(1, Math.min(64, Number(maxCount) || MAX_MEDIA_COUNT));
-    const byteBudget = Math.max(256 * 1024, Math.min(64 * 1024 * 1024, Number(maxTotalBytes) || MAX_MEDIA_BYTES));
+    const byteBudget = Math.max(256 * 1024, Math.min(64 * 1024 * 1024, Number(maxTotalBytes) || imagePassthroughBytes()));
     const out = [];
     let index = 0;
     let totalBytes = 0;

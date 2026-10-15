@@ -229,7 +229,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     setPresets(value) { dshPresetIds = value; dshDefaultPreset = 'standard'; },
     resetEpoch() { sessionEpoch++; },
     // 图片压缩兜底：超限图片必须本地缩放后再投喂，而不是直接丢掉（线上 4.35MB 月饼图取不到）。
-    fitMediaBuffer, shrinkMediaBuffer, MAX_MEDIA_BYTES, MAX_MEDIA_FETCH_BYTES,
+    fitMediaBuffer, shrinkMediaBuffer, MAX_MEDIA_BYTES, MAX_MEDIA_FETCH_BYTES, imagePassthroughBytes,
     // 表情包 vs 图片：网关用 sub_type=1 / summary=[动画表情] 标 QQ 动画表情，
     // 桥接必须把这个身份带给 AI（否则 AI 会把表情包当成照片，见线上那次「发第二遍了」）。
     imageSegmentLabel, segmentsToText, mediaHintFor, appendSocialV2Message,

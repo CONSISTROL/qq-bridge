@@ -1769,16 +1769,17 @@ await test('身份术语：一代批次提示只在这批真有管理员消息�
 // 车身上的字看得清（AI 认出「赛马娘 玉藻十字」）；群里抓到 7.5MB 原图 → 走压缩阶梯，而阶梯顶端只有
 // 1600px，第一档压出 482KB 就直接采用（4MB 预算只用了 1/8），细节全丢 → AI 只能说「糊成一团认不出来」。
 // 阶梯必须**从大往小试**，让预算决定档位。
-await test('大图压缩要让预算决定档位：4MB 预算下不能一律压到 1600px', async (h) => {
+await test('大图压缩要让预算决定档位：不能一律压到 1600px', async (h) => {
   const W = 4032, H = 3024;
   const raw = Buffer.alloc(W * H * 3);
   let seed = 7;
-  for (let y = 0; y < H; y += 4) {
-    for (let x = 0; x < W; x += 4) {
+  // 2x2 的块状噪点：比 4x4 更难压，才够超过「原样投喂」阈值（8MB），从而真正走到压缩阶梯
+  for (let y = 0; y < H; y += 2) {
+    for (let x = 0; x < W; x += 2) {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
       const v = seed & 0xff;
-      for (let dy = 0; dy < 4 && y + dy < H; dy++) {
-        for (let dx = 0; dx < 4 && x + dx < W; dx++) {
+      for (let dy = 0; dy < 2 && y + dy < H; dy++) {
+        for (let dx = 0; dx < 2 && x + dx < W; dx++) {
           const i = ((y + dy) * W + (x + dx)) * 3;
           raw[i] = v; raw[i + 1] = (v * 3) & 0xff; raw[i + 2] = (v * 7) & 0xff;
         }
@@ -1786,11 +1787,11 @@ await test('大图压缩要让预算决定档位：4MB 预算下不能一律压�
     }
   }
   const big = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 96 }).toBuffer();
-  assert.ok(big.length > h.MAX_MEDIA_BYTES, `测试图要超过硬上限（实际 ${Math.round(big.length / 1024)}KB）`);
+  assert.ok(big.length > h.imagePassthroughBytes(), `测试图要超过原样阈值（实际 ${Math.round(big.length / 1024)}KB）`);
   const fitted = await h.fitMediaBuffer(big, 'https://x/car.jpg');
   assert.ok(fitted, '要能压出来');
-  assert.ok(fitted.buffer.length <= h.MAX_MEDIA_BYTES, `压完必须在预算内（${Math.round(fitted.buffer.length / 1024)}KB）`);
-  assert.ok(fitted.longSide >= 2048, `4MB 预算下要尽量用高分辨率（实际长边 ${fitted.longSide}，修前固定 1600）`);
+  assert.ok(fitted.buffer.length <= h.imagePassthroughBytes(), `压完必须在阈值内（${Math.round(fitted.buffer.length / 1024)}KB）`);
+  assert.ok(fitted.longSide >= 2048, `预算允许时要用高分辨率（实际长边 ${fitted.longSide}，修前固定 1600）`);
 
   // 预算小的时候该更小：证明档位是被预算决定的，而不是固定值
   const tiny = await h.shrinkMediaBuffer(big, 300 * 1024);
@@ -1814,7 +1815,7 @@ await test('超限图片会本地压缩后投喂，而不是直接判定「看�
 
   const fitted = await h.fitMediaBuffer(big);
   assert.ok(fitted, '超限图片应压缩成功，而不是返回 null');
-  assert.ok(fitted.buffer.length <= h.MAX_MEDIA_BYTES, `压缩后必须在上限内（${fitted.buffer.length}）`);
+  assert.ok(fitted.buffer.length <= h.imagePassthroughBytes(), `压缩后必须在原样阈值内（${fitted.buffer.length}）`);
   assert.equal(fitted.mimeType, 'image/jpeg', '压缩后统一成 JPEG');
 
   // 未超限的图原样返回（不重编码，避免透明/动图被破坏、也不白费 CPU）
@@ -2507,12 +2508,11 @@ await testWith({ forwardFixtures: FORWARD_FIXTURES }, '多层合并转发：递�
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
 });
 
-// 线上实测：合并转发里一张 3.75MB 的 1920×2560 PNG（照片存成 PNG）没撞 4MB 硬上限，
-// 被原样投给模型，结果上层图片归一化直接 `Maximum call stack size exceeded`。
-// 所以加了一道「视觉舒适区」软上限：没超硬限也压到 ~1.5MB / ~2.5MP 内。
-// 注意要测「体积大 + 像素大」的图：如果源图本身已压得很小（例如可高度压缩的 PNG），
-// 压完反而更大时应当保留原图，不做无谓重编码。
-await test('图片投喂舒适区：超舒适区的大图会被压小，本来就小的图保持原样', async (h) => {
+// owner 反馈「裁剪后发的图能认出来、群里的大图认不出来」，并问「收到的图片还会被压缩吗」。
+// 原来有一道「视觉舒适区」软上限（>1.5MB 或 >2.5MP 就重编码），它比 DSH 自己的归一化更严：
+// DSH 附件层准入 20MB/64MP，并且会自己缩到 ≤2048x2048 / 编码到 ≤4MB（自带质量阶梯）。
+// 所以那道软压是**重复劳动**，还会先砍掉一层细节。现在：**8MB 以内原样投喂**（超过才压到 8MB 以内）。
+await test('图片不再被软压：阈值（默认 8MB）以内的图原样投喂，超过才压', async (h) => {
   const W = 1920, H = 2560;
   const raw = Buffer.alloc(W * H * 3);
   let seed = 4242;
@@ -2520,19 +2520,18 @@ await test('图片投喂舒适区：超舒适区的大图会被压小，本来�
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
     raw[i] = seed & 0xff;
   }
-  // 照片式大图：1920×2560，2.3MB 左右（体积没超硬上限，但在舒适区之外）
-  const bigJpeg = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
-  assert.ok(bigJpeg.length > 1.5 * 1024 * 1024 && bigJpeg.length < 4 * 1024 * 1024,
-    `测试图要落在软/硬上限之间（实际 ${Math.round(bigJpeg.length / 1024)}KB）`);
-  const fitted = await h.fitMediaBuffer(bigJpeg, 'https://x/a.jpg');
-  assert.ok(fitted, '要能压出来');
-  assert.ok(fitted.buffer.length <= 1.5 * 1024 * 1024, `压到舒适区内（${Math.round(fitted.buffer.length / 1024)}KB）`);
-  assert.ok(fitted.buffer.length < bigJpeg.length, '压完要更小');
+  // 2.3MB 左右：以前会被软压到 1.5MB 以内，现在必须**原样**投喂
+  const midJpeg = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
+  assert.ok(midJpeg.length > 1.5 * 1024 * 1024 && midJpeg.length < h.imagePassthroughBytes(),
+    `测试图要在旧软上限与新阈值之间（实际 ${Math.round(midJpeg.length / 1024)}KB）`);
+  const kept = await h.fitMediaBuffer(midJpeg, 'https://x/a.jpg');
+  assert.equal(kept.buffer.length, midJpeg.length, '阈值以内不许重编码（否则又会掉细节）');
+  assert.equal(kept.longSide, undefined, '原样返回没有长边信息');
 
-  // 小图：在舒适区内，原样返回（不做无谓重编码）
+  // 小图同样原样
   const small = await sharp(raw.subarray(0, 320 * 240 * 3), { raw: { width: 320, height: 240, channels: 3 } }).jpeg({ quality: 70 }).toBuffer();
   const same = await h.fitMediaBuffer(small, 'https://x/b.jpg');
-  assert.equal(same.buffer.length, small.length, '舒适区内原样返回');
+  assert.equal(same.buffer.length, small.length, '小图原样返回');
 });
 
 // 整蛊/钓鱼：模型默认会老实地纠正/自证，那正好是对方要的效果。
