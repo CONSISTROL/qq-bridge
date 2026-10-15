@@ -2710,6 +2710,99 @@ await testWith({
   assert.ok(order.indexOf('断线前最后一条') < order.indexOf('断线期间第一条'), '按时间归位，不能直接 append');
 });
 
+// 线上事故（2026-10-15 13:23）：owner 在故障窗口发了「hi」，网关恢复后桥接补拉却报「没有缺口」。
+// 查证：这个网关的 message_seq **不是按会话单调递增**的（私聊里 10/11 的文件是 59884，今天的 hi 才 35758），
+// 而旧逻辑用「见过的最大 seq」当水位 → 比它小的新消息被永久过滤掉。
+// 而且 get_*_msg_history 对 message_seq 参数无效（传什么都返回最近 N 条）。所以必须按 message_id + 时间判。
+await testWith({
+  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  history: {
+    private: {
+      123: [{
+        time: Math.floor(Date.now() / 1000) - 30,
+        message_type: 'private',
+        message_id: 'hi-35758',
+        message_seq: 35758,           // 比水位 59884 小——旧代码就是在这里把它丢掉的
+        user_id: 999,
+        sender: { user_id: 999, nickname: 'owner' },
+        message: [{ type: 'text', data: { text: 'hi' } }],
+        raw_message: 'hi',
+      }],
+    },
+  },
+}, '掉线补拉：message_seq 不单调时也要能补到（不能拿最大 seq 当水位）', async (h) => {
+  h.setMode('reserved2');
+  const st = h.getSocialV2State('private:123');
+  st.lastGwSeq = 59884; // 被一条更早、seq 更大的消息顶上去的水位
+  st.recentMessages = [{ seq: 70, gwSeq: 51993, messageId: 'old-1', sender: 'owner', text: '这个是什么角色', time: Date.now() - 6 * 3600 * 1000 }];
+  st.unread = [];
+  st.lastUnreadSeq = 70;
+  const r = await h.backfillMissedMessages('test');
+  assert.equal(r.added, 1, `比水位小的新消息也要补回来（实际 added=${r.added}）`);
+  assert.ok(st.recentMessages.some((m) => m.text === 'hi'), '补回的内容要进上下文');
+  assert.ok(r.woken.includes('private:123'), '少且新 → 要唤醒 AI 去看');
+  // 再跑一次不能重复补
+  assert.equal((await h.backfillMissedMessages('test2')).added, 0, '第二次应去重');
+});
+
+// 线上事故（2026-10-15）：owner 13:23 发的「hi」落在网关故障窗口里，13:54 恢复后补进了上下文，
+// 但因为超过 10 分钟闸门「只入库不唤醒」→ AI 从没被叫起来看它，用户看到的就是「没响应」。
+// 私聊是有人直接找它，闸门要放宽（群里刷屏的旧账仍然只入库）。
+await testWith({
+  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  history: {
+    private: {
+      123: [{
+        time: Math.floor(Date.now() / 1000) - 40 * 60,   // 40 分钟前：超过群里那套 10 分钟闸门
+        message_type: 'private',
+        message_id: 'old-private-1',
+        message_seq: 900,
+        user_id: 999,
+        sender: { user_id: 999, nickname: 'owner' },
+        message: [{ type: 'text', data: { text: 'hi' } }],
+        raw_message: 'hi',
+      }],
+    },
+  },
+}, '掉线补拉：私聊漏掉的消息即使过了 10 分钟也要唤醒（群里仍然只入库）', async (h) => {
+  h.setMode('reserved2');
+  const st = h.getSocialV2State('private:123');
+  st.lastGwSeq = 0;
+  st.recentMessages = [];
+  st.unread = [];
+  const r = await h.backfillMissedMessages('test');
+  assert.equal(r.added, 1, '要补回来');
+  assert.ok(r.woken.includes('private:123'), '私聊要唤醒 AI 去看（否则就是「没响应」）');
+  assert.ok((st.unread ?? []).some((m) => m.text === 'hi'), '要进未读，AI 起来才看得到');
+});
+
+// 线上事故（2026-10-15 群 1050666134）：故障窗口里漏了 6 条**比本地最新一条更早**的消息
+// （11:20~13:21），而本地最新一条是 14:03。用「本地最新一条」当时间锚点会永远补不到这种中间缺口。
+await testWith({
+  config: { socialV2: { backfill: { enabled: true, maxAgeMs: 6 * 3600 * 1000 } } },
+  history: {
+    group: {
+      456: [
+        { ...histMsg(201, '你崩了是什么原因'), time: Math.floor(Date.now() / 1000) - 2 * 3600 },
+        { ...histMsg(202, '看来确实崩了'), time: Math.floor(Date.now() / 1000) - 2 * 3600 + 60 },
+      ],
+    },
+  },
+}, '掉线补拉：中间缺口（比本地最新一条更早）也要补上', async (h) => {
+  h.setMode('reserved2');
+  const st = h.getSocialV2State('group:456');
+  st.lastGwSeq = 9999;
+  // 本地已有更新的一条（5 分钟前），缺口在它之前
+  st.recentMessages = [{ seq: 1, gwSeq: 9999, messageId: 'newer-1', sender: '玄真', text: '睡醒了没', time: Date.now() - 5 * 60 * 1000 }];
+  st.unread = [];
+  const r = await h.backfillMissedMessages('test');
+  assert.equal(r.added, 2, `中间缺口也要补（实际 ${r.added}）`);
+  const texts = st.recentMessages.map((m) => m.text);
+  assert.ok(texts.includes('你崩了是什么原因') && texts.includes('看来确实崩了'), '两条都要进上下文');
+  // 超过群里的 10 分钟唤醒闸门 → 只入库，不叫醒（别对两小时前的旧账刷屏）
+  assert.ok(!r.woken.includes('group:456'), '两小时前的旧账不该唤醒');
+});
+
 await testWith({
   config: { socialV2: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, 'A'), histMsg(102, 'B')] } }

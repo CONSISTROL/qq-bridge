@@ -5193,10 +5193,24 @@ async function main() {
           // 的队列。它只在 turn/end 被消费，所以桥接恰好在回合中途重启，这条意图就永远不会被执行
           //，表现为「AI 明明在线却对那条消息毫无反应」。这里重启后主动补投一次。
           // 延迟 3 秒，等事件流与 pendingWakeKeys 之类的内存标记都就位再投。
+          // 第二类同样会被吞：消息刚好在重启前落下（没来得及排进 pendingWakeReasons），
+          // 未读里躺着却没人叫醒——线上（2026-10-15 14:03 群 1050666134）owner 发了「@机器人 睡醒了没」，
+          // 35 秒后桥接重启，这句话在未读里躺了 4 分钟没人处理。所以启动时也扫一遍**有未读但没有待补投意图**
+          // 的会话，主动叫一次。
           for (const key of socialV2.conversations.keys()) {
             const st = getSocialV2State(key);
-            if (!Array.isArray(st.pendingWakeReasons) || st.pendingWakeReasons.length === 0) continue;
-            const item = st.pendingWakeReasons.shift();
+            const queued = Array.isArray(st.pendingWakeReasons) ? st.pendingWakeReasons : [];
+            if (!queued.length) {
+              if (!Array.isArray(st.unread) || st.unread.length === 0) continue;
+              log(`[reserved2] 重启后发现未读没人管，主动唤醒 ${key}（未读 ${st.unread.length} 条）`);
+              setTimeout(() => {
+                if (socialV2.paused || currentMode !== 'reserved2') return;
+                void sendWakePromptV2(key, 'unreadRecovery')
+                  .catch((error) => log(`[reserved2] 未读补唤醒失败 ${key}：${error?.message ?? error}`));
+              }, 3000).unref?.();
+              continue;
+            }
+            const item = queued.shift();
             const reason = item && typeof item === 'object' ? item.reason : item;
             saveSocialV2State();
             log(`[reserved2] 重启后补投积压唤醒 ${key}（${reason}）`);
@@ -15085,6 +15099,7 @@ async function main() {
     if (r === 'busyRecovery') return '上一轮卡住了，补醒一次看看有没有漏掉的消息';
     if (r === 'timeout') return '你自己设的潜水时间到了，没人找你';
     if (r === 'restartRecovery') return '桥接重启，补投积压的唤醒';
+    if (r === 'unreadRecovery') return '桥接重启后发现有没处理完的消息，叫醒你看看';
     if (r === 'admin') return '管理员手动叫醒你';
     return r;
   }
@@ -15670,7 +15685,7 @@ async function main() {
     for (const [key, st] of socialV2.conversations) {
       try {
         if (!st || !isSessionAllowedInCurrentMode(key)) continue;
-        let lastGw = Number(st.lastGwSeq) || 0;
+        const lastGw = Number(st.lastGwSeq) || 0;
         const sep = key.indexOf(':');
         const kind = key.slice(0, sep);
         const id = key.slice(sep + 1);
@@ -15678,33 +15693,17 @@ async function main() {
         out.checked += 1;
         const action = kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history';
         const baseParams = kind === 'group' ? { group_id: Number(id) } : { user_id: Number(id) };
-        // 基线播种：没有 lastGwSeq 时（首次启用本功能 / 桥接重启后状态里还没记过），
-        // 从历史里找出「我们已经认识的最新一条」，把它当作基线。
-        // 这样**桥接自己重启期间**错过的消息也能补回来，而不是要等下一条消息才起步。
-        if (!lastGw) {
-          try {
-            const probe = await bot.request(action, { ...baseParams, count: maxMessages });
-            const plist = Array.isArray(probe?.data?.messages) ? probe.data.messages
-              : (Array.isArray(probe?.messages) ? probe.messages : []);
-            const knownIds = new Set();
-            for (const m of st.recentMessages ?? []) if (m?.messageId) knownIds.add(String(m.messageId));
-            const knownSeqs = plist
-              .filter((m) => knownIds.has(String(m?.message_id ?? '')))
-              .map((m) => Number(m?.message_seq) || 0);
-            if (knownSeqs.length) {
-              lastGw = Math.max(...knownSeqs);
-              st.lastGwSeq = lastGw;
-              out.seeded += 1;
-              log(`[backfill] ${key} 已播种基线 message_seq=${lastGw}`);
-            }
-          } catch { /* 播种失败就跳过这个会话 */ }
-        }
-        // 还是定位不到就先放过，等下一条消息把基线带出来。
-        if (!lastGw) continue;
-        const params = { ...baseParams, message_seq: lastGw + 1, count: maxMessages + 1 };
+        // **不再拿 message_seq 当水位**：实测这个网关的 message_seq 并不是「按会话单调递增」——
+        // 私聊里 10/11 的一条文件是 59884，而 10/15 的「hi」只有 35758。用「见过的最大 seq」过滤，
+        // 会把比它小的新消息**永久**挡在门外（线上事故：owner 的 hi 一直没被处理，补拉却报「没有缺口」）。
+        // 而且 get_*_msg_history 对这个网关来说 message_seq 参数是无效的（传什么值都返回最近 N 条）。
+        // 所以改为「message_id 去重 + 时间窗」：时间戳是可靠且单调的判据。
+        const known = new Set();
+        for (const m of st.recentMessages ?? []) if (m?.messageId) known.add(String(m.messageId));
+        for (const m of st.unread ?? []) if (m?.messageId) known.add(String(m.messageId));
         let data = null;
         try {
-          data = await bot.request(action, params);
+          data = await bot.request(action, { ...baseParams, count: maxMessages });
         } catch (error) {
           log(`[backfill] ${key} 拉历史失败：${error?.message ?? error}`);
           continue;
@@ -15712,14 +15711,18 @@ async function main() {
         const list = Array.isArray(data?.data?.messages) ? data.data.messages
           : (Array.isArray(data?.messages) ? data.messages : []);
         if (!list.length) continue;
-        const known = new Set();
-        for (const m of st.recentMessages ?? []) if (m?.messageId) known.add(String(m.messageId));
-        for (const m of st.unread ?? []) if (m?.messageId) known.add(String(m.messageId));
+        // 时间窗：只看最近 maxAgeMs（默认 6 小时）内、本地没见过的消息。
+        // **不能用「本地最新一条」当锚点**：缺口常常出现在中间——线上（2026-10-15 群 1050666134）
+        // 11:20~13:21 有 6 条被漏掉，而本地最新一条是 14:03 的「睡醒了没」；拿后者当锚点就会
+        // 永远补不到那批更早的缺口。以「现在」为锚 + 有界回看，才不会漏中间那段。
+        const horizonMs = Math.max(0, Number(bf.maxAgeMs) || 6 * 60 * 60 * 1000);
+        const sinceMs = horizonMs > 0 ? Date.now() - horizonMs : 0;
         const fresh = list
-          .filter((m) => Number(m?.message_seq) > lastGw)
-          .filter((m) => !selfId || String(m?.user_id ?? '') !== selfId)
           .filter((m) => !known.has(String(m?.message_id ?? '')))
-          .sort((a, b) => Number(a.message_seq) - Number(b.message_seq))
+          .filter((m) => !selfId || String(m?.user_id ?? '') !== selfId)
+          .filter((m) => (Number(m?.time) || 0) * 1000 >= sinceMs)
+          .filter((m) => !known.has(String(m?.message_id ?? '')))
+          .sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0))
           .slice(-maxMessages); // 缺口太大时保最近的，别把最老的塞进来
         if (!fresh.length) continue;
         const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -15771,13 +15774,19 @@ async function main() {
         // 唤醒闸门：只有「少且新」才叫 AI 起来看，否则只当上下文。
         // 不唤醒的**不进 unread**：unread 的语义是「等着处理的事」，
         // 把两小时前的旧账塞进去，等于让 AI 下次醒来去回一条早就翻篇的消息。
-        if (built.length <= wakeMaxMessages && oldestAge <= wakeMaxAgeMs) {
+        //
+        // **私聊例外**：私聊是有人直接找它（尤其 owner）。线上事故（2026-10-15）：owner 13:23 发的
+        // 「hi」正好落在网关故障窗口里，网关 13:54 恢复后补进了上下文，却因为超过 10 分钟闸门
+        // 「只入库不唤醒」—— 于是 AI 从来没被叫起来看过它，用户看到的就是「没响应」。
+        // 群里刷屏的旧账仍然只入库；私聊放宽到 6 小时。
+        const wakeAgeMs = kind === 'private' ? Math.max(wakeMaxAgeMs, 6 * 60 * 60 * 1000) : wakeMaxAgeMs;
+        if (built.length <= wakeMaxMessages && oldestAge <= wakeAgeMs) {
           st.unread = [...(st.unread ?? []), ...built]
             .sort((a, b) => (a.time || 0) - (b.time || 0)).slice(-unreadLimit);
           out.woken.push(key);
           scheduleWakeV2(key, `backfill:${built.length}条`);
         } else {
-          log(`[backfill] ${key} 只入库不唤醒（${built.length} 条 / 最早 ${Math.round(oldestAge / 60000)} 分钟前，超过唤醒闸门）`);
+          log(`[backfill] ${key} 只入库不唤醒（${built.length} 条 / 最早 ${Math.round(oldestAge / 60000)} 分钟前，超过唤醒闸门 ${Math.round(wakeAgeMs / 60000)} 分钟）`);
         }
       } catch (error) {
         log(`[backfill] ${key} 补拉异常：${error?.message ?? error}`);
