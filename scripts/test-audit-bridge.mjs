@@ -2973,6 +2973,7 @@ await test('文件消息：入库要带文件名/大小，提示要告诉 AI 用
 });
 
 let capturedFetch = null;
+let capturedAsr = null;
 await testWith({
   globals: {
     safeFetchToFile: async (u, maxBytes, filePath) => {
@@ -3046,6 +3047,54 @@ await test('跨会话读文件：任一有效会话令牌都该放行（写操�
   await h.sendWakePromptV2('private:1472298635', 'admin').catch(() => {});
   h.retireSession('private:1472298635');
   assert.equal(h.anyAgentTokenOk(old), true, '宽限期内的旧令牌也放行读操作');
+});
+
+// 视频语音转写（ASR）：桥接负责用本机 ffmpeg 抽 16k 单声道音轨，POST 给外部服务。
+// 本机（2 核/460MB）跑不动模型，服务实际跑在另一台机器上，所以这里 stub 掉网络。
+await testWith({
+  config: { socialV2: { video: { asr: { enabled: true, url: 'http://asr.test/transcribe', token: 'tok-123', maxSeconds: 30, timeoutMs: 5000 } } } },
+  globals: {
+    // 假 ffmpeg：往 stdout 吐一段「wav」（内容不重要，只要非空）
+    spawn: () => {
+      // 极简子进程假件：只实现 bridge 用到的 stdout.on / stderr.on / on('close')
+      const handlers = {};
+      const on = (key) => (ev, fn) => { (handlers[key + ev] ||= []).push(fn); };
+      const child = { stdout: { on: on('out:') }, stderr: { on: on('err:') }, on: on('') };
+      setTimeout(() => {
+        for (const fn of handlers['out:data'] || []) fn(Buffer.alloc(4096, 1));
+        for (const fn of handlers.close || []) fn(0);
+      }, 0);
+      return child;
+    },
+    fetch: async (url, init) => {
+      capturedAsr = { url: String(url), headers: init?.headers, bodyBytes: init?.body?.length ?? 0 };
+      return { ok: true, json: async () => ({ ok: true, text: '这段在讲火箭发动机', tookMs: 42, duration: 7.5, model: 'small' }) };
+    }
+  }
+}, '视频转写：抽音轨 → 带令牌 POST → 解析文字', async (h) => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'asr-test-'));
+  // 造一段 1 秒静音 wav（合法容器，ffmpeg 能解）
+  const wav = path.join(tmp, 'a.wav');
+  const rate = 16000, secs = 1, bytes = rate * secs * 2;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + bytes, 4); header.write('WAVE', 8);
+  header.write('fmt ', 12); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24); header.writeUInt32LE(rate * 2, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
+  header.write('data', 36); header.writeUInt32LE(bytes, 40);
+  fs.writeFileSync(wav, Buffer.concat([header, Buffer.alloc(bytes)]));
+  const r = await h.transcribeMediaAudio(wav);
+  assert.ok(r, '要返回结果');
+  assert.equal(r.text, '这段在讲火箭发动机');
+  assert.equal(capturedAsr.url, 'http://asr.test/transcribe');
+  assert.equal(capturedAsr.headers['x-asr-token'], 'tok-123', '必须带令牌');
+  assert.ok(capturedAsr.bodyBytes > 1000, `音轨要有内容（实际 ${capturedAsr.bodyBytes} 字节）`);
+  // 未配置 url 时必须静默跳过（不报错、不影响只给画面）
+  const off = await h.transcribeMediaAudio(wav, { enabled: true, url: '' });
+  assert.equal(off, null, '没配置就跳过');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 if (failures) process.exitCode = 1;

@@ -260,7 +260,15 @@
       "ffmpegPath": "",
       "probeTimeoutMs": 20000,
       "frameTimeoutMs": 30000,
-      "totalTimeoutMs": 90000
+      "totalTimeoutMs": 90000,
+      "asr": {
+        "enabled": true,
+        "url": "",
+        "token": "",
+        "lang": "zh",
+        "maxSeconds": 180,
+        "timeoutMs": 180000
+      }
     },
     "forward": {
       "imageLimit": 8,

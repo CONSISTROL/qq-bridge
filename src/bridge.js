@@ -741,6 +741,16 @@ function loadConfig() {
         frameMaxWidth: 800,        // 抽出来的帧缩到多宽（长边）
         frameQuietMs: 0,           // 预留：帧之间的最小间隔（0=按时长均分）
         ffmpegPath: '',            // 留空=自动找（config → ffmpeg-static → PATH）
+        // 语音转写（ASR）：视频里说的话，用一个外部服务转成文字（本机 2 核/460MB 跑不动，放 tzd）。
+        // 协议见 scripts/asr-server.py：POST wav 字节 → {ok,text,tookMs}。url 为空＝不转写。
+        asr: {
+          enabled: true,
+          url: '',                  // 例如 http://10.8.0.2:8765/transcribe
+          token: '',                // 与服务端 ASR_TOKEN 一致
+          lang: 'zh',
+          maxSeconds: 180,          // 只转前 N 秒（转写很吃 CPU，长视频别整段转）
+          timeoutMs: 180000
+        },
         probeTimeoutMs: 20000,     // 解析时长/分辨率的上限
         frameTimeoutMs: 30000,     // 单帧抽取上限
         totalTimeoutMs: 90000      // 整次抽帧的总预算
@@ -10924,6 +10934,8 @@ const agentTokenOk = (key, token) => {
           const maxWidth = Math.max(160, Math.min(1600, Number(url.searchParams.get('maxWidth')) || Number(cfgV.frameMaxWidth) || 800));
           const videoUrl = String(target.url || '').trim();
           let frames = [];
+          let transcript = null;
+          let asrNote = '';
           let note = '';
           let meta = { durationSec: 0, width: 0, height: 0, bytes: 0 };
           const hasFfmpeg = !!(await resolveFfmpegPath());
@@ -10938,6 +10950,16 @@ const agentTokenOk = (key, token) => {
                 timeoutMs: Math.max(5000, Number(cfgV.fetchTimeoutMs) || 60000),
               });
               meta.bytes = fetched.bytes;
+              // 语音转写与抽帧互不影响：转写失败只降级成"只有画面"
+              try {
+                const asrCfg = cfg.socialV2?.video?.asr ?? {};
+                if (asrCfg.enabled !== false && asrCfg.url) {
+                  transcript = await transcribeMediaAudio(videoFile, asrCfg);
+                }
+              } catch (asrError) {
+                asrNote = `语音转写失败（${String(asrError?.message ?? asrError).slice(0, 120)}），这段声音你听不到`;
+                log(`[video] ASR 失败：${asrError?.message ?? asrError}`);
+              }
               const extracted = await extractVideoFramesFromFile(videoFile, { frames: wantFrames, maxWidth, tmpDir });
               if (extracted) {
                 frames = extracted.frames;
@@ -10961,6 +10983,9 @@ const agentTokenOk = (key, token) => {
               note = [note, '下面是视频封面（不是抽帧）。'].filter(Boolean).join(' ');
             }
           }
+          const asrLine = transcript?.text
+            ? `**语音转写**（自动识别，可能有错，专有名词尤其）：${transcript.text.slice(0, 2000)}`
+            : (asrNote || '**没有语音转写**：这段声音你听不到，只能根据画面判断；画面之外的信息要问发视频的人。');
           if (!frames.length) {
             sendJson({
               ok: true,
@@ -10969,10 +10994,8 @@ const agentTokenOk = (key, token) => {
               hasFfmpeg,
               frames: [],
               meta,
-              note: [
-                note || '视频既抽不了帧、也没有封面可取。',
-                '**没有语音转写**：视频里说的话听不到，只能根据画面判断；画面之外的信息要问发视频的人。'
-              ].join(' ')
+              transcript,
+              note: [note || '视频既抽不了帧、也没有封面可取。', asrLine].join(' ')
             });
             return;
           }
@@ -10982,10 +11005,8 @@ const agentTokenOk = (key, token) => {
             kind: 'video',
             hasFfmpeg,
             meta,
-            note: [
-              note,
-              '**没有语音转写**：视频里说的话听不到，只能根据画面判断；画面之外的信息要问发视频的人。'
-            ].filter(Boolean).join(' '),
+            transcript,
+            note: [note, asrLine].filter(Boolean).join(' '),
             frames: frames.map((f, i) => ({
               index: i + 1,
               atSec: f.atSec,
@@ -11940,6 +11961,46 @@ const agentTokenOk = (key, token) => {
    * 抽帧核心：视频已经在磁盘上（视频消息是边下边落盘的，不再整段进内存）。
    * `tmpDir` 由调用方给定时，帧图写在里面且**不由本函数清理**（调用方负责整个目录）。
    */
+  /**
+   * 视频/音频 → 文字。用本机 ffmpeg 抽 16k 单声道音轨，POST 给外部 ASR 服务（默认跑在 tzd）。
+   * 返回 null 表示没配置/没音轨；抛错由调用方降级（只给画面）。
+   */
+  async function transcribeMediaAudio(mediaPath, asrCfg = null) {
+    const asr = asrCfg && typeof asrCfg === 'object' ? asrCfg : (cfg.socialV2?.video?.asr ?? {});
+    if (asr.enabled === false || !asr.url) return null;
+    const ffmpeg = await resolveFfmpegPath();
+    if (!ffmpeg) throw new Error('本机没有 ffmpeg，抽不了音轨');
+    const maxSeconds = Math.max(5, Math.min(3600, Number(asr.maxSeconds) || 180));
+    const wav = await new Promise((resolve, reject) => {
+      const child = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', mediaPath, '-vn',
+        '-ac', '1', '-ar', '16000', '-t', String(maxSeconds), '-f', 'wav', 'pipe:1']);
+      const chunks = [];
+      let stderr = '';
+      child.stdout.on('data', (c) => chunks.push(c));
+      child.stderr.on('data', (c) => { stderr += String(c).slice(0, 500); });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve(Buffer.concat(chunks));
+        else reject(new Error('ffmpeg 抽音轨失败：' + stderr.slice(0, 200)));
+      });
+    });
+    if (!wav.length) return null;
+    const res = await fetch(asr.url, {
+      method: 'POST',
+      headers: { 'content-type': 'audio/wav', ...(asr.token ? { 'x-asr-token': String(asr.token) } : {}) },
+      body: wav,
+      signal: AbortSignal.timeout(Math.max(10000, Number(asr.timeoutMs) || 180000))
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) throw new Error(body?.error || `ASR 服务返回 ${res.status}`);
+    return {
+      text: String(body.text ?? '').trim(),
+      tookMs: Number(body.tookMs) || 0,
+      duration: Number(body.duration) || 0,
+      model: String(body.model ?? '')
+    };
+  }
+
   async function extractVideoFramesFromFile(videoFile, { frames = 6, maxWidth = 800, tmpDir } = {}) {
     const bin = await resolveFfmpegPath();
     if (!bin) return null;
