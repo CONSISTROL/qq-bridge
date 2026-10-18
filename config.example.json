@@ -395,7 +395,7 @@
       "avoidKeywords": [],
       "checkIntervalMinMs": 1200000,
       "checkIntervalMaxMs": 2400000,
-      "idleThresholdMs": 600000,
+      "idleThresholdMs": 10800000,
       "quietHours": [
         1,
         7
