@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { SnowLumaWebSocketClient, text } from '@snowluma/sdk';
@@ -17869,6 +17869,14 @@ const agentTokenOk = (key, token) => {
   startDshWatch();
   startDiaryScheduler();
   startPluginJobs();
+  // PDF 能力自检：poppler-utils 缺失时提前在日志里说明（否则只会在用户点开 PDF 时才炸）。
+  try {
+    // 注意：这是 ESM 模块，没有 require（用了会一直误报"缺少 poppler"）；用已导入的 spawnSync。
+    const probe = spawnSync('pdftotext', ['-v'], { stdio: 'ignore', timeout: 5000 });
+    if (probe.error || probe.status !== 0) throw probe.error || new Error(`exit ${probe.status}`);
+  } catch {
+    log('⚠ 缺少 poppler-utils（pdftotext）：PDF 文件读不了。安装：apt-get install -y poppler-utils');
+  }
   startBusyWatchdogV2();
   void sweepResidualBusyV2OnStart();
   startConsoleServer();

@@ -27,6 +27,15 @@ export function classifyFile(name = '', mimeType = '') {
 }
 
 /** pdfinfo：页数与文档属性（标题/作者/生成器）。解析失败不抛，返回空信息。 */
+// poppler-utils 没装时 spawn 会抛 ENOENT，原始信息是 `spawn pdftotext ENOENT`——
+// 对排查毫无帮助（线上真事：bot 回「pdf 打不开」，日志就这一行）。这里统一翻译成可执行的提示。
+const PDF_DEPS_HINT = '本机缺少 poppler-utils（pdftotext/pdfinfo），PDF 读不了。安装：apt-get install -y poppler-utils';
+function explainPdfError(error, tool = 'pdftotext') {
+  const msg = String(error?.message ?? error);
+  if (error?.code === 'ENOENT' || /ENOENT/.test(msg)) return PDF_DEPS_HINT;
+  return `${tool} 执行失败：${msg.slice(0, 300)}`;
+}
+
 export async function pdfInfo({ filePath, exec = defaultExec, timeoutMs = 20000 }) {
   try {
     const { stdout } = await exec('pdfinfo', [filePath], { timeout: timeoutMs, maxBuffer: 1024 * 1024 });
@@ -51,7 +60,12 @@ export async function extractPdfText({ filePath, exec = defaultExec, fromPage = 
   const args = ['-layout', '-enc', 'UTF-8', '-f', String(Math.max(1, fromPage))];
   if (toPage >= fromPage) args.push('-l', String(toPage));
   args.push(filePath, '-');
-  const { stdout } = await exec('pdftotext', args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+  let stdout;
+  try {
+    ({ stdout } = await exec('pdftotext', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }));
+  } catch (error) {
+    throw new Error(explainPdfError(error, 'pdftotext'));
+  }
   const raw = String(stdout ?? '').replace(/\u0000/g, '');
   const text = raw
     .replace(/\r\n?/g, '\n')
