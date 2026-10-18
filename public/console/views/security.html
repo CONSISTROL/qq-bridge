@@ -1,5 +1,5 @@
     <section class="card">
-      <h2><span class="sec-no">10</span>白名单 / 管理员</h2>
+      <h2>白名单 / 管理员</h2>
       <label>允许的群号（逗号分隔）</label>
       <input type="text" id="wlGroups" placeholder="123456789, 123456">
       <label>允许的私聊 QQ（逗号分隔）</label>
@@ -18,7 +18,7 @@
     </section>
 
     <section class="card">
-      <h2><span class="sec-no">12</span>安全拦截通知</h2>
+      <h2>安全拦截通知</h2>
       <div class="row">
         <label style="flex:1">拦截时在群里发提示</label><input type="checkbox" class="switch" id="secInterceptNotify">
       </div>
@@ -27,7 +27,7 @@
     </section>
 
     <section class="card">
-      <h2><span class="sec-no">12b</span>控制台访问令牌</h2>
+      <h2>控制台访问令牌</h2>
       <div class="meta">用于打开本控制台 / 调用管理 API 的令牌。可手动输入新令牌保存，或留空生成随机令牌。修改后当前页面会自动使用新令牌。</div>
       <div class="meta">用令牌成功打开一次后，桥接会给<strong>这个浏览器</strong>记一个 HttpOnly Cookie（30 天）：之后刷新、重新打开、直接输网址都不再要求输入令牌。想取消记住就点「忘记本机令牌」。</div>
       <input type="password" id="consoleTokenInput" placeholder="输入新令牌（至少 16 位），留空则生成随机" autocomplete="new-password">
