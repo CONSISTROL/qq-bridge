@@ -20,6 +20,8 @@ const tests = [
   'test-self-profile.mjs',
   // 三级记忆：归档（追加/检索/保留期）+ 日记（保存/检索/召回触发词）
   'test-memory.mjs',
+  // 控制台视图契约（id/title/mount/html 缺一不可，漏了会整站「加载中…」）
+  'test-console-views.mjs',
   // 相册：统一索引 + 元数据（备注/标签/来源/添加时间）
   'test-album.mjs',
   // 表情包时机判定与选图（含严肃语境门、行动导向提示、一步发送指引）

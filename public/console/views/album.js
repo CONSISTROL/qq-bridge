@@ -7,6 +7,7 @@ import { api } from '../core/api.js';
 import { $, esc, setMsg, confirmDanger, delegate, debounce, fmtClock } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
+export const id = 'album';
 export const title = '相册';
 export const desc = '所有图片：聊天收到 · AI 发出 · 图库 · 抓取 · 视频帧';
 export const group = '语料';

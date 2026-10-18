@@ -5543,7 +5543,10 @@ const agentTokenOk = (key, token) => {
           sendJson({ ok: false, error: '静态资源不存在' }, 404);
           return;
         }
-        res.writeHead(200, { 'content-type': type, ...SECURITY_HEADERS });
+        // 控制台的 HTML/JS 每次都可能随代码更新而变（删视图、改 import），
+        // 浏览器一旦用启发式缓存拿到旧 app.js，就会 import 一个已删除的模块 → 整站白屏/一直「加载中」。
+        // 所以静态资源一律 no-cache（允许缓存，但必须回源校验 ETag）。
+        res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache', ...SECURITY_HEADERS });
         res.end(data);
         return;
       }
