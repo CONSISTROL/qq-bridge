@@ -122,7 +122,9 @@ export async function mount(root) {
   };
   const closeModal = () => { const m = $('#albumModal', view); if (m) m.style.display = 'none'; };
 
-  delegate($('#albumGrid', view), 'click', '.album-card', (_ev, card) => {
+  delegate($('#albumGrid', view), 'click', '.album-card', (ev, card) => {
+    // 勾选框的 click 也会冒泡到卡片上——不排除的话，点勾选会同时打开大图弹窗（线上反馈）。
+    if (ev.target && ev.target.closest && ev.target.closest('.album-pick')) return;
     const it = state.items.find((x) => x.id === card.dataset.id);
     if (it) openModal(it);
   });
