@@ -156,6 +156,9 @@ async function agentApi(path, init = {}) {
     // 桥接的「自我重复闸门」把这条打回了（没发出去）：也要让工具返回非错误结果，
     // 附上跟哪条撞了，好让模型换个题——报错的话它多半会原样重发。
     if (body?.selfRepeat === true) { error.selfRepeat = true; error.detail = body.detail ?? null; }
+    // 原样重发闸门：桥接**有意拒发**（不是发送失败）。同样要透出去，
+    // 否则模型看到 isError 会继续重试，只是白撞墙。
+    if (body?.duplicateGuard === true) { error.duplicateGuard = true; error.detail = body.detail ?? null; }
     throw error;
   }
   return body;
@@ -175,6 +178,23 @@ function sendFailureResult(error, prefix = '发送失败') {
           + (d.text ? `：「${String(d.text).slice(0, 60)}」` : '')
           + '。\n**这一轮别再发同一套了**：换个完全不同的题材，或者同一题材里换一个真正不一样的角度；'
           + '发之前先看一眼上面【更早你主动开过的】那份清单。这条只拦一次，你换过之后就能发出去。'
+      }]
+    };
+  }
+  if (error?.duplicateGuard === true) {
+    const d = error.detail ?? {};
+    // 桥接只给时间戳，年龄在这里算（跨进程传时间戳比传「几秒前」稳）。
+    const age = Number.isFinite(Number(d.at)) && Number(d.at) > 0
+      ? Math.max(1, Math.round((Date.now() - Number(d.at)) / 1000))
+      : null;
+    return {
+      content: [{
+        type: 'text',
+        text: '🛑 桥接拦下了这次发送：**它和你刚刚（' + (age != null ? `${age} 秒前` : '刚才') + '）发过的那条一模一样**'
+          + (d.text ? `：「${String(d.text).slice(0, 60)}」` : '')
+          + '。\n如果上一条回执丢了，它**很可能已经在群里**了，重发就会变成两条。'
+          + '\n**别急着换个说法硬发**：先用 qq_get_recent_messages 看一眼——'
+          + '在 → 当发过了，直接接下一句；不在 → 换个说法（不是改标点）再发。'
       }]
     };
   }
@@ -384,7 +404,7 @@ defineTool(
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('会话令牌（聊天模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
   },
   async ({ groupId, message, replyToMessageId, token }) => {
     try {
@@ -407,7 +427,7 @@ defineTool(
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     replyToMessageId: z.union([z.number(), z.string()]).describe('被引用/回复的消息 id（非零整数，可为负数）'),
     message: z.string().describe('要发送的文本，纯文本，不要用 Markdown 或 CQ 码'),
-    token: z.string().optional().describe('会话令牌（聊天模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
   },
   async ({ groupId, replyToMessageId, message, token }) => {
     try {
@@ -430,7 +450,7 @@ defineTool(
     userId: z.union([z.number(), z.string()]).describe('好友 QQ 号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('会话令牌（聊天模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
   },
   async ({ userId, message, replyToMessageId, token }) => {
     try {
@@ -1135,6 +1155,97 @@ if (cfg.socialV2?.tools?.getImages !== false) {
     }
   );
 }
+
+// ── 插件（声明式）：列表 / 调用 ─────────────────────────────────────────────
+defineTool(
+  'qq_plugin_list',
+  '列出桥接的插件（用户添加的和 AI 自己添加的），以及每个插件提供的工具。'
+    + '群友提的需求如果插件里有对应工具，先调 qq_plugin_list 看有没有现成的，再决定要不要自己造。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const data = await agentApi('/api/plugins', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      const lines = (data.plugins || []).map((p) => `· ${p.origin === 'ai' ? '[AI添加]' : '[用户添加]'} ${p.name}（${p.id}，${p.enabled ? '已启用' : '未启用'}）${p.description ? ' — ' + p.description : ''}\n`
+        + (p.tools || []).map((t) => `    - tool="${t.name}"（${t.description || ''}）`).join('\n')).join('\n');
+      return { content: [{ type: 'text', text: lines || '（还没有插件）' }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `查插件失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_plugin_call',
+  '调用插件里的工具（插件是声明式的 HTTP 能力，不是任意代码）。'
+    + '已知插件和工具名时用它；未启用的插件会返回"需要管理员开启"。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    origin: z.enum(['user', 'ai']).describe('插件来源：user=用户添加，ai=AI 添加'),
+    plugin: z.string().describe('插件 id'),
+    tool: z.string().describe('工具名（来自 qq_plugin_list）')
+  },
+  async ({ key, token, origin, plugin, tool }) => {
+    try {
+      const data = await agentApi('/api/plugins/call', {
+        method: 'POST',
+        body: JSON.stringify({ origin, plugin, tool }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 60000
+      });
+      return { content: [{ type: 'text', text: `[${plugin}/${tool}] HTTP ${data.status}\n${String(data.text || '').slice(0, 4000)}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `调插件失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+// ── 语音包：查包 / 发送片段（群友点名"来段爱音糖哭"时用）────────────────────
+defineTool(
+  'qq_list_voice_packs',
+  '查你有哪些语音包、每个包里有哪些片段（带可读标签，如「糖哭」「唐笑」）。'
+    + '群友点名要某个语音包里的片段时，先用它确认 pack / clip，再用 qq_send_voice_pack 发出去。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌')
+  },
+  async ({ key, token }) => {
+    try {
+      const data = await agentApi('/api/voice-packs', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      const lines = (data.packs || []).map((p) => `· ${p.name}（pack="${p.id}"）${p.notes ? ' — ' + p.notes : ''}\n`
+        + (p.clips || []).map((c) => `    - ${c.label || c.file}（clip="${c.file}"，${Math.round(c.bytes / 1024)}KB）`).join('\n')).join('\n');
+      return { content: [{ type: 'text', text: lines || '（还没有语音包）' }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `查语音包失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_send_voice_pack',
+  '把**语音包里的现成片段**作为语音条发出去（原汁原味，不经过 TTS 合成）。'
+    + '群友说「来段爱音糖哭 / 放个唐笑」时就该用它：先用 qq_list_voice_packs 确认 pack/clip，再发。'
+    + '一条消息只能是一条语音，不能附带文字；想说话先单独发文字。',
+  {
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+    token: z.string().describe('会话令牌'),
+    pack: z.string().describe('语音包 id（如 anon）'),
+    clip: z.string().describe('片段文件名（如 …-loop5.94s.wav，来自 qq_list_voice_packs）')
+  },
+  async ({ key, token, pack, clip }) => {
+    try {
+      const data = await agentApi('/api/voice-packs/send', {
+        method: 'POST',
+        body: JSON.stringify({ key, pack, clip }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 120000
+      });
+      return { content: [{ type: 'text', text: `已发送语音片段：${pack}/${clip}（${Math.round((data.bytes || 0) / 1024)}KB）` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `发语音片段失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
 
 // ── 记忆：查原文 / 写日记 / 列日记 / 召回 ───────────────────────────────────
 // 三级记忆：① 上下文（DSH 会话）② 日记（每天一篇，qq_diary_save）③ 全量归档（qq_search_history）。

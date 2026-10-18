@@ -1,0 +1,17 @@
+{
+  "id": "lol-live",
+  "name": "LOL 赛事/直播",
+  "description": "查 B站 LOL 相关直播是否在播、以及热门赛事视频（示例插件，演示声明式插件：只声明 HTTP 能力，不跑任意代码）",
+  "origin": "user",
+  "version": "1.0.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "live_status",
+      "description": "查某个关键词当前有没有 B站直播在播（默认：LOL LPL）。返回在播房间标题与链接。",
+      "url": "https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid=2",
+      "maxChars": 800
+    }
+  ],
+  "jobs": []
+}

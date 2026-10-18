@@ -23,6 +23,7 @@ import { ALBUM_SOURCES, ALBUM_META_FILE, STICKER_SOURCE, collectAlbumItems, coll
 import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
+import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -685,7 +686,17 @@ function loadConfig() {
         gapBaseMs: 800,
         gapPerCharMs: 20,
         burstHintThreshold: 10,
-        recommendedHint: '普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。'
+        recommendedHint: '普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。',
+        // 原样重发闸门：把「一模一样的话再发一次」在发送侧直接拦掉。
+        // 线上事故：WS 掉线丢了回执 → 桥接明确让模型别重发 → 模型 24 秒后照发，
+        // 群里出现两条「一天念那么多字，电费你出啊」。劝不住，只能硬拦。
+        // 只拦**自己发过的原文**：复读群友的话不受影响。
+        dupGuard: {
+          enabled: true,
+          uncertainWindowMs: 300000, // 上一条回执不确定：5 分钟内不许原样重发（它可能已经在群里）
+          sentWindowMs: 5000,        // 上一条确认送达：只挡 5 秒内的恶性重复调用
+          ...(file.socialV2?.send?.dupGuard ?? {})
+        }
       },
       wait: {
         defaultMs: 30000,
@@ -4096,10 +4107,9 @@ async function main() {
    * qq-chat* preset 就拒绝创建，绝不让 DSH 用默认 preset 把本地工具暴露给 QQ 群。
    */
   async function createWorkLaneSession(key) {
-    const preset = modePreset(key, currentMode, cfg);
-    const strictPreset = currentMode !== 'closed-agent';
-    if (strictPreset && !preset) {
-      const wanted = currentMode === 'reserved2' ? (cfg.socialV2?.agentPreset || cfg.agentPreset) : cfg.agentPreset;
+    const preset = modePreset(key, cfg);
+    if (!preset) {
+      const wanted = cfg.socialV2?.agentPreset || cfg.agentPreset;
       throw new Error(`拒绝为 ${key} 创建工作车道：模式 ${currentMode} 需要 preset "${wanted}"，但它不在 DSH 可用清单中（${dshPresetIds.join(', ') || '未知'}）`);
     }
     const dir = cfg.sessionCwd ? String(cfg.sessionCwd) : path.join(STATE_DIR, 'agents');
@@ -4928,14 +4938,9 @@ async function main() {
   // DSH 重启期间收到的 QQ 消息先入队（不丢），DSH 恢复后按序补投。
   let dshReady = false;
   let dshCheckStarted = false;
-  let currentMode = 'chat'; // chat | closed-agent | reserved（仿真模式，由 DSH settings / state/mode.json 驱动）
-  let lastMode = currentMode;
-  // closed-agent 模式使用的 DSH agent preset：留空表示「用 DSH 自己声明的默认 preset」。
-  // 旧版本这里硬编码 'router-standard'，但 DSH 0.1.5 已移除该 preset，硬编码会导致
-  // 创建出的会话挂不上 preset，进而被 DSH 套上 standard（含本地工具）。
-  let closedAgentPreset = '';
-  // DSH 侧真实的 preset 清单与默认 preset：旧版本这里是硬编码的 'router-standard'，
-  // 但 DSH 0.1.5 已不存在该 preset，硬编码会让 closed-agent 模式永远挂不上 preset。
+  // 唯一运行模式：reserved2（二代仿真）。文本不自动转发，AI 通过工具自主收发。
+  let currentMode = 'reserved2';
+  // DSH 侧真实的 preset 清单与默认 preset。
   let dshPresetIds = [];        // 当前 DSH 可用的 preset id 列表（agentPresets/list）
   let dshDefaultPreset = '';    // DSH settings `agent-presets.default`，取不到时用列表里的 isDefault
   const queued = new Map(); // key -> { promptText }[]
@@ -4960,51 +4965,42 @@ async function main() {
     setTimeout(() => { flushQueue(); }, 3000);
   };
 
-  // 从 DSH settings 读取桥接模式；命名空间未注册时回退本地 state/mode.json
-  const VALID_MODES = ['chat', 'closed-agent', 'reserved', 'reserved2'];
-  /** 只读本地 state/mode.json（同步）——DSH 不可达时的兜底，也是启动时的初始值。 */
+  // 运行模式已固定为 reserved2；保留这个函数供启动与兜底路径调用。
+  const VALID_MODES = ['reserved2'];
+  /** 模式固定为 reserved2，不再读配置。 */
   function applyLocalMode() {
-    const local = readJsonSafe(path.join(STATE_DIR, 'mode.json'), null);
-    if (local?.mode && VALID_MODES.includes(local.mode)) currentMode = local.mode;
-    if (typeof local?.closedAgentPreset === 'string' && local.closedAgentPreset) {
-      closedAgentPreset = local.closedAgentPreset;
-    }
+    currentMode = 'reserved2';
     return currentMode;
   }
 
   async function refreshMode() {
     try {
       const s = unwrap(await api.settings.describe({}), 'settings.describe');
-      // DSH 的默认 preset（`agent-presets` 命名空间的 default）——closed-agent 的兜底值来源
+      // DSH 的默认 preset（`agent-presets` 命名空间的 default）
       const presetNs = s.namespaces.find((n) => n.ns === 'agent-presets');
       if (presetNs?.value && typeof presetNs.value.default === 'string' && presetNs.value.default) {
         dshDefaultPreset = presetNs.value.default;
       }
       const ns = s.namespaces.find((n) => n.ns === 'qq-mode');
-      if (ns?.value && typeof ns.value.mode === 'string' && VALID_MODES.includes(ns.value.mode)) {
-        currentMode = ns.value.mode;
-        // DSH 设置页也可配置管理员 QQ；未设置该字段时不覆盖 config.json。
-        if (ns.value.ownerQQ !== undefined) {
-          try {
-            cfg.ownerQQ = normalizeOwnerQQ(ns.value.ownerQQ);
-          } catch (error) {
-            log(`DSH settings ownerQQ 无效，已忽略: ${error?.message ?? error}`);
-          }
+      // DSH 设置页也可配置管理员 QQ。⚠️ 只有**非空**值才覆盖 config.json：
+      // 插件 schema 的默认值是空串，而 normalizeOwnerQQ('') 会返回 null，
+      // 直接赋值等于把 config.json 里的 ownerQQ 抹掉 —— 那会让 reserved2 的
+      // 进程控制门禁（要求 ownerQQ 与私聊白名单一致）永久失败。
+      const rawOwner = ns?.value?.ownerQQ;
+      if (rawOwner !== undefined && rawOwner !== null && String(rawOwner).trim() !== '') {
+        try {
+          cfg.ownerQQ = normalizeOwnerQQ(rawOwner);
+        } catch (error) {
+          log(`DSH settings ownerQQ 无效，已忽略: ${error?.message ?? error}`);
         }
-        // DSH 的 qq-mode schema 只有 mode / ownerQQ 两个字段，没有 closedAgentPreset；
-        // 该值仍以本地 state/mode.json 为准（用 typeof 判断，允许用空串显式清空），
-        // 否则这里提前 return 会让控制台的 preset 下拉变成永远不生效的死设置。
-        const localPreset = readJsonSafe(path.join(STATE_DIR, 'mode.json'), null);
-        if (typeof localPreset?.closedAgentPreset === 'string') {
-          closedAgentPreset = localPreset.closedAgentPreset;
-        }
-        return;
       }
+      currentMode = 'reserved2';
+      return;
     } catch {}
     applyLocalMode();
   }
 
-  /** 拉取 DSH 当前可用的 agent preset 清单（供控制台下拉与 closed-agent 兜底使用）。 */
+  /** 拉取 DSH 当前可用的 agent preset 清单。 */
   async function refreshPresetList() {
     try {
       const { presets: list } = unwrap(await api.agentPresets.list({}), 'agentPresets.list');
@@ -5030,55 +5026,36 @@ async function main() {
     refreshPresetList().finally(() => { presetListRefreshing = false; });
   }
 
-  /** 当前模式是否允许该会话进入 */
-  function modeAllowed(key, kind, id, cfg, mode) {
-    if (mode === 'closed-agent') {
-      // 封闭 agent 模式：仅 owner 私聊
-      return key === `private:${String(cfg.ownerQQ ?? '')}`;
-    }
-    // chat / reserved / reserved2（仿真模式，暂同 chat 白名单）
+  /** 当前会话是否在白名单内 */
+  function modeAllowed(key, kind, id, cfg) {
     return allowed(kind, id, cfg);
   }
 
   /**
-   * 解析一个 preset 名。
-   *
-   * strict=false（closed-agent，仅 owner 私聊）：名字不可用时回退到 DSH 默认 preset ——
-   *   那里本来就用完整工具面，回退不构成提权。
-   * strict=true（chat / reserved / reserved2，会话可能属于 QQ 群）：名字不可用时返回 ''，
-   *   表示「没有可安全使用的 preset」，由调用方拒绝建会话（fail-closed）。
-   *   **绝不能回退到 DSH 默认 preset（standard）**：standard 含 bash/文件读写等本地工具，
-   *   一旦套在群聊会话上，群友即可驱动一个能操作本机的 agent（见 RULES.md「无本地工具」）。
+   * 解析一个 preset 名。会话可能属于 QQ 群，所以**一律 fail-closed**：
+   * 名字不可用时返回 ''，由调用方拒绝建会话。
+   * **绝不能回退到 DSH 默认 preset（standard）**：standard 含 bash/文件读写等本地工具，
+   * 一旦套在群聊会话上，群友即可驱动一个能操作本机的 agent（见 RULES.md「无本地工具」）。
    */
-  function resolvePresetName(name, { strict = false } = {}) {
+  function resolvePresetName(name) {
     const wanted = String(name ?? '').trim();
-    if (!wanted) return strict ? '' : (dshDefaultPreset || '');
+    if (!wanted) return '';
     // DSH 可能接受未知 preset 并套用默认值；清单未知时也必须 fail-closed。
-    if (dshPresetIds.length === 0) return strict ? '' : wanted;
+    if (dshPresetIds.length === 0) return '';
     if (dshPresetIds.includes(wanted)) return wanted;
     log(`⚠️ preset "${wanted}" 不在 DSH 可用清单（${dshPresetIds.join(', ')}）中`);
     // 清单是启动时拉的缓存：DSH 热加载新 preset（如补装 qq-chat*）后这里不会自动更新，
     // 会话就会一直 fail-closed、表现为「机器人突然不理人」。判定失败时顺手刷新一次缓存
     // （节流，避免每次唤醒都打一次 RPC），下一次唤醒即可用上；本次仍按 fail-closed 返回。
     maybeRefreshPresetListAfterMiss();
-    if (strict) {
-      log(`⛔ 群聊/仿真会话缺少 preset "${wanted}"，拒绝回退到 DSH 默认 preset（会把本地工具暴露给 QQ 群）；请运行 node scripts/setup-dsh.mjs 并重启 DSH`);
-      return '';
-    }
-    return dshDefaultPreset || '';
+    log(`⛔ 会话缺少 preset "${wanted}"，拒绝回退到 DSH 默认 preset（会把本地工具暴露给 QQ 群）；请运行 node scripts/setup-dsh.mjs 并重启 DSH`);
+    return '';
   }
 
-  /** 当前模式下的会话预设；返回 undefined 表示「该模式下没有可安全使用的 preset」 */
-  function modePreset(key, mode, cfg) {
-    if (mode === 'closed-agent') {
-      const chosen = resolvePresetName(closedAgentPreset);
-      if (!chosen) log('⚠️ 无法确定 closed-agent 的 preset（DSH preset 清单未知），将按 DSH 默认 preset 建会话');
-      return chosen || undefined;
-    }
-    // 聊天模式优先使用 socialV2.agentPreset；未配置时回退到默认聊天预设。
-    // 非 closed-agent 一律 strict：宁可建不出会话，也不给群聊套上带本地工具的默认 preset。
-    const wanted = mode === 'reserved2' ? (cfg.socialV2?.agentPreset || cfg.agentPreset) : cfg.agentPreset;
-    return resolvePresetName(wanted, { strict: true }) || undefined;
+  /** 会话预设；拿不到就返回 undefined（调用方 fail-closed 拒绝建会话） */
+  function modePreset(key, cfg) {
+    const wanted = cfg.socialV2?.agentPreset || cfg.agentPreset;
+    return resolvePresetName(wanted) || undefined;
   }
 
   // ── preset 组成戳 / 会话陈旧判定 ───────────────────────────────────────────
@@ -5101,7 +5078,7 @@ async function main() {
   function sessionPresetStaleness(key) {
     const none = { stale: false, preset: '', reason: '' };
     if (cfg.socialV2?.presetRefresh === false) return none; // 关掉自动刷新（保留旧会话上下文）
-    const preset = modePreset(key, currentMode, cfg) ?? '';
+    const preset = modePreset(key, cfg) ?? '';
     if (!preset) return none;
     const current = currentPresetStamp(preset);
     if (!current) return none; // 组成文件读不到（未安装/权限），无法判断就不动会话
@@ -5118,11 +5095,11 @@ async function main() {
   function isSessionAllowedInCurrentMode(key) {
     const m = /^(group|private):(\d+)$/.exec(key);
     if (!m) return false;
-    return modeAllowed(key, m[1], Number(m[2]), cfg, currentMode);
+    return modeAllowed(key, m[1], Number(m[2]), cfg);
   }
 
   function sessionPolicy(key) {
-    return JSON.stringify([currentMode, modePreset(key, currentMode, cfg) ?? '', currentMode === 'closed-agent' ? cfg.ownerQQ : null]);
+    return JSON.stringify([currentMode, modePreset(key, cfg) ?? '']);
   }
 
   function isCurrentSession(key, sessionId) {
@@ -5273,8 +5250,7 @@ async function main() {
       reconcileSessionPolicies();
       if (!dshReady) {
         dshReady = true;
-        lastMode = currentMode;
-        log(`DSH 已就绪（模式: ${currentMode}）`);
+        log('DSH 已就绪（模式: reserved2）');
         if (currentMode === 'reserved2') {
           // 首次确定模式为 reserved2 后再恢复持久化的有限睡眠定时器，
           // 避免在 initial chat 模式下设置定时器导致 timeout 唤醒被模式守卫吞掉。
@@ -5318,25 +5294,6 @@ async function main() {
         try { await flushQueue(); } catch (error) { log('补投队列异常:', error?.message ?? error); }
         // DSH 恢复后，把离线期间攒下的黑话学习窗口补触发
         for (const key of [...slangWindows.keys()]) maybeQueueSlangExtraction(key);
-      } else if (currentMode !== lastMode) {
-        if (lastMode === 'reserved' && currentMode !== 'reserved') {
-          cleanupSocialForModeChange();
-          log('桥接模式已离开一代仿真模式，清理社交状态');
-        }
-        if (lastMode === 'reserved2' && currentMode !== 'reserved2') {
-          clearAllSocialV2Timers();
-          drainAllPromptQueues('模式切换，已取消排队中的投递');
-          log('桥接模式已离开聊天模式，清理 reserved2 定时器与排队投递');
-        }
-        if (currentMode === 'reserved2' && lastMode !== 'reserved2') {
-          for (const key of socialV2.conversations.keys()) {
-            setupSleepTimerV2(key);
-            scheduleProactiveCheckV2(key);
-          }
-          log('桥接模式已进入聊天模式，重建有限睡眠定时器');
-        }
-        log(`桥接模式已切换为: ${currentMode}`);
-        lastMode = currentMode;
       }
     } else if (dshReady) {
       dshReady = false;
@@ -5694,7 +5651,6 @@ const agentTokenOk = (key, token) => {
           const rs = readRoleState();
           sendJson({
             mode: currentMode,
-            closedAgentPreset,
             role: rs.role ?? null,
             roleMode: rs.mode ?? 'active',
             dshReady,
@@ -5893,57 +5849,6 @@ const agentTokenOk = (key, token) => {
             presets = list.map((p) => ({ id: p.id, trust: p.trust ?? 'system' }));
           } catch {}
           sendJson({ presets });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/mode') {
-          const body = await readBody();
-          if (!['chat', 'closed-agent', 'reserved', 'reserved2'].includes(body.mode)) {
-            sendJson({ ok: false, error: 'mode 必须是 chat / closed-agent / reserved / reserved2' }, 400);
-            return;
-          }
-          const existing = readJsonSafe(path.join(STATE_DIR, 'mode.json'), {});
-          const next = {
-            mode: body.mode,
-            // 未显式传 preset 时保留原值；原值也没有就留空（= 用 DSH 默认 preset）。
-            ...(body.closedAgentPreset !== undefined
-              ? { closedAgentPreset: String(body.closedAgentPreset ?? '') }
-              : { closedAgentPreset: String(existing.closedAgentPreset ?? '') })
-          };
-          atomicWriteJson(path.join(STATE_DIR, 'mode.json'), next);
-          // 用字符串判断而非真值判断：空串是「显式清空 preset」，也要生效。
-          closedAgentPreset = next.closedAgentPreset;
-          // 写穿到 DSH 设置。refreshMode() 每 5 秒跑一次且以 DSH 的值为准（插件的 base 保证
-          // 该命名空间永远有值），所以只写本地 state/mode.json 会在下一次轮询时被静默回滚。
-          let dshSynced = false;
-          try {
-            // unwrap() 在 result.ok 为 false 时直接抛错，所以能执行到下一行即代表写穿已成功
-            // （不要在这里再判断 updated?.ok，解包后的值恒为真，那样的分支是死代码）。
-            unwrap(await api.settings.update({ ns: 'qq-mode', patch: { mode: body.mode } }), 'settings.update');
-            dshSynced = true;
-          } catch (error) {
-            log(`控制台：模式写穿 DSH 设置失败（${error?.message ?? error}）；本次仅写本地，下次 DSH 轮询会覆盖回滚`);
-          }
-          if (currentMode === 'reserved' && body.mode !== 'reserved') {
-            cleanupSocialForModeChange();
-            log('控制台：模式离开一代仿真模式，清理社交状态');
-          }
-          if (currentMode === 'reserved2' && body.mode !== 'reserved2') {
-            clearAllSocialV2Timers();
-            drainAllPromptQueues('模式切换，已取消排队中的投递');
-            log('控制台：模式离开聊天模式，清理 reserved2 定时器与排队投递');
-          }
-          currentMode = body.mode;
-          lastMode = body.mode;
-          reconcileSessionPolicies();
-          if (body.mode === 'reserved2') {
-            for (const key of socialV2.conversations.keys()) {
-              setupSleepTimerV2(key);
-              scheduleProactiveCheckV2(key);
-            }
-            log('控制台：模式进入聊天模式，重建有限睡眠定时器');
-          }
-          log(`控制台：模式已设置为 ${body.mode}${next.closedAgentPreset ? `（closed-agent preset: ${next.closedAgentPreset}）` : ''}${dshSynced ? '' : ' [仅本地，DSH 未同步]'}`);
-          sendJson({ ok: true, mode: body.mode, closedAgentPreset: next.closedAgentPreset, dshSynced });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/role') {
@@ -7970,6 +7875,8 @@ const agentTokenOk = (key, token) => {
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
               // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
               ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
+              // 原样重发闸门：也是**有意拒发**，让 MCP 返回非错误结果、别诱导模型反复重试。
+              ...(error?.duplicateGuard === true ? { duplicateGuard: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -8128,6 +8035,8 @@ const agentTokenOk = (key, token) => {
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
               // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
               ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
+              // 原样重发闸门：也是**有意拒发**，让 MCP 返回非错误结果、别诱导模型反复重试。
+              ...(error?.duplicateGuard === true ? { duplicateGuard: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -10742,10 +10651,58 @@ const agentTokenOk = (key, token) => {
             return;
           }
         }
+        // ── 插件（声明式）：控制台列表 + AI 侧遍历/调用 ─────────────
+        if (url.pathname === '/api/plugins' || url.pathname.startsWith('/api/plugins/')) {
+          const action = url.pathname === '/api/plugins' ? '' : url.pathname.slice('/api/plugins/'.length);
+          const enabledFile = path.join(STATE_DIR, 'plugins-enabled.json');
+          const readEnabled = () => { const v = readJsonSafe(enabledFile, {}); return v && typeof v === 'object' ? v : {}; };
+          const listNow = () => scanPlugins({ root: process.cwd(), aiRoot: path.join(STATE_DIR, 'ai-plugins'), enabledState: readEnabled() });
+          try {
+            if (req.method === 'GET' && (action === '' || action === 'list')) {
+              const plugins = listNow().map((p) => ({ ...p, tools: p.tools.map((t) => ({ ...t, toolName: pluginToolName(p, t) })) }));
+              sendJson({ ok: true, plugins, counts: { user: plugins.filter((p) => p.origin === 'user').length, ai: plugins.filter((p) => p.origin === 'ai').length } });
+              return;
+            }
+            if (req.method === 'POST' && action === 'toggle') {
+              const body = await readBody();
+              const key = `${String(body.origin)}:${String(body.id)}`;
+              const state0 = readEnabled();
+              state0[key] = body.enabled !== false;
+              atomicWriteJson(enabledFile, state0);
+              log(`[plugin] ${key} → ${state0[key] ? '启用' : '禁用'}（${body.by || 'console'}）`);
+              sendJson({ ok: true, key, enabled: state0[key] });
+              return;
+            }
+            if (req.method === 'POST' && action === 'call') {
+              // AI 调用插件工具：按 manifest 里的声明发 HTTP（不执行插件自带代码）
+              const body = await readBody();
+              const origin = String(body.origin || 'user');
+              const plugin = listNow().find((p) => p.origin === origin && p.id === String(body.plugin));
+              if (!plugin) { sendJson({ ok: false, error: '插件不存在' }, 404); return; }
+              if (!plugin.enabled) { sendJson({ ok: false, error: '插件未启用（需要管理员在控制台开启）' }, 403); return; }
+              const tool = plugin.tools.find((t) => t.name === String(body.tool));
+              if (!tool) { sendJson({ ok: false, error: '插件里没有这个工具' }, 404); return; }
+              const resp = await fetch(tool.url, {
+                method: tool.method,
+                headers: { 'user-agent': 'qq-bridge-plugin/1.0', ...(tool.method === 'POST' ? { 'content-type': 'application/json' } : {}), ...(tool.body ? {} : {}) },
+                ...(tool.method === 'POST' && tool.body ? { body: JSON.stringify(tool.body) } : {}),
+                signal: AbortSignal.timeout(tool.timeoutMs)
+              });
+              const text = (await resp.text()).slice(0, tool.maxChars);
+              sendJson({ ok: true, plugin: plugin.id, tool: tool.name, status: resp.status, text });
+              return;
+            }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
+        }
         // ── 语音包（控制台「语料 → 语音包」）────────────────────────
         // 目标音色的参考音频都收在这里；可以从 B站视频直接抽一段音频加进去。
         if (url.pathname === '/api/voice-packs' || url.pathname.startsWith('/api/voice-packs/')) {
-          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+          const vpAgent = String(req.headers['x-agent-token'] ?? '').trim();
+          const vpAction = url.pathname === '/api/voice-packs' ? '' : url.pathname.slice('/api/voice-packs/'.length);
+          // 管理操作（建包/删包/抽音频）只给控制台；读列表 + 发片段 允许 AI（它要能"来段糖哭"）
+          if (req.headers['x-agent-token'] && !(vpAction === '' || vpAction === 'send')) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
           const action = url.pathname === '/api/voice-packs' ? '' : url.pathname.slice('/api/voice-packs/'.length);
           try {
             if (req.method === 'GET' && action === 'file') {
@@ -10764,6 +10721,23 @@ const agentTokenOk = (key, token) => {
             }
             if (action === 'remove') { sendJson(removePack({ stateDir: STATE_DIR, id: body.pack })); return; }
             if (action === 'remove-clip') { sendJson(removeClip({ stateDir: STATE_DIR, id: body.pack, file: body.file })); return; }
+            if (action === 'send') {
+              // 群友点名"来段爱音糖哭" → 直接把语音包里的片段作为语音条发出去（不经过 TTS）
+              const key = String(body.key ?? '').trim();
+              const km = /^(group|private):(\d+)$/.exec(key);
+              if (!km) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+              const abs = clipPath({ stateDir: STATE_DIR, id: body.pack, file: body.clip });
+              if (!abs) { sendJson({ ok: false, error: 'pack/clip 不合法' }, 400); return; }
+              let buf; try { buf = fs.readFileSync(abs); } catch { sendJson({ ok: false, error: '片段不存在' }, 404); return; }
+              const id = Number(km[2]);
+              const seg = [{ type: 'record', data: { file: 'base64://' + buf.toString('base64') } }];
+              const resp = km[1] === 'group' ? await bot.raw('send_group_msg', { group_id: id, message: seg }) : await bot.raw('send_private_msg', { user_id: id, message: seg });
+              const mid = resp?.data?.message_id ?? resp?.message_id ?? null;
+              recordSentMessagesV2(key, [`[语音包] ${String(body.pack)}/${String(body.clip)}`]);
+              log(`[voicepack] 已发 ${key}：${body.pack}/${body.clip}（${Math.round(buf.length / 1024)}KB）`);
+              sendJson({ ok: true, key, messageId: mid, bytes: buf.length });
+              return;
+            }
             if (action === 'add-bili') {
               // bvid/url → cid → dash 音频直链 → 下载 → ffmpeg 转 16k 单声道 wav
               const raw = String(body.bvid || body.url || '').trim();
@@ -11244,10 +11218,6 @@ const agentTokenOk = (key, token) => {
             sendJson({ ok: false, error: 'reserved2 模式读取图片必须携带 agent token' }, 403);
             return;
           }
-          if (currentMode === 'chat' || currentMode === 'reserved') {
-            sendJson({ ok: false, error: '一代 chat/reserved 模式图片已自动内联，按需图片工具仅 reserved2 模式可用' }, 403);
-            return;
-          }
           // 读图允许跨会话：用任一有效会话令牌即可（AI 可能在私聊会话里被要求看群里的图）
           if (agentToken && !agentTokenOk(key, agentToken) && !anyAgentTokenOk(agentToken)) {
             sendJson({ ok: false, error: 'agent token 无效' }, 403);
@@ -11260,10 +11230,6 @@ const agentTokenOk = (key, token) => {
             return;
           }
           if (agentToken && !v2ToolEnabled('getImages')) {
-            sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
-            return;
-          }
-          if (!agentToken && currentMode === 'closed-agent' && !v2ToolEnabled('getImages')) {
             sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
             return;
           }
@@ -11471,12 +11437,6 @@ const agentTokenOk = (key, token) => {
           const replyToMessageId = isReply ? body.replyToMessageId : body.replyToMessageId;
           const atUserId = body.atUserId ?? null;
           const key = isPrivate ? `private:${targetId}` : `group:${targetId}`;
-          // 安全边界：发送工具只允许在 closed-agent（管理员私聊）或 reserved2（AI 带会话令牌）下使用；
-          // chat/reserved 的自动转发已覆盖正常回复，MCP 发送工具不应成为 prompt injection 的越权出口。
-          if (currentMode === 'chat' || currentMode === 'reserved') {
-            sendJson({ ok: false, error: '发送工具仅限 closed-agent / reserved2 模式使用' }, 403);
-            return;
-          }
           if (socialV2.paused && token) {
             sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行发送工具' }, 403);
             return;
@@ -11567,6 +11527,8 @@ const agentTokenOk = (key, token) => {
               ...(error?.uncertain === true ? { uncertain: true, hint: '这条可能已经发出（回执超时、历史里也没查到）：不要原样重发，先用 qq_get_recent_messages 确认最后几条。' } : {}),
               // 自我重复闸门：**没发出去**，是有意打回，让模型换个题再说（这不是错误）。
               ...(error?.selfRepeat === true ? { selfRepeat: true, detail: error?.detail ?? null } : {}),
+              // 原样重发闸门：也是**有意拒发**，让 MCP 返回非错误结果、别诱导模型反复重试。
+              ...(error?.duplicateGuard === true ? { duplicateGuard: true, detail: error?.detail ?? null } : {}),
             }, 500);
           }
           return;
@@ -11783,6 +11745,59 @@ const agentTokenOk = (key, token) => {
   // B 会话问什么 AI 都没反应」。跨会话本来就不需要保序：顺序只对「同一个会话里
   // 先文字后表情/先问后补」有意义。所以这里按 key 各排各的。
   const sendChains = new Map(); // key -> Promise（该会话的发送队尾）
+  /**
+   * 文本重复闸门：同一会话里把**一模一样**的自己发过的文本再发一次，直接拦住。
+   *
+   * 线上事故（2026-10-18 15:19）：WS 断开让 send_group_msg 的回执丢了，桥接按「不确定」
+   * 上报、并明确告诉模型“别原样重发”。模型 24 秒后还是重发了一遍，群里于是出现两条
+   * 「一天念那么多字，电费你出啊」（seq 38378 / 38379）。
+   * 结论：这种事劝不住，必须在发送侧做成硬约束——模型重试多少次，也只会有一条真的发出去。
+   *
+   * 只拦「自己发过的原文」：
+   * - 复读群友的话不会被拦（那文本我们自己没发过）
+   * - 上一条**确认送达**的窗口很短（默认 5s），只挡恶性的重复调用
+   * - 上一条**回执不确定**的窗口长（默认 5min），因为它可能已经在群里了
+   */
+  function checkTextDupGuard(key, texts) {
+    const guard = cfg.socialV2?.send?.dupGuard ?? {};
+    if (guard.enabled === false) return null;
+    const uncertainMs = Math.max(0, Number(guard.uncertainWindowMs) || 300000);
+    const sentMs = Math.max(0, Number(guard.sentWindowMs) || 5000);
+    const st = getSocialV2State(key);
+    const recent = Array.isArray(st.recentAiTextSends) ? st.recentAiTextSends : [];
+    if (!recent.length) return null;
+    const now = Date.now();
+    const norm = (v) => String(v ?? '').replace(/[\s\u3000]+/g, ' ').trim();
+    for (const raw of Array.isArray(texts) ? texts : []) {
+      if (typeof raw !== 'string') continue;
+      const t = norm(raw);
+      if (!t) continue;
+      const hit = recent.find((r) => r && norm(r.text) === t
+        && now - Number(r.at) <= (r.status === 'uncertain' ? uncertainMs : sentMs));
+      if (!hit) continue;
+      const ageSec = Math.max(1, Math.round((now - Number(hit.at)) / 1000));
+      return {
+        text: t,
+        at: Number(hit.at) || 0,
+        status: hit.status,
+        ageSec,
+        reason: hit.status === 'uncertain'
+          ? `上一次（${ageSec} 秒前）的回执丢了，它**可能已经发到群里了**`
+          : `${ageSec} 秒前刚发过一模一样的一条`
+      };
+    }
+    return null;
+  }
+
+  /** 记下一条自己发出的文本（状态 sent=确认送达 / uncertain=回执不确定）。 */
+  function recordAiTextSend(key, text, status) {
+    if (typeof text !== 'string' || !text.trim()) return;
+    const st = getSocialV2State(key);
+    if (!Array.isArray(st.recentAiTextSends)) st.recentAiTextSends = [];
+    st.recentAiTextSends.push({ text: String(text).slice(0, 500), at: Date.now(), status });
+    if (st.recentAiTextSends.length > 20) st.recentAiTextSends = st.recentAiTextSends.slice(-20);
+  }
+
   function chainFor(key) {
     const k = String(key ?? '');
     let chain = sendChains.get(k);
@@ -13050,6 +13065,18 @@ const agentTokenOk = (key, token) => {
     let chain = chainFor(key);
     // 主动回合的第一条 = 「主动开的头」：先查一次自我重复，太像就不发、打回去换题。
     // 每回合只查/只拦一次：模型换过题还像也放行，免得把它卡在同一轮里转圈。
+    // 原样重发闸门：放在主动回合闸门之前、且**在链里**执行，
+    // 保证它看到的是「上一条真的结算完之后」的状态（并发调用也不会漏拦）。
+    chain = chain.then(async () => {
+      const dup = checkTextDupGuard(key, outgoing);
+      if (!dup) return;
+      log(`[dupguard] 拦下原样重发（${key}）：${dup.reason}｜${dup.text.slice(0, 40)}`);
+      const err = new Error(`这条${dup.reason}，为防群里出现两条一模一样的，**先不发**。`
+        + '想确认就去看聊天记录（qq_get_recent_messages）：已经在 → 当发过了，别再发；确实没有 → 换个说法再发。');
+      err.duplicateGuard = true;
+      err.detail = { text: dup.text, at: dup.at, status: dup.status };
+      throw err;
+    });
     const guardTurn = proactiveGuardTurns.get(key);
     if (guardTurn?.armed && !guardTurn.used && outgoing.length && typeof outgoing[0] === 'string') {
       guardTurn.used = true;
@@ -13073,9 +13100,12 @@ const agentTokenOk = (key, token) => {
           assertSendAllowed();
           await onebotSend(kind, id, msg, useReply, useAt);
           sent.push(msg);
+          recordAiTextSend(key, msg, 'sent');
         })
         .catch(async (error) => {
           log(`QQ 发送失败 (${key}):`, error?.message ?? error);
+          // 回执不确定 = 可能已经在群里了 → 记成 uncertain，长窗口内不许原样重发。
+          if (error?.uncertain === true) recordAiTextSend(key, msg, 'uncertain');
           // 写类失败（超时 / 连接中断 / HTTP 回执丢失）≠ 没发出去：先查历史再定论。
           //  查到 → 按已送达处理（报成功，否则模型会重发出一条重复消息）
           //  确认没有 → 报**普通失败**（这时重发是安全且正确的，不该标成「不确定」吓住模型）
@@ -13106,6 +13136,9 @@ const agentTokenOk = (key, token) => {
         // 自我重复闸门：这是**有意的拒绝**（不是发送失败），原样抛给上层，好让 MCP 提示模型换题。
         const refused = failed.find((e) => e?.selfRepeat === true);
         if (refused) throw refused;
+        // 重复闸门是有意拒发（不是发送失败）：原样抛给上层，好让 MCP 提示模型别重试。
+        const dupRefused = failed.find((e) => e?.duplicateGuard === true);
+        if (dupRefused) throw dupRefused;
         const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
         err.sent = sent.slice();
         // 「回执超时、历史也查不到」与真正的硬失败要分开：上层据此告诉模型别原样重发。
@@ -13116,11 +13149,8 @@ const agentTokenOk = (key, token) => {
     });
   }
 
-  // 审计范围：closed-agent 仅对 owner 私聊跳过；其余模式/会话一律审计
+  // 审计范围：所有 QQ 会话一律审计
   function shouldAuditKey(key) {
-    if (currentMode === 'closed-agent') {
-      return !(key === `private:${String(cfg.ownerQQ ?? '')}`);
-    }
     return true;
   }
 
@@ -13210,22 +13240,19 @@ const agentTokenOk = (key, token) => {
       fs.mkdirSync(dir, { recursive: true });
       let sessionId;
       let lastError = null;
-      const preset = modePreset(key, currentMode, cfg);
-      // 非 closed-agent（chat / reserved / reserved2，会话可能属于 QQ 群）必须 fail-closed：
-      // 拿不到 qq-chat* 就拒绝建会话，绝不让 DSH 用默认 preset（standard）顶上——那会把
-      // bash/文件读写等本地工具暴露给 QQ 群里的任何人（见 RULES.md「无本地工具」）。
-      // closed-agent 仅 owner 私聊、本来就用完整工具面，回退不构成提权。
-      const strictPreset = currentMode !== 'closed-agent';
-      if (strictPreset && !preset) {
-        const wanted = currentMode === 'reserved2' ? (cfg.socialV2?.agentPreset || cfg.agentPreset) : cfg.agentPreset;
+      const preset = modePreset(key, cfg);
+      // 会话可能属于 QQ 群，必须 fail-closed：拿不到 qq-chat* 就拒绝建会话，绝不让 DSH 用
+      // 默认 preset（standard）顶上——那会把 bash/文件读写等本地工具暴露给 QQ 群里的任何人
+      // （见 RULES.md「无本地工具」）。
+      if (!preset) {
+        const wanted = cfg.socialV2?.agentPreset || cfg.agentPreset;
         throw new Error(`拒绝为 ${key} 创建会话：模式 ${currentMode} 需要 preset "${wanted}"，但它不在 DSH 可用清单中（${dshPresetIds.join(', ') || '未知'}）。回退到 DSH 默认 preset 会把本地工具暴露给 QQ 群；请先运行 node scripts/setup-dsh.mjs 并重启 DSH。`);
       }
       // 归组：所有 QQ 会话挂到同一个 workspace（幂等创建），GUI 里不再散落「未分组」
       // 创建顺序有安全含义：
       //   1) workspace + agentPreset，正常路径；
-      //   2) workspace 无 preset    ，仅 closed-agent 允许的降级（那里本就是完整工具面）；
-      //      群聊模式绝不走这一步：DSH 会给「无 preset 会话」套上默认 preset（standard）。
-      for (const withPreset of strictPreset ? [true] : [true, false]) {
+      //   2) 没有降级路径：DSH 会给「无 preset 会话」套上默认 preset（standard）。
+      for (const withPreset of [true]) {
         try {
           const wsValue = unwrap(await api.workspace.create({ path: dir }), 'workspace.create');
           if (wsValue.created && cfg.workspaceTitle) {
@@ -13273,7 +13300,7 @@ const agentTokenOk = (key, token) => {
         if (state.sessions[key] === sessionId) retireSession(key);
         throw new Error('会话创建期间已重置或权限已变化');
       }
-      log(`新会话 ${key} -> ${sessionId}（模式 ${currentMode}，preset: ${modePreset(key, currentMode, cfg) ?? '默认'}）`);
+      log(`新会话 ${key} -> ${sessionId}（preset: ${preset ?? '默认'}）`);
       return sessionId;
     })();
     sessionPromises.set(key, promise);
@@ -13577,6 +13604,10 @@ const agentTokenOk = (key, token) => {
             lastUnreadSeq: Number(val.lastUnreadSeq) || 0,
             // 网关侧 message_seq 水位：不读回来，掉线补拉就没有基线（存了不读等于没存）。
             lastGwSeq: Number(val.lastGwSeq) || 0,
+            recentAiTextSends: Array.isArray(val.recentAiTextSends)
+              ? val.recentAiTextSends.filter((r) => r && typeof r.text === 'string').slice(-20)
+                .map((r) => ({ text: String(r.text).slice(0, 500), at: Number(r.at) || 0, status: r.status === 'uncertain' ? 'uncertain' : 'sent' }))
+              : [],
             // 令牌宽限名单（旧令牌在 until 之前仍然可用，见 agentTokenOk 的说明）
             proactiveNextAt: Number(val.proactiveNextAt) || 0,
             lastDiaryDay: typeof val.lastDiaryDay === 'string' ? val.lastDiaryDay : '',
@@ -13684,6 +13715,12 @@ const agentTokenOk = (key, token) => {
           lastUnreadSeq: st.lastUnreadSeq || 0,
           // 网关侧 message_seq 水位：掉线补拉靠它定位「从哪接着补」，丢了就补不了（见 backfillMissedMessages）。
           lastGwSeq: Number(st.lastGwSeq) || 0,
+          // 最近发过的文本（原样重发闸门要用）：必须跨重启保留，
+          // 否则「回执不确定 → 重启 → 重发」照样重复。
+          recentAiTextSends: Array.isArray(st.recentAiTextSends)
+            ? st.recentAiTextSends.filter((r) => r && typeof r.text === 'string').slice(-20)
+              .map((r) => ({ text: String(r.text).slice(0, 500), at: Number(r.at) || 0, status: r.status === 'uncertain' ? 'uncertain' : 'sent' }))
+            : [],
           proactiveNextAt: Number(st.proactiveNextAt) || 0,
           lastDiaryDay: typeof st.lastDiaryDay === 'string' ? st.lastDiaryDay : '',
           prevAgentTokens: Array.isArray(st.prevAgentTokens)
@@ -14084,15 +14121,13 @@ const agentTokenOk = (key, token) => {
     imageLibraryCache = { at: 0, items: [] };
   }
 
-  // 启动时先按本地已保存的模式兜底一次。
-  // 之前 currentMode 一直停在初始的 'chat'，只有 DSH 可达（checkDsh → refreshMode）才会被纠正——
-  // 后果是 DSH 没起来时桥接整段时间都用错模式，state/mode.json 里配的 reserved2 形同虚设，
-  // 所有带 agent token 的工具一律 403「该接口仅 reserved2 模式可用」。
-  // 同步读，保证监听端口之前模式就已就位；等 DSH 起来后 refreshMode 仍以 DSH 设置为准。
+  // 模式固定为 reserved2，启动时同步确定一次，保证监听端口之前就已就位。
   applyLocalMode();
 
+  // 一代仿真模式（reserved）已删除，v1 社交引擎永久关闭；
+  // 引擎主体（socialState / tickSocial 等）暂时保留，属于不可达代码。
   function isSocialEnabled() {
-    return currentMode === 'reserved' && cfg.social?.enabled !== false;
+    return false;
   }
 
   function socialState(key) {
