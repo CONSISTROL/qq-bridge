@@ -14617,7 +14617,7 @@ const agentTokenOk = (key, token) => {
       const stV2 = getSocialV2State(key);
       tokenLine = `【会话令牌】${stV2.agentToken}（调用状态/发送工具时请在参数中带上此令牌）\n\n`;
     }
-    const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
+    const promptText = `${roleLine}${selfLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
     let popSilent = null;
     try {
       const sessionId = await ensureSession(key);
@@ -15857,6 +15857,10 @@ const agentTokenOk = (key, token) => {
   function buildWakePromptV2(key, reason) {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
+    // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
+    const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
+    const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
+      + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const memoryText = formatMemoryV2(st);
@@ -16026,10 +16030,14 @@ const agentTokenOk = (key, token) => {
   function buildWakeReminderPromptV2(key) {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
+    // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
+    const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
+    const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
+      + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-    return `${roleLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+    return `${roleLine}${selfLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
 
   /**
