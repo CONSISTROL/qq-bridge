@@ -30,9 +30,9 @@ const KINDS = {
   context: { label: '对话上下文', icon: '💬' },
   slang: { label: '黑话词条', icon: '🗣️' },
   knowledge: { label: '知识库条目', icon: '🧠' },
-  stickerNote: { label: '表情笔记', icon: '😼' }
+  // 表情笔记已迁到相册（state/album-meta.json），记忆页不再单列这一类。
 };
-const KIND_ORDER = ['lightTopic', 'lightThought', 'member', 'context', 'slang', 'knowledge', 'stickerNote'];
+const KIND_ORDER = ['lightTopic', 'lightThought', 'member', 'context', 'slang', 'knowledge'];
 
 const state = {
   view: null,
