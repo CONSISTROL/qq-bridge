@@ -475,5 +475,6 @@
     "trashMaxMB": 500,
     "sentImagesMaxMB": 300,
     "sources": []
-  }
+  },
+  "consoleOrigins": []
 }

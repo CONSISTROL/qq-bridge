@@ -5597,8 +5597,19 @@ const agentTokenOk = (key, token) => {
         const origin = req.headers['origin'];
         if (origin) {
           let originHost = '';
-          try { originHost = new URL(String(origin)).host; } catch {}
-          if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(originHost)) {
+          try { originHost = new URL(String(origin)).host; } catch { /* 解析失败按空处理 */ }
+          // 同源校验：Origin 的 host 必须等于**请求本身的 Host**（这就是浏览器的同源定义）。
+          // 只认 127.0.0.1:port 会把反代挂载（https://anihub.xin/qq/）全拒掉——线上真事：
+          // 删图时弹「跨站请求被拒绝」。反代可能改写 Host，所以 X-Forwarded-Host 也算。
+          const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+          const hostHeader = String(req.headers['host'] ?? '').trim();
+          if (hostHeader) allowed.add(hostHeader);
+          const fwdHost = String(req.headers['x-forwarded-host'] ?? '').trim();
+          if (fwdHost) allowed.add(fwdHost);
+          for (const o of (Array.isArray(cfg.consoleOrigins) ? cfg.consoleOrigins : [])) {
+            allowed.add(String(o).trim().replace(/^https?:\/\//, '').replace(/\/$/, ''));
+          }
+          if (!allowed.has(originHost)) {
             sendJson({ ok: false, error: '跨站请求被拒绝' }, 403);
             return;
           }
