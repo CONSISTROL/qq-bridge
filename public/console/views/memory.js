@@ -24,14 +24,15 @@ export const order = 4;
 const KINDS = {
   lightTopic: { label: '进行中的话题', icon: '📌' },
   lightThought: { label: '想说没说的话', icon: '💭' },
-  impression: { label: '对群友的印象', icon: '👤' },
-  remark: { label: '群成员备注', icon: '🏷️' },
+  // 印象（AI 对群友的标签/互动）+ 备注（你给群友起的名字/说明）合并成一个「群成员」入口，
+  // 两类数据仍各自存储，只是在这里一起看、一起管。
+  member: { label: '群成员（备注 + 印象）', icon: '🧑' },
   context: { label: '对话上下文', icon: '💬' },
   slang: { label: '黑话词条', icon: '🗣️' },
   knowledge: { label: '知识库条目', icon: '🧠' },
   stickerNote: { label: '表情笔记', icon: '😼' }
 };
-const KIND_ORDER = ['lightTopic', 'lightThought', 'impression', 'remark', 'context', 'slang', 'knowledge', 'stickerNote'];
+const KIND_ORDER = ['lightTopic', 'lightThought', 'member', 'context', 'slang', 'knowledge', 'stickerNote'];
 
 const state = {
   view: null,
@@ -167,7 +168,7 @@ function renderList() {
     html += `<tr>
       <td><input type="checkbox" data-mem-select="${rowKey}"${checked}></td>
       <td>${it.pinned ? '<span class="pill r">钉住</span> ' : ''}${contentCell(it)}</td>
-      <td class="meta">${esc(it.key || '全局')}<br>${esc(it.at ? fmtAgo(it.at) : '-')}</td>
+      <td class="meta">${esc(it.key || '全局')}${it.kind === 'impression' ? ' · 印象' : it.kind === 'remark' ? ' · 备注' : ''}<br>${esc(it.at ? fmtAgo(it.at) : '-')}</td>
       <td class="row">
         <button class="small" data-mem-pin="${rowKey}">${it.pinned ? '取消钉住' : '钉住'}</button>
         <button class="small danger" data-mem-del="${rowKey}">忘掉</button>
@@ -225,6 +226,22 @@ async function loadInventory() {
 async function loadItems() {
   const q = String($('#memSearch', state.view)?.value || '').trim();
   const limit = Number($('#memLimit', state.view)?.value) || 300;
+  // 「群成员」= 印象 + 备注 两类合并展示（各自仍按自己的 kind 删除/钉住）
+  const kinds = state.kind === 'member' ? ['impression', 'remark'] : [state.kind];
+  if (kinds.length > 1) {
+    const results = await Promise.all(kinds.map((k) => {
+      const ps = new URLSearchParams({ kind: k, limit: String(limit) });
+      const qq = String($('#memSearch', state.view)?.value || '').trim();
+      if (qq) ps.set('q', qq);
+      if (state.keyFilter) ps.set('key', state.keyFilter);
+      return api(`/api/memory/items?${ps.toString()}`).catch(() => null);
+    }));
+    const ok0 = results.find((r) => r && r.ok);
+    if (!ok0) { state.items = []; renderList(); return; }
+    state.items = results.flatMap((r) => (r && r.ok ? (r.items || []) : []));
+    renderList();
+    return;
+  }
   const params = new URLSearchParams({ kind: state.kind, limit: String(limit) });
   if (state.keyFilter) params.set('key', state.keyFilter);
   if (q) params.set('q', q);
