@@ -27,12 +27,12 @@ const KINDS = {
   // 印象（AI 对群友的标签/互动）+ 备注（你给群友起的名字/说明）合并成一个「群成员」入口，
   // 两类数据仍各自存储，只是在这里一起看、一起管。
   member: { label: '群成员（备注 + 印象）', icon: '🧑' },
-  context: { label: '对话上下文', icon: '💬' },
-  slang: { label: '黑话词条', icon: '🗣️' },
-  knowledge: { label: '知识库条目', icon: '🧠' },
+  context: { label: '对话上下文', icon: '💬' }
+  // 黑话词条 / 知识库条目不在这里列：它们有独立分区（黑话库 / 群知识库），
+  // 在记忆页重复一遍只会让人以为有两份数据。,
   // 表情笔记已迁到相册（state/album-meta.json），记忆页不再单列这一类。
 };
-const KIND_ORDER = ['lightTopic', 'lightThought', 'member', 'context', 'slang', 'knowledge'];
+const KIND_ORDER = ['lightTopic', 'lightThought', 'member', 'context'];
 
 const state = {
   view: null,
