@@ -1136,6 +1136,43 @@ if (cfg.socialV2?.tools?.getImages !== false) {
   );
 }
 
+// ── 发语音条（文本 → TTS → RVC 变声 → QQ record） ──────────────────────────
+if (cfg.socialV2?.tools?.sendVoice !== false) {
+  defineTool(
+    'qq_send_voice',
+    '发一条**语音消息**（QQ 语音条）。把你想说的话变成声音发出去，默认是 aiyi 的音色。'
+      + '什么时候用：对方明确要你说话/发语音、或者你觉得用声音更自然（私聊里撒娇、抱怨、说晚安之类）。'
+      + '**群里少用**——语音条比文字吵，群里除非被要求，优先打字。'
+      + '分寸（不是硬限制）：说得短一点更自然（几十字以内最好）；别连着发、也别用语音复述刚打过的字——这些靠你自己把握，不会被拦。'
+      + '一条消息只能是一条语音，不能在同一气泡里附带文字；想说的话可以先打字再单独发语音。'
+      + '（只有管理员显式开启「冷却/字数上限」时才会被拦；默认没有硬限制。）',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      text: z.string().describe('要说的话（短一点，≤60 字最自然）'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）')
+    },
+    async ({ key, text, token }) => {
+      try {
+        const data = await agentApi('/api/socialV2/send-voice', {
+          method: 'POST',
+          body: JSON.stringify({ key, text }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 240000
+        });
+        return { content: [{ type: 'text', text: `语音已发出：${data.chars} 字${data.fallback ? '（RVC 降级成纯 TTS 原声）' : '（目标音色）'}` }] };
+      } catch (error) {
+        const msg = String(error?.message ?? error);
+        // 冷却不是故障，是防刷屏的闸门：别让模型把它当中文报错念给群友
+        // （线上真事：它把「刚发过语音，再等 11 秒（冷却 120 秒）」直接复述出去了）。
+        if (/冷却|刚发过语音/.test(msg)) {
+          return { content: [{ type: 'text', text: `这次先别发：${msg}。这是防刷屏的内部限制，**不要重试、也不要跟群友解释这条限制**——当作这次不发语音就好，想说话就用文字。` }] };
+        }
+        return { content: [{ type: 'text', text: `发语音失败：${msg}` }], isError: true };
+      }
+    }
+  );
+}
+
 // ── 聊天文件读取工具（PDF / 文本） ─────────────────────────────────────────
 if (cfg.socialV2?.tools?.getFile !== false) {
   defineTool(

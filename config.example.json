@@ -430,6 +430,17 @@
       "maxTextChars": 0,
       "timeoutMs": 60000,
       "toolChunkChars": 40000
+    },
+    "tts": {
+      "enabled": true,
+      "url": "",
+      "token": "",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "model": "aiyi",
+      "transpose": 5,
+      "maxChars": 0,
+      "cooldownMs": 0,
+      "timeoutMs": 180000
     }
   },
   "moderation": {

@@ -3097,4 +3097,47 @@ await testWith({
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+// 发语音条：文本 → TTS 服务 → QQ record 段。本机不跑 TTS/RVC（在 tzd 上），用 stub。
+let capturedTts = null;
+await testWith({
+  config: { socialV2: { tts: { enabled: true, url: 'http://tts.test/tts', token: 'tts-tok', maxChars: 10, cooldownMs: 60000, model: 'aiyi' } } },
+  globals: {
+    fetch: async (url, init) => {
+      capturedTts = { url: String(url), headers: init?.headers, body: JSON.parse(init?.body ?? '{}') };
+      return {
+        ok: true,
+        headers: { get: () => null },
+        arrayBuffer: async () => new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]).buffer
+      };
+    }
+  }
+}, '发语音：合成→record；长度只截断不拦、冷却仅在显式配置时生效', async (h) => {
+  const stopKeepAlive = h.keepLoopAlive();
+  const server = h.startConsoleServer();
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+    h.setMode('reserved2');
+    const key = 'group:456';
+    const st = h.getSocialV2State(key);
+    const base = `/api/socialV2/send-voice?token=fixture-console-token`;
+    const ok = await apiRequest(server, base, { method: 'POST', agentToken: st.agentToken, body: { key, text: '你好呀' } });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(capturedTts.url, 'http://tts.test/tts', '要调到 TTS 服务');
+    assert.equal(capturedTts.headers['x-tts-token'], 'tts-tok', '要带令牌');
+    assert.equal(capturedTts.body.model, 'aiyi', '默认用 aiyi 音色');
+    const rec = h.calls.ws.find((c) => c.action === 'send_group_msg' && Array.isArray(c.params?.message) && c.params.message[0]?.type === 'record');
+    assert.ok(rec, '要真的发出 record 段');
+    assert.match(String(rec.params.message[0].data.file), /^base64:\/\//, '语音走 base64 文件');
+    // 超长 → 不拒绝，截断后照发（owner 要求不要硬门限）
+    st.lastVoiceAt = 0; // 先清掉上一条留下的冷却，单独验"长度不拦"
+    const tooLong = await apiRequest(server, base, { method: 'POST', agentToken: st.agentToken, body: { key, text: 'x'.repeat(20) } });
+    assert.equal(tooLong.status, 200, JSON.stringify(tooLong.body));
+    assert.equal(tooLong.body.truncated, true, '要标记截断');
+    // 冷却（显式配置了才生效）→ 429
+    st.lastVoiceAt = Date.now();
+    const again = await apiRequest(server, base, { method: 'POST', agentToken: st.agentToken, body: { key, text: '再说一句' } });
+    assert.equal(again.status, 429, '冷却期内要拒');
+  } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+});
+
 if (failures) process.exitCode = 1;

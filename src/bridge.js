@@ -722,6 +722,19 @@ function loadConfig() {
           libraryMaxBytes: 3 * 1024 * 1024
         }
       },
+      // 语音合成（发语音条）：文本 → edge-tts → RVC 变声（默认 aiyi 音色）→ QQ record 段。
+      // 服务跑在 tzd（RVC + torch + 模型都在那台 8 核机器上），协议见 scripts/tts-server.py。
+      tts: {
+        enabled: true,
+        url: '',                  // 例如 http://10.8.0.2:8766/tts
+        token: '',                // 与服务端 TTS_TOKEN 一致
+        voice: 'zh-CN-XiaoxiaoNeural', // edge-tts 音色（RVC 会把它换成目标音色）
+        model: 'aiyi',            // RVC 模型（assets/weights/aiyi.pth）
+        transpose: 0,             // 变调半音，调音色高低
+        maxChars: 0,              // 0 = 不硬拦；>0 时超长自动截断（不是拒绝）。分寸交给提示词
+        cooldownMs: 0,            // 0 = 不设硬冷却；>0 才会拦（owner 要求不要硬门限）
+        timeoutMs: 180000
+      },
       // 聊天里收到的 QQ 视频：AI 原来只能看到一行「[视频]」，回一句「打不开」。
       // 这里把视频抓下来抽帧给视觉模型看（抽帧要 ffmpeg；没装则退化成封面缩略图）。
       // 注意：**不做语音转写**——本机没有 ASR，视频里说的话 AI 听不到，只看得见画面。
@@ -7128,6 +7141,7 @@ const agentTokenOk = (key, token) => {
             getImages: 'qq_get_message_images',
             getForwardMsg: 'qq_get_forward_msg',
             sendPoke: 'qq_send_poke',
+            sendVoice: 'qq_send_voice',
             listStickers: 'qq_list_stickers',
             getStickerImage: 'qq_get_sticker_image',
             sendSticker: 'qq_send_sticker',
@@ -8227,6 +8241,57 @@ const agentTokenOk = (key, token) => {
             sendJson({ ok: true, key, sticker: entry });
           } catch (error) {
             sendJson({ ok: false, error: `修改备注失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
+        // 发语音条：文本 → tzd 的 TTS 服务（edge-tts + RVC 变声）→ QQ record 段。
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-voice') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const text = String(body.text ?? '').trim();
+          const replyToMessageId = body.replyToMessageId;
+          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
+          const ttsCfg = cfg.socialV2?.tts ?? {};
+          if (ttsCfg.enabled === false) { sendJson({ ok: false, error: '语音合成已关闭（socialV2.tts.enabled）' }, 403); return; }
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (!text) { sendJson({ ok: false, error: 'text 不能为空' }, 400); return; }
+          // 不设硬门限（owner 要求）：超长就截断，交给提示词去把握分寸。
+          const maxCharsRaw = Number(ttsCfg.maxChars);
+          const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw > 0 ? Math.min(300, maxCharsRaw) : 0;
+          const speakText = maxChars > 0 && text.length > maxChars ? text.slice(0, maxChars) : text;
+          if (agentToken && !agentTokenOk(key, agentToken)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (agentToken && !v2ToolEnabled('sendVoice')) { sendJson({ ok: false, error: '工具未启用：qq_send_voice' }, 403); return; }
+          const kind = keyMatch[1];
+          const id = Number(keyMatch[2]);
+          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
+            sendJson({ ok: false, error: '当前模式不允许向该会话发送' }, 403);
+            return;
+          }
+          const stV = getSocialV2State(key);
+          const cooldown = Math.max(0, Number(ttsCfg.cooldownMs) || 0);
+          const lastVoiceAt = Number(stV.lastVoiceAt) || 0;
+          if (cooldown > 0 && lastVoiceAt && Date.now() - lastVoiceAt < cooldown) {
+            const left = Math.ceil((cooldown - (Date.now() - lastVoiceAt)) / 1000);
+            sendJson({ ok: false, error: `刚发过语音，再等 ${left} 秒（冷却 ${Math.round(cooldown / 1000)} 秒）`, cooldownLeftMs: cooldown - (Date.now() - lastVoiceAt) }, 429);
+            return;
+          }
+          try {
+            const voice = await synthesizeVoiceV2(speakText, ttsCfg);
+            const b64 = voice.buffer.toString('base64');
+            const segment = [{ type: 'record', data: { file: 'base64://' + b64 } }];
+            const resp = kind === 'group'
+              ? await bot.raw('send_group_msg', { group_id: id, message: segment })
+              : await bot.raw('send_private_msg', { user_id: id, message: segment });
+            const messageId = resp?.data?.message_id ?? resp?.message_id ?? null;
+            stV.lastVoiceAt = Date.now();
+            stV.lastActionAt = stV.lastVoiceAt;
+            recordSentMessagesV2(key, [`[语音] ${speakText}`]);
+            log(`[tts] 发语音 ${key}：${speakText.length} 字${voice.fallback ? '（RVC 降级为纯 TTS）' : `（${ttsCfg.model || 'aiyi'} 音色）`}${speakText.length < text.length ? '（超长已截断）' : ''}`);
+            sendJson({ ok: true, key, messageId, chars: speakText.length, truncated: speakText.length < text.length, fallback: !!voice.fallback, bytes: voice.buffer.length });
+          } catch (error) {
+            log(`[tts] 发语音失败 ${key}：${error?.message ?? error}`);
+            sendJson({ ok: false, error: `发语音失败：${error?.message ?? error}` }, 500);
           }
           return;
         }
@@ -12001,6 +12066,34 @@ const agentTokenOk = (key, token) => {
     };
   }
 
+  /**
+   * 文本 → 语音（wav）。走 tzd 的 TTS 服务（edge-tts + RVC 变声）。
+   * 返回 { buffer, fallback }；fallback=true 表示 RVC 没成功、是纯 TTS 原声。
+   */
+  async function synthesizeVoiceV2(text, ttsCfg = null) {
+    const tts = ttsCfg && typeof ttsCfg === 'object' ? ttsCfg : (cfg.socialV2?.tts ?? {});
+    if (tts.enabled === false || !tts.url) throw new Error('语音合成未启用（socialV2.tts.url 未配置）');
+    const body = {
+      text: String(text ?? '').slice(0, Math.max(1, Number(tts.maxChars) || 60)),
+      voice: String(tts.voice || 'zh-CN-XiaoxiaoNeural'),
+      model: String(tts.model || 'aiyi'),
+      transpose: Number(tts.transpose) || 0
+    };
+    const res = await fetch(String(tts.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(tts.token ? { 'x-tts-token': String(tts.token) } : {}) },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(Math.max(10000, Number(tts.timeoutMs) || 180000))
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`语音合成失败（${res.status}）：${detail.slice(0, 160)}`);
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) throw new Error('语音合成返回了空音频');
+    return { buffer, fallback: res.headers.get('x-tts-fallback') === '1' };
+  }
+
   async function extractVideoFramesFromFile(videoFile, { frames = 6, maxWidth = 800, tmpDir } = {}) {
     const bin = await resolveFfmpegPath();
     if (!bin) return null;
@@ -15267,7 +15360,17 @@ const agentTokenOk = (key, token) => {
           + repeatReminders.slice(0, 5).map((r) => `- ${r.question}（已问 ${r.hitCount} 次，${r.askerCount} 个人）`).join('\n') + '\n\n';
       }
     }
-    const base = roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    // 语音能力：只在 preset 里写会被长 persona 淹没，所以每轮唤醒都提醒一次「你能发语音 + 什么时候该发」。
+    const ttsCfgV = cfg.socialV2?.tts ?? {};
+    const voiceLine = (ttsCfgV.enabled !== false && ttsCfgV.url)
+      ? (() => {
+        const cap = Number(ttsCfgV.maxChars) || 0;
+        const cd = Math.round((Number(ttsCfgV.cooldownMs) || 0) / 1000);
+        const limits = [cap > 0 ? `一条最多 ${cap} 字` : '说短一点更自然', cd > 0 ? `两条之间至少隔 ${cd} 秒` : ''].filter(Boolean).join('，');
+        return `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字——分寸你自己把握。\n`;
+      })()
+      : '';
+    const base = voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
