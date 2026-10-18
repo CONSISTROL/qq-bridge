@@ -35,11 +35,10 @@ export async function mount(root) {
   const view = await mountFragment(root, 'album');
   const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0 };
 
-  const renderGrid = (append) => {
+  const renderGrid = (list) => {
     const grid = $('#albumGrid', view);
     if (!grid) return;
-    if (!append) grid.textContent = '';
-    for (const it of state.items.slice(append ? state.offset : 0)) {
+    for (const it of list) {
       const card = document.createElement('div');
       card.className = 'album-card';
       card.dataset.id = it.id;
@@ -76,8 +75,10 @@ export async function mount(root) {
     state.stats = r.stats || { count: 0, bytes: 0 };
     state.total = r.total || 0;
     state.hasMore = !!r.hasMore;
-    if (append) { state.items = state.items.concat(r.items || []); state.offset += (r.items || []).length; }
-    else { state.items = r.items || []; state.offset = state.items.length; }
+    const fresh = r.items || [];
+    if (append) state.items = state.items.concat(fresh);
+    else state.items = fresh;
+    state.offset = state.items.length;
     const sel = $('#albumSource', view);
     if (sel && sel.options.length === 0) {
       const all = document.createElement('option');
@@ -87,7 +88,7 @@ export async function mount(root) {
         o.value = s.id; o.textContent = s.label; sel.append(o);
       }
     }
-    renderGrid(append);
+    renderGrid(fresh);
   };
 
   // ── 大图弹窗 ───────────────────────────────────────────────
@@ -110,34 +111,40 @@ export async function mount(root) {
     const it = state.items.find((x) => x.id === card.dataset.id);
     if (it) openModal(it);
   });
-  $('#albumModalClose', view)?.addEventListener('click', closeModal);
-  $('#albumModal', view)?.addEventListener('click', (ev) => { if (ev.target.id === 'albumModal') closeModal(); });
-  $('#albumModalSave', view)?.addEventListener('click', async () => {
+
+  // 统一用事件委托：按钮可能被重新渲染/替换，直接 addEventListener 容易"点了没反应"。
+  const modalMsg = (text) => { const el = $('#albumModalMsg', view); if (el) el.textContent = text; setMsg($('#albumMsg', view), text); };
+  delegate($('#albumModal', view), 'click', '#albumModalClose', () => closeModal());
+  delegate($('#albumModal', view), 'click', '#albumModalSave', async () => {
     const modal = $('#albumModal', view);
+    modalMsg('保存中…');
     const r = await api('api/album', 'PATCH', {
       source: modal.dataset.source,
       file: modal.dataset.file,
       notes: $('#albumModalNotes', view).value,
       tags: $('#albumModalTags', view).value
     }).catch((e) => ({ ok: false, error: e.message }));
-    setMsg($('#albumMsg', view), r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '失败')));
+    modalMsg(r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '保存失败')));
     if (r.ok) { closeModal(); await load(); }
   });
-  $('#albumModalDelete', view)?.addEventListener('click', async () => {
+  delegate($('#albumModal', view), 'click', '#albumModalDelete', async () => {
     const modal = $('#albumModal', view);
     if (!confirmDanger(`删除这张图？\n${modal.dataset.file}\n（先进回收站 state/album-trash，可还原）`)) return;
-    const r = await api('api/album/delete', 'POST', { source: modal.dataset.source, file: modal.dataset.file }).catch((e) => ({ ok: false, error: e.message }));
-    setMsg($('#albumMsg', view), r.ok ? '✅ 已移入回收站' : ('❌ ' + (r.error || '失败')));
+    modalMsg('删除中…');
+    const r = await api('api/album/delete', 'POST', { source: modal.dataset.source, file: modal.dataset.file })
+      .catch((e) => ({ ok: false, error: e.message }));
+    modalMsg(r.ok ? '✅ 已移入回收站' : ('❌ ' + (r.error || '删除失败')));
     if (r.ok) { closeModal(); await load(); }
   });
-  $('#albumMore', view)?.addEventListener('click', () => load({ append: true }));
-  $('#albumSource', view)?.addEventListener('change', (ev) => { state.source = ev.target.value; load(); });
-  $('#albumSearch', view)?.addEventListener('input', debounce((ev) => { state.q = ev.target.value.trim(); load(); }, 350));
-  $('#albumRescan', view)?.addEventListener('click', async () => {
+  $('#albumModal', view)?.addEventListener('click', (ev) => { if (ev.target.id === 'albumModal') closeModal(); });
+  delegate($('#albumMore', view) ?? view, 'click', '#albumMore', () => load({ append: true }));
+  delegate(view, 'click', '#albumRescan', async () => {
     const r = await api('api/album/rescan', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#albumMsg', view), r.ok ? `✅ 重扫完成：${r.count} 张 / ${fmtBytes(r.bytes)}` : ('❌ ' + (r.error || '失败')));
     await load();
   });
+  delegate(view, 'change', '#albumSource', (ev) => { state.source = ev.target.value; load(); });
+  delegate(view, 'input', '#albumSearch', debounce((ev) => { state.q = ev.target.value.trim(); load(); }, 350));
 
   await load();
   return () => {};

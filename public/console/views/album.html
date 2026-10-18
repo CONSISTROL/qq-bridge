@@ -22,7 +22,7 @@
   <div class="album-modal-box">
     <div class="album-modal-head">
       <span id="albumModalTitle" class="album-modal-title"></span>
-      <button id="albumModalClose" class="btn">关闭</button>
+      <button id="albumModalClose" class="btn" type="button">关闭</button>
     </div>
     <div class="album-modal-body">
       <div class="album-modal-imgwrap"><img id="albumModalImg" alt=""></div>
@@ -32,9 +32,10 @@
         <textarea id="albumModalNotes" rows="3" placeholder="这张图是什么、什么时候用…"></textarea>
         <label class="album-label">标签（逗号分隔）</label>
         <input id="albumModalTags" type="text" placeholder="猫, 无语">
+        <div id="albumModalMsg" class="msg"></div>
         <div class="row" style="gap:8px;margin-top:10px">
-          <button id="albumModalSave" class="btn">保存</button>
-          <button id="albumModalDelete" class="danger">删除</button>
+          <button id="albumModalSave" class="btn" type="button">保存</button>
+          <button id="albumModalDelete" class="danger" type="button">删除</button>
         </div>
       </div>
     </div>
