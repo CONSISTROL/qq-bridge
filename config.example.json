@@ -444,6 +444,17 @@
     },
     "album": {
       "enabled": true
+    },
+    "memory": {
+      "archive": {
+        "enabled": true,
+        "keepDays": 90,
+        "maxFileBytes": 67108864
+      },
+      "diary": {
+        "enabled": true,
+        "hour": 4
+      }
     }
   },
   "moderation": {

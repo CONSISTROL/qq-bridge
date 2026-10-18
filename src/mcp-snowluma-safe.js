@@ -1136,6 +1136,105 @@ if (cfg.socialV2?.tools?.getImages !== false) {
   );
 }
 
+// ── 记忆：查原文 / 写日记 / 列日记 / 召回 ───────────────────────────────────
+// 三级记忆：① 上下文（DSH 会话）② 日记（每天一篇，qq_diary_save）③ 全量归档（qq_search_history）。
+// 问「过去的事」时先 recall 再取原文，别凭印象编。
+async function memoryApi(payload, token) {
+  return agentApi('/api/socialV2/memory', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: { 'x-agent-token': token },
+    timeoutMs: 60000
+  });
+}
+
+defineTool(
+  'qq_recall',
+  '回忆接口：当有人问「之前说过…」「上次那个…」「你还记得吗」时**先用它**。'
+    + '它先查日记（哪几天聊过、结论是什么），再给原文锚点（时间+说话人+原文片段）。'
+    + '要引用细节再用 qq_search_history 取原文核对；查不到就说记不清，别编。',
+  {
+    key: z.string().describe('会话 key'),
+    query: z.string().describe('要回忆的关键词/话题（用实词，别用「之前」「那个」这种空词）'),
+    token: z.string().describe('会话令牌'),
+    limit: z.number().optional().describe('日记/原文各取几条（默认 5/8）')
+  },
+  async ({ key, query, token, limit }) => {
+    try {
+      const data = await memoryApi({ op: 'recall', key, query, limit }, token);
+      const diary = (data.diaryHits || []).map((d) => `· ${d.day}：${String(d.summary || '').slice(0, 300)}`).join('\n');
+      const anchors = (data.anchors || []).map((a) => `· ${new Date(Number(a.t)).toLocaleString('zh-CN')} [${a.from}] ${String(a.text || '').slice(0, 160)}`).join('\n');
+      return { content: [{ type: 'text', text: `【日记命中】\n${diary || '（没有）'}\n\n【原文锚点】\n${anchors || '（没有）'}\n\n${data.note || ''}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `回忆失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_search_history',
+  '查完整聊天归档（第三级记忆）：按关键词搜这个会话的历史原文，返回时间/说话人/正文。'
+    + '归档保留最近若干天（默认 90），按会话分文件。适合核对细节、找回某句话的原话。',
+  {
+    key: z.string().describe('会话 key'),
+    query: z.string().describe('关键词（多个词用空格分隔，全部命中才算）'),
+    token: z.string().describe('会话令牌'),
+    sinceDays: z.number().optional().describe('只看最近 N 天（默认全部保留期）'),
+    limit: z.number().optional().describe('最多返回几条（默认 20）')
+  },
+  async ({ key, query, token, sinceDays, limit }) => {
+    try {
+      const data = await memoryApi({ op: 'search', key, query, sinceDays, limit }, token);
+      const lines = (data.hits || []).map((h) => `· ${new Date(Number(h.t)).toLocaleString('zh-CN')} [${h.from}] ${String(h.text || '').slice(0, 200)}`).join('\n');
+      const st = data.stats || {};
+      return { content: [{ type: 'text', text: `归档：${(st.months || []).join(', ') || '空'}（${st.lines || 0} 条 / ${Math.round((st.bytes || 0) / 1024)}KB）\n${lines || data.note || '（没有命中）'}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `查历史失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_diary_save',
+  '写一篇日记（第二级记忆）：把某一天的聊天总结成「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」。'
+    + '只写结论与线索，不写流水账；不确定的细节别写死（留原文归档去核）。每天一篇，默认写昨天。',
+  {
+    key: z.string().describe('会话 key'),
+    summary: z.string().describe('日记正文（中文，几百字以内）'),
+    day: z.string().optional().describe('哪一天（YYYY-MM-DD，默认昨天）'),
+    topics: z.array(z.string()).optional().describe('当天的话题标签'),
+    openThreads: z.array(z.string()).optional().describe('没聊完/待跟进的事'),
+    token: z.string().describe('会话令牌')
+  },
+  async ({ key, summary, day, topics, openThreads, token }) => {
+    try {
+      const data = await memoryApi({ op: 'diary-save', key, summary, day, topics, openThreads }, token);
+      return { content: [{ type: 'text', text: `日记已保存：${data.day}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `写日记失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_diary_list',
+  '看最近几篇日记（第二级记忆）：回看自己写过什么、哪天聊过什么。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    limit: z.number().optional().describe('最多几篇（默认 30）')
+  },
+  async ({ key, token, limit }) => {
+    try {
+      const data = await memoryApi({ op: 'diary-list', key, limit }, token);
+      const lines = (data.items || []).map((d) => `· ${d.day}：${String(d.summary || '').slice(0, 240)}`).join('\n');
+      return { content: [{ type: 'text', text: lines || '（还没有日记）' }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `读日记失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
 // ── 发语音条（文本 → TTS → RVC 变声 → QQ record） ──────────────────────────
 if (cfg.socialV2?.tools?.sendVoice !== false) {
   defineTool(

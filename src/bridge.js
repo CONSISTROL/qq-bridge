@@ -20,6 +20,8 @@ import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
 import { classifyFile, extractFileContent } from './file-extract.js';
 import { ALBUM_SOURCES, ALBUM_META_FILE, collectAlbumItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId } from './album.js';
+import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
+import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -722,6 +724,11 @@ function loadConfig() {
           libraryMaxRatio: 2.0,        // 图库候选的长宽比上限（挡手机长截图）
           libraryMaxBytes: 3 * 1024 * 1024
         }
+      },
+      // 三层记忆（第二级日记 + 第三级全量归档）；第一级是 DSH 会话上下文，不用配。
+      memory: {
+        archive: { enabled: true, keepDays: 90, maxFileBytes: 64 * 1024 * 1024 },
+        diary: { enabled: true, hour: 4, maxTurnsPerDay: 1 }
       },
       // 相册：聊天里 AI 看过的图会落一份到 state/album-inbox，和本地图库/pixiv/视频帧/发送记录
       // 一起进控制台的「相册」（元数据在 state/album-meta.json）。关掉就不落盘，只临时读。
@@ -5320,6 +5327,34 @@ async function main() {
       log('⚠️ DSH 不可用（重启中？），QQ 消息将入队等待');
     }
   };
+  // 第二级记忆：每天一次，让机器人按第三级归档给自己写日记。
+  // 触发条件：到了配置的小时（默认 4 点）、这一天还没写过、归档里确实有内容。
+  function startDiaryScheduler() {
+    const cfgD = cfg.socialV2?.memory?.diary ?? {};
+    if (cfgD.enabled === false) return;
+    const hour = Math.max(0, Math.min(23, Number(cfgD.hour) || 4));
+    const timer = setInterval(() => {
+      try {
+        if (new Date().getHours() !== hour) return;
+        const yesterday = dayKey(Date.now() - 86400000);
+        for (const key of [...socialV2.conversations.keys()]) {
+          const st = getSocialV2State(key);
+          if (st.lastDiaryDay === yesterday) continue;
+          const stats = archiveStatsOf({ stateDir: STATE_DIR, key });
+          if (!stats.lines) continue;
+          if (readDiary({ stateDir: STATE_DIR, key, day: yesterday })) { st.lastDiaryDay = yesterday; continue; }
+          st.lastDiaryDay = yesterday;
+          saveSocialV2State();
+          void notifyAiSession(key, `【日记】把昨天（${yesterday}）的聊天写成一篇日记：先用 qq_search_history 看一眼当天都聊了什么，再用 qq_diary_save 保存（day=${yesterday}）。只写「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」，别写流水账，也别把话说死——细节留给原文归档。`).catch((error) => log(`[memory] 日记提醒发送失败 ${key}：${error?.message ?? error}`));
+          log(`[memory] 已提醒 ${key} 写日记（${yesterday}）`);
+        }
+      } catch (error) {
+        log('[memory] 日记调度失败：' + (error?.message ?? error));
+      }
+    }, 10 * 60 * 1000);
+    timer.unref?.();
+  }
+
   function startDshWatch() {
     if (dshCheckStarted) return;
     dshCheckStarted = true;
@@ -10677,6 +10712,47 @@ const agentTokenOk = (key, token) => {
             return;
           }
         }
+        // ── 记忆 API（AI 工具与控制台共用）───────────────────────────
+        // 一个端点四种 op：查原文归档 / 存日记 / 列日记 / 召回（日记命中 + 原文锚点）。
+        if (url.pathname === '/api/socialV2/memory') {
+          const body = req.method === 'POST' ? await readBody() : {};
+          const key = String(body.key ?? url.searchParams.get('key') ?? '').trim();
+          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
+          const op = String(body.op ?? url.searchParams.get('op') ?? '').trim();
+          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (agentToken && !agentTokenOk(key, agentToken) && !anyAgentTokenOk(agentToken)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          try {
+            if (op === 'search') {
+              const sinceDays = Math.max(0, Number(body.sinceDays) || 0);
+              const since = sinceDays > 0 ? Date.now() - sinceDays * 86400000 : 0;
+              const hits = searchArchive({ stateDir: STATE_DIR, key, query: String(body.query ?? ''), since, limit: Number(body.limit) || 20 });
+              const stats = archiveStatsOf({ stateDir: STATE_DIR, key });
+              sendJson({ ok: true, key, hits, stats, note: hits.length ? '' : '归档里没搜到（可能超出保留天数，或说法不一样）' });
+              return;
+            }
+            if (op === 'diary-save') {
+              const r = saveDiary({ stateDir: STATE_DIR, key, day: body.day || dayKey(Date.now() - 86400000), summary: body.summary, topics: body.topics, openThreads: body.openThreads, members: body.members, rawCount: body.rawCount });
+              sendJson(r.ok ? { ok: true, day: r.day, file: r.file } : { ok: false, error: r.error }, r.ok ? 200 : 400);
+              return;
+            }
+            if (op === 'diary-list') {
+              const items = listDiary({ stateDir: STATE_DIR, key, limit: Number(body.limit) || 30 });
+              sendJson({ ok: true, key, items });
+              return;
+            }
+            if (op === 'recall') {
+              const query = String(body.query ?? '').trim();
+              const diaryHits = searchDiary({ stateDir: STATE_DIR, key, query, limit: Number(body.limit) || 5 });
+              const anchors = query ? searchArchive({ stateDir: STATE_DIR, key, query, limit: Number(body.limit) || 8 }) : [];
+              sendJson({ ok: true, key, query, diaryHits, anchors, note: '先用日记定位哪天聊过，再用 anchors 里的原文核对；别凭日记把细节说死' });
+              return;
+            }
+            sendJson({ ok: false, error: '未知 op（search / diary-save / diary-list / recall）' }, 400);
+          } catch (error) {
+            sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
+          }
+          return;
+        }
         // ── 相册（仅控制台可用）────────────────────────────────────
         // 统一图片索引：聊天收到的图 / AI 发出的图 / 本地图库 / pixiv 抓取 / 视频帧，
         // 元数据（添加时间、来源、备注、标签）落在 state/album-meta.json。
@@ -14749,7 +14825,19 @@ const agentTokenOk = (key, token) => {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
-    const safeMedia = Array.isArray(media) ? media.map((m) => {
+
+    // 第三级记忆：所有进来的消息都追加进归档（只追加、按月分文件、按天保留）。
+    if (cfg.socialV2?.memory?.archive?.enabled !== false) {
+      try {
+        appendArchive({
+          stateDir: STATE_DIR,
+          key,
+          record: toArchiveRecord({ time: Date.now(), messageId, sender, isSelf: false, text: plainContent || textContent, media }),
+          keepDays: Number(cfg.socialV2?.memory?.archive?.keepDays) || 90,
+          maxFileBytes: Number(cfg.socialV2?.memory?.archive?.maxFileBytes) || 64 * 1024 * 1024
+        });
+      } catch (error) { log(`[memory] 归档失败 ${key}：${error?.message ?? error}`); }
+    }    const safeMedia = Array.isArray(media) ? media.map((m) => {
       // 注意 kind 要保真：以前这里把非 face/video 一律当 image，
       // 于是**文件段**（PDF 等）会被悄悄降级成图片，AI 再也看不到「有文件」这件事。
       const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : (m?.kind === 'file' ? 'file' : 'image'));
@@ -14894,7 +14982,18 @@ const agentTokenOk = (key, token) => {
     const list = Array.isArray(messages) ? messages : [];
     for (let i = 0; i < list.length; i++) {
       const text = redactKnownTokensOnly(String(list[i] ?? '')).slice(0, 200);
-      st.recentMessages.push({
+
+      // 第三级记忆：自己说的话也要进归档，否则日记只剩别人说的话。
+      if (cfg.socialV2?.memory?.archive?.enabled !== false) {
+        try {
+          appendArchive({
+            stateDir: STATE_DIR,
+            key,
+            record: toArchiveRecord({ time: Date.now(), messageId: null, sender: '我', isSelf: true, text }),
+            keepDays: Number(cfg.socialV2?.memory?.archive?.keepDays) || 90
+          });
+        } catch { /* 归档失败不影响发送 */ }
+      }      st.recentMessages.push({
         sender: '我',
         text,
         plain: text,
@@ -15474,7 +15573,13 @@ const agentTokenOk = (key, token) => {
         return `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字——分寸你自己把握。\n`;
       })()
       : '';
-    const base = voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    const memoryHint = (() => {
+      const msgs = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+      const lastIn = [...msgs].reverse().find((m) => m && !m.isSelf);
+      if (!lastIn || !looksLikeMemoryQuery(String(lastIn.text || ''))) return '';
+      return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查日记（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
+    })();
+    const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -17332,6 +17437,7 @@ const agentTokenOk = (key, token) => {
     syncStickerLibrary(true).catch((error) => log('启动预热表情库失败:', error?.message ?? error));
   }
   startDshWatch();
+  startDiaryScheduler();
   startBusyWatchdogV2();
   void sweepResidualBusyV2OnStart();
   startConsoleServer();
