@@ -116,7 +116,7 @@ async function onebot(action, params = {}) {
   return body.data;
 }
 
-// 桥接控制台/内部 Agent API 访问：二代仿真模式的状态工具都通过这里读写桥接内存态。
+// 桥接控制台/内部 Agent API 访问：聊天模式的状态工具都通过这里读写桥接内存态。
 function agentApiBase() {
   const port = Number(getConfig().consolePort) || 3100;
   return `http://127.0.0.1:${port}`;
@@ -284,7 +284,7 @@ defineTool(
   {},
   async () => {
     // 旧只读工具没有 agent token；reserved2 模式下通过桥接 /api/status 直接拒绝，
-    // 避免绕过二代仿真模式的令牌隔离。
+    // 避免绕过聊天模式的令牌隔离。
     try {
       const status = await agentApi('/api/status');
       if (status?.mode === 'reserved2') {
@@ -312,10 +312,10 @@ defineTool(
     + '（owner=群主，admin=群管理员，member=普通成员），并在开头单列「本群群主」。'
     + '注意：「谁是群主」只以这个工具返回的 role 为准——消息里带的【管理员】是**桥接管理员（ownerQQ，控制台里配置你的那个人）**，'
     + '跟 QQ 群主不是一回事，不要因为某人带【管理员】就把他叫成群主。'
-    + '二代仿真模式（reserved2）下必须同时传 token（唤醒提示里的【会话令牌】），否则会被拒绝。',
+    + '聊天模式（reserved2）下必须同时传 token（唤醒提示里的【会话令牌】），否则会被拒绝。',
   {
     groupId: z.union([z.number(), z.string()]).describe('群号'),
-    token: z.string().optional().describe('二代会话令牌（reserved2 模式必填；见唤醒提示中的【会话令牌】）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式必填；见唤醒提示中的【会话令牌】）')
   },
   async ({ groupId, token }) => {
     const g = String(groupId);
@@ -379,12 +379,12 @@ defineTool(
 
 defineTool(
   'qq_send_group_message',
-  '向指定 QQ 群发送一条纯文本消息；如需引用某条消息，可传 replyToMessageId（非零整数，可为负数），可先用 qq_get_recent_messages / qq_get_message_detail 查询。二代模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；reserved2 下调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
+  '向指定 QQ 群发送一条纯文本消息；如需引用某条消息，可传 replyToMessageId（非零整数，可为负数），可先用 qq_get_recent_messages / qq_get_message_detail 查询。聊天模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；reserved2 下调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
   {
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('二代会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
   },
   async ({ groupId, message, replyToMessageId, token }) => {
     try {
@@ -402,12 +402,12 @@ defineTool(
 
 defineTool(
   'qq_reply',
-  '在指定 QQ 群里引用/回复某条消息，并发送一条文本。适合群消息很多、需要明确“我回的是哪条”时使用；replyToMessageId 是被引用消息的 id（非零整数，QQ 消息 id 可能为负数），可先用 qq_get_recent_messages / qq_get_unread_messages / qq_get_message_detail 查到具体消息内容和 id。发送前桥接会校验该 id 存在且属于当前会话。二代模式下这是你正常可用的引用工具，但不要每条都引用。只有以下情况才需要引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。reserved2 下调用时必须携带会话令牌 token。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
+  '在指定 QQ 群里引用/回复某条消息，并发送一条文本。适合群消息很多、需要明确“我回的是哪条”时使用；replyToMessageId 是被引用消息的 id（非零整数，QQ 消息 id 可能为负数），可先用 qq_get_recent_messages / qq_get_unread_messages / qq_get_message_detail 查到具体消息内容和 id。发送前桥接会校验该 id 存在且属于当前会话。聊天模式下这是你正常可用的引用工具，但不要每条都引用。只有以下情况才需要引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。reserved2 下调用时必须携带会话令牌 token。目标群必须命中系统白名单（config.json 的 allow.groups），否则拒绝。',
   {
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     replyToMessageId: z.union([z.number(), z.string()]).describe('被引用/回复的消息 id（非零整数，可为负数）'),
     message: z.string().describe('要发送的文本，纯文本，不要用 Markdown 或 CQ 码'),
-    token: z.string().optional().describe('二代会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
   },
   async ({ groupId, replyToMessageId, message, token }) => {
     try {
@@ -425,12 +425,12 @@ defineTool(
 
 defineTool(
   'qq_send_private_message',
-  '向指定 QQ 好友发送一条私聊消息。若提供 replyToMessageId，会以 QQ 引用/回复形式发出（引用条 + 文本）。replyToMessageId 必须是非零整数消息 id（QQ 消息 id 可能为负数），可先用 qq_get_message_detail 查询。二代模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标 QQ 必须命中系统白名单（config.json 的 allow.private），否则拒绝。',
+  '向指定 QQ 好友发送一条私聊消息。若提供 replyToMessageId，会以 QQ 引用/回复形式发出（引用条 + 文本）。replyToMessageId 必须是非零整数消息 id（QQ 消息 id 可能为负数），可先用 qq_get_message_detail 查询。聊天模式（reserved2）下这是可用的发送工具之一，但优先使用 qq_send_message；调用时必须携带会话令牌 token，否则会被拒绝。不要在发送后输出“已发送”类汇报。目标 QQ 必须命中系统白名单（config.json 的 allow.private），否则拒绝。',
   {
     userId: z.union([z.number(), z.string()]).describe('好友 QQ 号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('二代会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
+    token: z.string().optional().describe('会话令牌（reserved2 模式下必填；closed-agent 模式不需要）')
   },
   async ({ userId, message, replyToMessageId, token }) => {
     try {
@@ -446,10 +446,10 @@ defineTool(
   }
 );
 
-// ── 二代仿真模式（reserved2）工具 ─────────────────────────────────────────
+// ── 聊天模式（reserved2）工具 ─────────────────────────────────────────
 defineTool(
   'qq_get_prompt',
-  '查看当前二代仿真模式的提示词/角色/推荐值/可用工具/当前唤醒配置（只读）。',
+  '查看当前聊天模式的提示词/角色/推荐值/可用工具/当前唤醒配置（只读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
   async ({ key, token }) => {
     try {
@@ -496,7 +496,7 @@ defineTool(
 
 defineTool(
   'qq_social_state',
-  '查看指定会话的二代仿真状态：WakeConfig、未读数、上次唤醒原因、上次发言时间等（只读）。',
+  '查看指定会话的聊天模式状态：WakeConfig、未读数、上次唤醒原因、上次发言时间等（只读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
   async ({ key, token }) => {
     try {
@@ -524,7 +524,7 @@ defineTool(
 
 defineTool(
   'qq_set_wake_config',
-  '设置指定会话的二代唤醒配置：mode/无限期或有限时间/提前唤醒条件（@、名字、关键词、提问、拍一拍、概率、anyMessage、指定成员）。triggers.speakerIds 是可选的“指定群友发言唤醒”：填一个或多个群友 QQ 号后，只要其中任意一位在群里发言就会唤醒你；不设置则不启用。适合在等某个人回复、或某人反应慢怕错过时使用。triggers.poke 开启后，群里有人拍一拍（包括拍你或拍别人）会唤醒你。注意：每次设置潜水/下一次唤醒前需先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可设置并沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与可直接设置并沉睡；若你参与了回复，则下次想睡需重新等待观察窗口。',
+  '设置指定会话的唤醒配置：mode/无限期或有限时间/提前唤醒条件（@、名字、关键词、提问、拍一拍、概率、anyMessage、指定成员）。triggers.speakerIds 是可选的“指定群友发言唤醒”：填一个或多个群友 QQ 号后，只要其中任意一位在群里发言就会唤醒你；不设置则不启用。适合在等某个人回复、或某人反应慢怕错过时使用。triggers.poke 开启后，群里有人拍一拍（包括拍你或拍别人）会唤醒你。注意：每次设置潜水/下一次唤醒前需先用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话可设置并沉睡；期间有人发新消息则先查看 newMessages，判断不需要你参与可直接设置并沉睡；若你参与了回复，则下次想睡需重新等待观察窗口。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -558,7 +558,7 @@ defineTool(
 
 defineTool(
   'qq_send_burst',
-  '在指定 QQ 群分多条发送消息（二代仿真模式专用），桥接会按真人化随机间隔发送。暂不支持引用，需要引用请用 qq_reply。注意：数组里的每个字符串就是一条 QQ 消息，字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。',
+  '在指定 QQ 群分多条发送消息（聊天模式专用），桥接会按真人化随机间隔发送。暂不支持引用，需要引用请用 qq_reply。注意：数组里的每个字符串就是一条 QQ 消息，字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。',
   {
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -600,7 +600,7 @@ defineTool(
 
 defineTool(
   'qq_send_message',
-  '统一发送工具：可发一条或多条，可引用某条消息，可自定义/按字数计算条间时间差。二代仿真模式专用。注意：字符串=一条消息，数组=多条消息；每个字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。只有以下情况才需要传 replyToMessageId 引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。',
+  '统一发送工具：可发一条或多条，可引用某条消息，可自定义/按字数计算条间时间差。聊天模式专用。注意：字符串=一条消息，数组=多条消息；每个字符串内部不要用空格分隔中文短句，需要多条请用数组元素；每条消息要读起来完整，不要把同一句话拆到两条里。只有以下情况才需要传 replyToMessageId 引用：① 你这条消息指向的人或消息并非最新一条别人的消息（也就是你在回更早的某条）；② 你连续几句话里不同消息指代的是不同的消息或不同的人。其他情况（上下文唯一、刚在接同一条最新消息）不要引用，别让对方猜，也别为了用工具而用。',
   {
     key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
     token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
@@ -1083,22 +1083,22 @@ if (cfg.knowledge?.enabled !== false) {
   );
 }
 
-// ── 图片/表情查看工具（一代/二代仿真共用） ─────────────────────────────────
+// ── 图片/表情查看工具（一代/聊天模式共用） ─────────────────────────────────
 if (cfg.socialV2?.tools?.getImages !== false) {
   defineTool(
     'qq_get_message_images',
     '获取指定 QQ 消息中的图片/表情，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[动画表情]、[表情] 或 hasMedia=true 时调用。'
       + '**卡片消息也算**：B站小程序卡、链接分享卡自带封面/预览图（媒体标签是 [卡片封面]），群友聊「封面」时看的正是它，不要让人再发一遍。'
       + '返回里会逐项标明是「图片」还是「表情包」（QQ 动画表情）——表情包本来就是反复用的，别因为同一个人发过同一张就说「你发过了/重复了」。'
-      + '支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。'
+      + '支持一条消息里的多张图片/表情；聊天模式下必须携带会话令牌。'
       + '**图片多的一条消息会分批给**（默认一次 5 张）：返回里会写明「共 N 个、本次给了第几到第几」，'
       + '要看剩下的就再调用一次并传 imageOffset=<上次的下一张序号>——**不要因为只看到前几张就说「图被吞了/看不到」**。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-      messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；也可用本地 seq）'),
       imageOffset: z.number().optional().describe('从第几张开始取（0 起，默认 0）；返回里 hasMore=true 时用它继续翻页'),
       imageLimit: z.number().optional().describe('本次最多取几张（默认 5，上限 20）；一次别贪多，图片很费上下文'),
-      token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
+      token: z.string().optional().describe('会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
     },
     async ({ key, messageId, imageOffset, imageLimit, token }) => {
       try {
@@ -1283,10 +1283,10 @@ if (cfg.socialV2?.tools?.getFile !== false) {
       + '**长文档分页**：一次给大约四万字，返回里写明「共 N 字、本次给了第几到第几」；没读完就用 offset=上次结束位置继续调用，直到没有「还有内容」为止——这样整份文件都能读到（一次要太多反而会被上层修剪掉中段）。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-      messageId: z.union([z.number(), z.string()]).describe('带文件的那条消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      messageId: z.union([z.number(), z.string()]).describe('带文件的那条消息 id（QQ 消息 id 可为负数；也可用本地 seq）'),
       offset: z.number().optional().describe('从第几个字开始读（0 起，默认 0）；返回里说「还有内容」时用它的结束位置继续'),
       maxChars: z.number().optional().describe('本次最多取多少字（默认取配置，约 4 万）；一般不用手动传'),
-      token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
+      token: z.string().optional().describe('会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
     },
     async ({ key, messageId, offset, maxChars, token }) => {
       try {
@@ -1340,12 +1340,12 @@ if (cfg.socialV2?.tools?.getMessageVideo !== false) {
     'qq_get_message_video',
     '看聊天消息里的**视频**：桥接会把视频抓下来用 ffmpeg 抽几帧，直接以图像内容返回给视觉模型。当消息文本里出现 [视频] 时调用。'
       + '注意：① 这是重操作（要下载整条视频 + 抽帧），一次只看一条，别对同一条反复调；② **有语音转写**（自动识别，人名/专有名词/数字可能有错）——转写文字在 note 或 transcript 里；没有转写就说明没识别出来或服务没连上，别假装听到了。**没有语音转写**——视频里的说话内容听不到，只能看画面，画面之外的信息要问发视频的人；'
-      + '③ 本机没装 ffmpeg 时只能给视频封面，返回里的 note 会说明；④ 二代模式下必须携带会话令牌。',
+      + '③ 本机没装 ffmpeg 时只能给视频封面，返回里的 note 会说明；④ 聊天模式下必须携带会话令牌。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-      messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
+      messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；也可用本地 seq）'),
       frames: z.number().optional().describe('抽几帧（1~8，默认按管理员配置，通常 6）。帧数越多越费上下文，别贪多'),
-      token: z.string().optional().describe('二代会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
+      token: z.string().optional().describe('会话令牌（reserved2 下必填，见唤醒提示中的【会话令牌】）')
     },
     async ({ key, messageId, frames, token }) => {
       try {
@@ -1383,7 +1383,7 @@ if (cfg.socialV2?.tools?.getMessageVideo !== false) {
   );
 }
 
-// ── 表情包体系工具（二代仿真模式） ─────────────────────────────────────────
+// ── 表情包体系工具（聊天模式） ─────────────────────────────────────────
 if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.listStickers !== false) {
   defineTool(
     'qq_list_stickers',
@@ -2141,7 +2141,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.setStickerR
   );
 }
 
-// ── 合并转发消息查看工具（二代仿真模式） ────────────────────────────────────
+// ── 合并转发消息查看工具（聊天模式） ────────────────────────────────────
 if (cfg.socialV2?.tools?.getForwardMsg !== false) {
   defineTool(
     'qq_get_forward_msg',

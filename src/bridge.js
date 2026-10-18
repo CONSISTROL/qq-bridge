@@ -269,7 +269,7 @@ const ADMIN_IDENTITY_HINT = '【「管理员」≠「群主」】消息里的【
   + '（传 groupId 和 token）看 role（owner=群主，admin=群管理员，member=普通成员）。'
   + '**不确定就不要用「群主」称呼任何人**，更不要把猜出来的身份写进记忆。';
 
-// 已知的二代 agent token 集合：日志/活动/出站文本统一脱敏，防止令牌被模型泄露到 QQ。
+// 已知的 agent token 集合：日志/活动/出站文本统一脱敏，防止令牌被模型泄露到 QQ。
 const KNOWN_AGENT_TOKENS = new Set();
 
 // 敏感文本脱敏：把 SENSITIVE_RE 命中的片段替换为 ***，供日志/反馈/活动记录写入前使用。
@@ -1244,7 +1244,7 @@ async function segmentsToText(segments, options = {}) {
 }
 
 // 从 OneBot 消息段中提取图片/表情元数据（不下载字节，仅记录定位信息）。
-// 供一代自动内联、二代按需工具、控制台/日志使用。
+// 供一代自动内联、按需工具、控制台/日志使用。
 function extractMediaFromSegments(segments) {
   const media = [];
   for (const seg of segments ?? []) {
@@ -1305,7 +1305,7 @@ function allowed(kind, id, cfg) {
   return cfg.allowAllWhenEmpty;
 }
 
-// 二代会话 key 规范化：只接受 group:正整数 / private:正整数，并去掉前导零，避免同一会话出现多个别名。
+// 会话 key 规范化：只接受 group:正整数 / private:正整数，并去掉前导零，避免同一会话出现多个别名。
 /**
  * 用字丰富度：不同字符的个数。
  * 与 dominantCharRatio 一起识别「复读凑长」的占位答案（"xxxx…"、"哈哈哈哈哈"）。
@@ -1471,7 +1471,7 @@ async function main() {
     };
   }
 
-  // ── 群知识库（二代仿真）：群友反复问到的答案沉淀 ────────────────────────
+  // ── 群知识库（聊天模式）：群友反复问到的答案沉淀 ────────────────────────
   // 与黑话库分开存储、分开索引：问题语义空间与词义不同，共用一套会互相挤占注入坑位。
   // 但复用同一套向量索引实现（asIndexEntry 把 question/answer 映射成 content/meaning）。
   let knowledgeEntries = loadKnowledge(KNOWLEDGE_FILE);
@@ -1763,13 +1763,13 @@ async function main() {
     return { entry, created: true, match: null, conflict: Boolean(entry.conflict) };
   }
 
-  // ── 表情包体系（二代仿真）本地知识库 ────────────────────────────────────
+  // ── 表情包体系（聊天模式）本地知识库 ────────────────────────────────────
   let stickerEntries = loadStickerStore(STICKER_FILE);
   let stickerSyncedAt = 0; // 上次从 SnowLuma 拉取收藏表情的时间戳（毫秒）
   let lastStickerLabelNudgeAt = 0; // 上次「手动触发补备注」的时间戳，用于按钮冷却
   let lastForcedAgentStickerSync = 0; // AI 强制刷新表情库的最小间隔保护
 
-  // ── 群成员备注（二代仿真）：AI 私有记忆，按 会话 key + QQ 号 索引 ──────
+  // ── 群成员备注（聊天模式）：AI 私有记忆，按 会话 key + QQ 号 索引 ──────
   // 独立于 social-v2.json：/reset、切模式、清空会话状态都不该丢掉「谁是谁」。
   let memberStore = loadMemberStore(MEMBER_REMARKS_FILE);
   // 真·群名片的冷却表：`key:userId` -> 上次改动时间。QQ 侧对改名片有频率限制，
@@ -4164,7 +4164,7 @@ async function main() {
    */
   async function deliverWorkTask(key, task, options = {}) {
     if (!workLaneEnabled()) throw new Error('工作车道未启用（config.json 的 socialV2.work.enabled === false）');
-    if (currentMode !== 'reserved2') throw new Error('工作车道只在二代仿真模式（reserved2）下可用');
+    if (currentMode !== 'reserved2') throw new Error('工作车道只在聊天模式（reserved2）下可用');
     const text = String(task ?? '').trim();
     if (!text) throw new Error('task 不能为空');
     if (text.length > 4000) throw new Error(`task 太长（${text.length} 字，上限 4000），把任务收敛成一句话，细节放进 note`);
@@ -4617,7 +4617,7 @@ async function main() {
   }
 
   // 黑话学习素材入口：群聊普通消息进入滚动窗口（命令/角色控制语不学；
-  // 只学当前消息自己的文字，不学引用原文）。一代/二代共用。
+  // 只学当前消息自己的文字，不学引用原文）。一代/共用。
   function feedSlangWindow(key, sender, plainContent) {
     if (cfg.slang?.enabled === false) return;
     if (!key || !plainContent || typeof plainContent !== 'string') return;
@@ -5059,7 +5059,7 @@ async function main() {
       if (!chosen) log('⚠️ 无法确定 closed-agent 的 preset（DSH preset 清单未知），将按 DSH 默认 preset 建会话');
       return chosen || undefined;
     }
-    // 二代仿真模式优先使用 socialV2.agentPreset；未配置时回退到默认聊天预设。
+    // 聊天模式优先使用 socialV2.agentPreset；未配置时回退到默认聊天预设。
     // 非 closed-agent 一律 strict：宁可建不出会话，也不给群聊套上带本地工具的默认 preset。
     const wanted = mode === 'reserved2' ? (cfg.socialV2?.agentPreset || cfg.agentPreset) : cfg.agentPreset;
     return resolvePresetName(wanted, { strict: true }) || undefined;
@@ -5310,14 +5310,14 @@ async function main() {
         if (lastMode === 'reserved2' && currentMode !== 'reserved2') {
           clearAllSocialV2Timers();
           drainAllPromptQueues('模式切换，已取消排队中的投递');
-          log('桥接模式已离开二代仿真模式，清理 reserved2 定时器与排队投递');
+          log('桥接模式已离开聊天模式，清理 reserved2 定时器与排队投递');
         }
         if (currentMode === 'reserved2' && lastMode !== 'reserved2') {
           for (const key of socialV2.conversations.keys()) {
             setupSleepTimerV2(key);
             scheduleProactiveCheckV2(key);
           }
-          log('桥接模式已进入二代仿真模式，重建有限睡眠定时器');
+          log('桥接模式已进入聊天模式，重建有限睡眠定时器');
         }
         log(`桥接模式已切换为: ${currentMode}`);
         lastMode = currentMode;
@@ -5404,9 +5404,9 @@ const agentTokenOk = (key, token) => {
     let consoleToken = tokenValid ? configuredToken : loadOrCreateConsoleToken();
     if (!tokenValid && configuredToken) log(`控制台 config.consoleToken 长度/字符不合法，已忽略并回退到自动生成令牌`);
     if (!configuredToken) log(`控制台未配置 consoleToken，已自动生成：${String(consoleToken).slice(0, 6)}…（完整值保存在 state/console-token）`);
-    // 二代会话级隔离：MCP 工具调用时若带 x-agent-token，则必须匹配该会话的 agentToken。
+    // 会话级隔离：MCP 工具调用时若带 x-agent-token，则必须匹配该会话的 agentToken。
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
-    // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
+    // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     const v2ToolEnabled = (flag) => cfg.socialV2?.tools?.[flag] !== false;
     const server = http.createServer(async (req, res) => {
@@ -5610,14 +5610,14 @@ const agentTokenOk = (key, token) => {
           sendJson({ ok: false, error: 'agent token 不能为空' }, 403);
           return;
         }
-        // 暂停二代 AI 时，所有带 agent token 的 v2 工具调用一律拒绝
+        // 暂停AI 时，所有带 agent token 的 v2 工具调用一律拒绝
         if (socialV2.paused && req.headers['x-agent-token'] && (url.pathname.startsWith('/api/socialV2/') || url.pathname.startsWith('/api/send/') || url.pathname.startsWith('/api/images/'))) {
           sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行 v2 工具' }, 403);
           return;
         }
-        // 二代模式总开关：关闭后 agent token 调用的 v2 工具全部拒绝（控制台仍可管理）
+        // 聊天模式总开关：关闭后 agent token 调用的 v2 工具全部拒绝（控制台仍可管理）
         if (cfg.socialV2?.enabled === false && req.headers['x-agent-token'] && (url.pathname.startsWith('/api/socialV2/') || url.pathname.startsWith('/api/send/') || url.pathname.startsWith('/api/images/'))) {
-          sendJson({ ok: false, error: '二代模式已关闭，当前不允许执行 v2 工具' }, 403);
+          sendJson({ ok: false, error: '聊天模式已关闭，当前不允许执行 v2 工具' }, 403);
           return;
         }
         // 模式隔离：带 agent token 的 v2 接口只允许在 reserved2 模式下使用
@@ -5903,7 +5903,7 @@ const agentTokenOk = (key, token) => {
           if (currentMode === 'reserved2' && body.mode !== 'reserved2') {
             clearAllSocialV2Timers();
             drainAllPromptQueues('模式切换，已取消排队中的投递');
-            log('控制台：模式离开二代仿真模式，清理 reserved2 定时器与排队投递');
+            log('控制台：模式离开聊天模式，清理 reserved2 定时器与排队投递');
           }
           currentMode = body.mode;
           lastMode = body.mode;
@@ -5913,7 +5913,7 @@ const agentTokenOk = (key, token) => {
               setupSleepTimerV2(key);
               scheduleProactiveCheckV2(key);
             }
-            log('控制台：模式进入二代仿真模式，重建有限睡眠定时器');
+            log('控制台：模式进入聊天模式，重建有限睡眠定时器');
           }
           log(`控制台：模式已设置为 ${body.mode}${next.closedAgentPreset ? `（closed-agent preset: ${next.closedAgentPreset}）` : ''}${dshSynced ? '' : ' [仅本地，DSH 未同步]'}`);
           sendJson({ ok: true, mode: body.mode, closedAgentPreset: next.closedAgentPreset, dshSynced });
@@ -6765,7 +6765,7 @@ const agentTokenOk = (key, token) => {
           }
           return;
         }
-        // ── 二代仿真模式（reserved2）内部 Agent API ─────────────────────────
+        // ── 聊天模式（reserved2）内部 Agent API ─────────────────────────
         if (req.method === 'GET' && url.pathname === '/api/socialV2/config') {
           // knowledge 一并返回：social2 的工具开关面板里带了它的齿轮配置弹窗，
           // 那里的 CFG_SCHEMA 读 state.config[section]，少了这一段会渲染成空面板。
@@ -7069,7 +7069,7 @@ const agentTokenOk = (key, token) => {
           const wakeDefaultChanged = body.wake && typeof body.wake === 'object' &&
             WAKE_DEFAULT_KEYS.some((k) => Object.prototype.hasOwnProperty.call(body.wake, k));
           if (wakeDefaultChanged) refreshAllDefaultWakeConfigsV2();
-          log('控制台：二代仿真配置已更新');
+          log('控制台：聊天模式配置已更新');
           sendJson({ ok: true, config: cfg.socialV2 });
           return;
         }
@@ -7083,9 +7083,9 @@ const agentTokenOk = (key, token) => {
           socialV2.paused = paused;
           if (paused) {
             clearAllSocialV2Timers();
-            log('控制台：二代 AI 已暂停（唤醒/等待任务已停止）');
+            log('控制台：AI 已暂停（唤醒/等待任务已停止）');
           } else {
-            log('控制台：二代 AI 已恢复');
+            log('控制台：AI 已恢复');
             for (const key of socialV2.conversations.keys()) {
             setupSleepTimerV2(key);
             scheduleProactiveCheckV2(key);
@@ -7099,7 +7099,7 @@ const agentTokenOk = (key, token) => {
           sessionEpoch++;
           sessionPromises.clear();
           clearAllSocialV2Timers();
-          drainAllPromptQueues('二代状态已重置');
+          drainAllPromptQueues('状态已重置');
           for (const key of [...socialV2.conversations.keys()]) {
             const sid = state.sessions[key];
             if (sid) {
@@ -7122,8 +7122,8 @@ const agentTokenOk = (key, token) => {
           markReadCalledKeys.clear();
           wakeConfigMissCount.clear();
           socialV2.paused = false;
-          try { atomicWriteJson(SOCIAL_V2_FILE, { conversations: {} }); } catch (error) { log('重置二代状态：写空状态文件失败:', error?.message ?? error); }
-          log('控制台：二代 AI 状态已重置（会话、定时器、唤醒配置已清空，工具日志保留）');
+          try { atomicWriteJson(SOCIAL_V2_FILE, { conversations: {} }); } catch (error) { log('重置状态：写空状态文件失败:', error?.message ?? error); }
+          log('控制台：AI 状态已重置（会话、定时器、唤醒配置已清空，工具日志保留）');
           sendJson({ ok: true });
           return;
         }
@@ -7791,7 +7791,7 @@ const agentTokenOk = (key, token) => {
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('runTask')) { sendJson({ ok: false, error: '工具未启用：qq_run_task' }, 403); return; }
           if (!workLaneEnabled()) { sendJson({ ok: false, error: '工作车道未启用（控制台「工具」里打开，或 config.json socialV2.work.enabled）' }, 403); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '工作车道仅在二代仿真模式下可用' }, 403); return; }
+          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '工作车道仅在聊天模式下可用' }, 403); return; }
           if (!dshReady) { sendJson({ ok: false, error: 'DSH 不可用，稍后再试' }, 503); return; }
           try {
             const result = await deliverWorkTask(key, task, { note: body.note });
@@ -7974,7 +7974,7 @@ const agentTokenOk = (key, token) => {
             : (isRawString ? [String(rawMessages).trim()].filter(Boolean) : []);
           const replyToMessageId = body.replyToMessageId;
           const atUserId = body.atUserId ?? null;
-          // 二代不再按空格自动分条：字符串就是一条消息；数组模式原样使用调用方间隔。
+          // 不再按空格自动分条：字符串就是一条消息；数组模式原样使用调用方间隔。
           const gapMode = (isRawString && messages.length > 1) ? 'auto' : (body.gapMode === 'fixed' || body.gapMode === 'byLength' ? body.gapMode : 'auto');
           const gapMs = Number(body.gapMs);
           const gaps = Array.isArray(body.gaps) ? body.gaps.map(Number) : [];
@@ -8115,7 +8115,7 @@ const agentTokenOk = (key, token) => {
           if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (!v2ToolEnabled('sendPoke')) { sendJson({ ok: false, error: '工具未启用：qq_send_poke' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能发送拍一拍' }, 403); return; }
+          if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，不能发送拍一拍' }, 403); return; }
           const keyMatch = /^(group|private):(\d+)$/.exec(key);
           if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
           const kind = keyMatch[1];
@@ -8402,7 +8402,7 @@ const agentTokenOk = (key, token) => {
               replyToMessageId: actualReplyToMessageId,
               atUserId
             });
-            // 记录到二代会话的 recentMessages，让 AI 知道自己发过这个表情
+            // 记录到会话的 recentMessages，让 AI 知道自己发过这个表情
             const label = sent.entry?.desc || sent.entry?.localNote || '表情包';
             const text = `[表情包:${label}]`;
             st.recentMessages.push({
@@ -10191,7 +10191,7 @@ const agentTokenOk = (key, token) => {
           sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryV2(st) });
           return;
         }
-        // ── 群成员备注（二代仿真）：AI 私有记忆，只存桥接本地，不动 QQ ───────
+        // ── 群成员备注（聊天模式）：AI 私有记忆，只存桥接本地，不动 QQ ───────
         // 网关没有「群成员本地备注」接口，所以「谁是谁」这件事由桥接自己记：
         // 按 会话 key + QQ 号 索引，昵称只作快照；默认不注入提示词，AI 主动查询。
         if (req.method === 'GET' && url.pathname === '/api/socialV2/member-remarks') {
@@ -10308,7 +10308,7 @@ const agentTokenOk = (key, token) => {
             if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
             if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
             if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-            if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能改群名片' }, 403); return; }
+            if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，不能改群名片' }, 403); return; }
           } else if (currentMode === 'reserved2') {
             // reserved2 下不允许「无 token 的管理端」绕过：控制台请走备注库或切模式后再改。
             sendJson({ ok: false, error: 'reserved2 模式下改群名片必须携带 agent token' }, 403);
@@ -10336,7 +10336,7 @@ const agentTokenOk = (key, token) => {
           }
           return;
         }
-        // ── 二代黑话学习（reserved2）：AI 查询/提交黑话候选 ─────────────────
+        // ── 黑话学习（reserved2）：AI 查询/提交黑话候选 ─────────────────
         if (req.method === 'GET' && url.pathname === '/api/socialV2/slang/query') {
           const key = String(url.searchParams.get('key') ?? '').trim();
           const q = String(url.searchParams.get('q') ?? '').trim().toLowerCase();
@@ -11277,7 +11277,7 @@ const agentTokenOk = (key, token) => {
           const replyToMessageId = isReply ? body.replyToMessageId : body.replyToMessageId;
           const atUserId = body.atUserId ?? null;
           const key = isPrivate ? `private:${targetId}` : `group:${targetId}`;
-          // 安全边界：发送工具只允许在 closed-agent（管理员私聊）或 reserved2（二代 AI 带会话令牌）下使用；
+          // 安全边界：发送工具只允许在 closed-agent（管理员私聊）或 reserved2（AI 带会话令牌）下使用；
           // chat/reserved 的自动转发已覆盖正常回复，MCP 发送工具不应成为 prompt injection 的越权出口。
           if (currentMode === 'chat' || currentMode === 'reserved') {
             sendJson({ ok: false, error: '发送工具仅限 closed-agent / reserved2 模式使用' }, 403);
@@ -11697,7 +11697,7 @@ const agentTokenOk = (key, token) => {
 
   // 按“有意的空格”拆分：真人不会主动用空格，因此 AI 回复里的空格视为分条信号。
   // 空格两侧只要有一侧是中文/中文标点，就按分条处理（包括中英文/数字之间的空格）。
-  // 注意：该逻辑只用于一代 reserved 的自动转发文本；二代 reserved2 不走这里，二代必须显式用数组分条。
+  // 注意：该逻辑只用于一代 reserved 的自动转发文本； reserved2 不走这里，必须显式用数组分条。
   function splitByCjkSpaces(src) {
     const tokens = String(src ?? '').split(/\s+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length <= 1) return tokens;
@@ -11812,7 +11812,7 @@ const agentTokenOk = (key, token) => {
     return postOneBot(action, params);
   }
 
-  // ── 图片/表情字节解析（供一代自动内联与二代按需工具） ────────────────────
+  // ── 图片/表情字节解析（供一代自动内联与按需工具） ────────────────────
   function mimeFromBuffer(buf) {
     if (!buf || buf.length < 12) return 'image/jpeg';
     if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
@@ -12673,7 +12673,7 @@ const agentTokenOk = (key, token) => {
   function findMessageMedia(key, ref) {
     const refStr = String(ref ?? '').trim();
     if (!refStr) return [];
-    // 二代：消息对象上直接带 media（仅在确实存在二代会话状态时读取，避免为 gen1 创建影子状态）
+    // ：消息对象上直接带 media（仅在确实存在会话状态时读取，避免为 gen1 创建影子状态）
     if (currentMode === 'reserved2' || socialV2.conversations.has(key)) {
       try {
         const st = getSocialV2State(key);
@@ -13109,16 +13109,16 @@ const agentTokenOk = (key, token) => {
     exitingSessions: new Set()     // sessionId：当前正在等待“活跃超时退场”发言完成的 DSH 会话
   };
 
-  // ── 二代仿真模式（reserved2）运行时状态与唤醒配置 ────────────────────────
+  // ── 聊天模式（reserved2）运行时状态与唤醒配置 ────────────────────────
   const socialV2 = {
     conversations: new Map(), // key -> state
-    paused: false, // 控制台可暂停整个二代 AI 活动（停止唤醒/等待）
+    paused: false, // 控制台可暂停整个AI 活动（停止唤醒/等待）
   };
 
   // 一代/普通模式的图片/表情元数据存储：key -> Map<messageId/seq, media[]>
-  // 二代模式则直接存在 socialV2 会话的 recentMessages/unread 消息对象上。
+  // 聊天模式则直接存在 socialV2 会话的 recentMessages/unread 消息对象上。
   const messageMediaStore = new Map();
-  // 二代会话见过的 forward id（有界，避免 recentMessages 滚动淘汰后无法读取刚见过的转发）
+  // 会话见过的 forward id（有界，避免 recentMessages 滚动淘汰后无法读取刚见过的转发）
   const seenForwardIds = new Map(); // key -> Set<string>
 
   // 归一化“指定群友发言唤醒”名单：
@@ -13889,7 +13889,7 @@ const agentTokenOk = (key, token) => {
   // 启动时先按本地已保存的模式兜底一次。
   // 之前 currentMode 一直停在初始的 'chat'，只有 DSH 可达（checkDsh → refreshMode）才会被纠正——
   // 后果是 DSH 没起来时桥接整段时间都用错模式，state/mode.json 里配的 reserved2 形同虚设，
-  // 所有带 agent token 的二代工具一律 403「该接口仅 reserved2 模式可用」。
+  // 所有带 agent token 的工具一律 403「该接口仅 reserved2 模式可用」。
   // 同步读，保证监听端口之前模式就已就位；等 DSH 起来后 refreshMode 仍以 DSH 设置为准。
   applyLocalMode();
 
@@ -14203,13 +14203,13 @@ const agentTokenOk = (key, token) => {
     const isV2 = currentMode === 'reserved2';
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
-    // 二代必须带会话令牌，否则 AI 调用任何 MCP 状态/发送工具都会被拒。
+    // 必须带会话令牌，否则 AI 调用任何 MCP 状态/发送工具都会被拒。
     let tokenLine = '';
     if (isV2) {
       const stV2 = getSocialV2State(key);
-      tokenLine = `【会话令牌】${stV2.agentToken}（调用二代状态/发送工具时请在参数中带上此令牌）\n\n`;
+      tokenLine = `【会话令牌】${stV2.agentToken}（调用状态/发送工具时请在参数中带上此令牌）\n\n`;
     }
-    const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是二代仿真模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
+    const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
     let popSilent = null;
     try {
       const sessionId = await ensureSession(key);
@@ -14469,9 +14469,9 @@ const agentTokenOk = (key, token) => {
     }
   }
 
-  // 二代仿真模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
+  // 聊天模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
   // 为了不削减原角色卡内容，示例节不整体删除，而是把“用空格分条”的示范改写成“用逗号表示停顿”，
-  // 让二代 AI 既保留原有人格示例，又不会照抄单条消息里的中文空格。
+  // 让AI 既保留原有人格示例，又不会照抄单条消息里的中文空格。
   function isCjkLikeChar(ch) {
     if (!ch) return false;
     const code = ch.codePointAt(0);
@@ -14483,7 +14483,7 @@ const agentTokenOk = (key, token) => {
     );
   }
 
-  // 仅用于二代角色卡“回复示例”节：把示例里用于分条的中文空格改写成中文逗号。
+  // 仅用于角色卡“回复示例”节：把示例里用于分条的中文空格改写成中文逗号。
   // 空格两侧只要有一侧是中文/中文标点，且另一侧不是 / \ ( ) [ ] { } " ' < > | 等符号，就转成逗号。
   // 这样能保留示例内容，同时避免把英文/URL/斜杠周围的空间改坏。
   function convertExampleSpacesToComma(line) {
@@ -14509,7 +14509,7 @@ const agentTokenOk = (key, token) => {
     return out;
   }
 
-  // 检测二代发送内容里“中文之间用空格”的不自然写法，用于给 AI 返回软提醒。
+  // 检测发送内容里“中文之间用空格”的不自然写法，用于给 AI 返回软提醒。
   // 只检测空格两侧都是中文/中文标点的情况，避免误伤英文单词间隔（如 DeepSeek V3）。
   function findCjkSpaceWarning(messages) {
     const bad = [];
@@ -14532,7 +14532,7 @@ const agentTokenOk = (key, token) => {
     return `${label}消息内部有中文空格，真人一般不这么打；可删掉空格用标点，或拆成数组多条。`;
   }
 
-  // 检测二代发送内容里“分条断点不自然”的情况：某条消息以逗号/顿号等非终止标点结尾，
+  // 检测发送内容里“分条断点不自然”的情况：某条消息以逗号/顿号等非终止标点结尾，
   // 或以“的/了/吗/呢/吧/是/在/把/被/让/给”等通常需要接后续成分的词结尾，下一条又紧跟中文内容，
   // 说明 AI 很可能把同一句话拆到了两条消息里。这里只做软提醒，不拦截、不改写。
   function findSplitBoundaryWarning(messages) {
@@ -14559,7 +14559,7 @@ const agentTokenOk = (key, token) => {
   function currentRoleHintV2() {
     const raw = currentRoleHint();
     if (!raw) return '';
-    // 一代仿真模式专用指令整行过滤，避免污染二代工具协议
+    // 一代仿真模式专用指令整行过滤，避免污染工具协议
     const GEN1_ROLE_LINE_RE = /\[SILENT\]|空格分隔|按空格|用空格|空格分句|空格代表|自动转发|回复会自动|输出\s*\[SILENT\]/i;
     const lines = raw.split('\n');
     const kept = [];
@@ -14567,7 +14567,7 @@ const agentTokenOk = (key, token) => {
     for (const line of lines) {
       if (/^##\s*.*回复示例/.test(line)) {
         inExampleSection = true;
-        // 保留标题，但把“空格代表分条”的一代语义改写成二代语义
+        // 保留标题，但把“空格代表分条”的一代语义改写成语义
         kept.push(line.replace(/（空格代表前后分两条消息回答）/, '（示例中已用逗号表示停顿；想分多条请用数组）'));
         continue;
       }
@@ -14793,7 +14793,7 @@ const agentTokenOk = (key, token) => {
     return false;
   }
 
-  // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
+  // ── 聊天模式（reserved2）唤醒调度 ──────────────────────────────────
   /**
    * 自己说过的话（含**回复**）的规范化 / 补种。
    * 为什么要补种：旧状态里没有 selfSaid 字段，不补的话新逻辑要等好几天才生效，
@@ -14935,7 +14935,7 @@ const agentTokenOk = (key, token) => {
     saveSocialV2State();
   }
 
-  // 二代拍一拍事件写入最近/未读消息流，让 AI 能看到“谁拍了拍谁/拍了拍我”。
+  // 拍一拍事件写入最近/未读消息流，让 AI 能看到“谁拍了拍谁/拍了拍我”。
   function appendSocialV2Poke(key, { sender, userId, targetId, targetIsSelf, isOwner = false, groupId = null, action = '', suffix = '' }) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -15450,7 +15450,7 @@ const agentTokenOk = (key, token) => {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const st = getSocialV2State(key);
-    const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
+    const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const memoryText = formatMemoryV2(st);
     const memoryLine = memoryText ? `${memoryText}\n\n` : '';
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
@@ -15584,7 +15584,7 @@ const agentTokenOk = (key, token) => {
     })();
     const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
-      return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
+      return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
     if (reason === 'timeout') {
       return `${base}【唤醒】${key}\n原因：你设置的有限潜水时间已到；在你规定的时间内没有任何一项条件被触发，只是因为时间到了所以你被唤醒。\n你可以查看消息，或继续设置新的唤醒条件。`;
@@ -15613,7 +15613,7 @@ const agentTokenOk = (key, token) => {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const st = getSocialV2State(key);
-    const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
+    const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
     return `${roleLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
@@ -16550,7 +16550,7 @@ const agentTokenOk = (key, token) => {
       // 其余 / 开头内容照常发给 DSH（DSH 的斜杠命令原样执行，如 /model）
     }
 
-    // 二代仿真模式（reserved2）：唤醒调度
+    // 聊天模式（reserved2）：唤醒调度
     if (currentMode === 'reserved2') {
       const sender = kind === 'group' ? (event.sender?.card || event.sender?.nickname || String(event.user_id)) : '私聊';
       // 引用解析：用户「引用某条消息」时，必须把被引用消息的 id 交给 AI，
@@ -16591,7 +16591,7 @@ const agentTokenOk = (key, token) => {
         return;
       }
       appendSocialV2Message(key, sender, quoteHint + textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []), quotedId, cardInfo, event.message_seq ?? null, atSelf);
-      // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
+      // 同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {
         appendActivity(`${key} [reserved2] AI 已暂停，消息仅入库不唤醒：${textContent.slice(0, 80)}`);
@@ -16853,7 +16853,7 @@ const agentTokenOk = (key, token) => {
     }
   }
 
-  // 二代拍一拍（notify/poke）事件处理：写入消息流并按需唤醒。
+  // 拍一拍（notify/poke）事件处理：写入消息流并按需唤醒。
   async function handlePokeNotice(event) {
     if (!event || event.sub_type !== 'poke') return;
     const selfId = event.self_id;

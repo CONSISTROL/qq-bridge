@@ -1,15 +1,15 @@
     <section class="card span-all">
-      <h2><span class="sec-no">07</span>二代仿真模式（reserved2）控制台</h2>
+      <h2><span class="sec-no">07</span>聊天模式（reserved2）控制台</h2>
       <div class="meta">配置保存后写入 config.json 并热更新；工具开关决定 AI 能调用哪些工具（关闭后桥接 API 会拒绝）。</div>
 
-<div class="form-row pairs"><label>启用二代模式</label><div class="ctl"><input type="checkbox" class="switch" id="v2Enabled"></div><label>agentPreset</label><div class="ctl"><input type="text" id="v2AgentPreset" placeholder="qq-chat-v2"></div></div>
+<div class="form-row pairs"><label>启用聊天模式</label><div class="ctl"><input type="checkbox" class="switch" id="v2Enabled"></div><label>agentPreset</label><div class="ctl"><input type="text" id="v2AgentPreset" placeholder="qq-chat-v2"></div></div>
 <div class="form-grid">
   <div class="form-row"><label>提供推荐值给 AI</label><div class="ctl"><input type="checkbox" class="switch" id="v2ProvideRecommendations"> <span class="meta" style="flex:2">关闭后 qq_get_prompt 不再返回推荐值，AI 完全自主判断。</span></div></div>
 </div>
       <div class="row" style="margin-top:10px">
-        <button id="v2PauseBtn" class="danger">暂停二代 AI</button>
-        <button id="v2ResumeBtn">恢复二代 AI</button>
-        <button id="v2ResetBtn" class="danger">重置二代状态</button>
+        <button id="v2PauseBtn" class="danger">暂停AI</button>
+        <button id="v2ResumeBtn">恢复AI</button>
+        <button id="v2ResetBtn" class="danger">重置状态</button>
         <button id="v2ConfigSaveTop" style="font-weight:bold;padding:6px 14px">保存当前参数</button>
         <span class="meta" id="v2ActivityStatus">读取中…</span>
       </div>
@@ -68,7 +68,7 @@
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="memberRemark"> <span><b>qq_get_member_remarks / qq_set_member_remark / qq_remove_member_remark</b><span class="meta">群成员备注：AI 自己记「谁是谁」的本地记忆，不动 QQ，也不自动注入提示词</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" class="switch" data-v2-tool="setMemberCard"> <span><b>qq_set_member_card</b><span class="meta">修改真实 QQ 群名片（默认禁用：全群可见，且机器人必须是管理员/群主）</span></span></label>
       </div>
-      <div class="meta" style="margin-top:6px">二代黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在下方「08 群聊黑话 / 网络用语库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
+      <div class="meta" style="margin-top:6px">黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在下方「08 群聊黑话 / 网络用语库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">唤醒推荐值（仅参考，AI 可不遵守）</div>
@@ -96,7 +96,7 @@
 
       <div class="divider"></div>
       <div class="meta" style="margin-bottom:6px">发送限制</div>
-      <div class="meta" style="margin-bottom:8px">二代不再按空格自动拆条；AI 要分多条必须显式传数组或用 qq_send_burst。</div>
+      <div class="meta" style="margin-bottom:8px">不再按空格自动拆条；AI 要分多条必须显式传数组或用 qq_send_burst。</div>
 <div class="form-row pairs"><label>允许多条发送</label><div class="ctl"><input type="checkbox" class="switch" id="v2BurstEnabled"></div><label>单次最多条数</label><div class="ctl"><input type="number" id="v2BurstMax" min="1"></div></div>
 <div class="form-grid">
   <div class="form-row"><label>条间间隔（毫秒）</label><div class="ctl"><input type="number" id="v2BurstMin" min="0"><span class="tilde">~</span><input type="number" id="v2BurstMaxMs" min="0"></div></div>

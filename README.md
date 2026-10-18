@@ -33,7 +33,7 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
   - `snowluma-host`（桥接自带 `src/mcp-host-server.js`）：`snowluma_status`（默认只读探活）；`start_snowluma` / `stop_snowluma` 需显式开启 `snowluma.allowProcessControl: true` 且仅在 `closed-agent` 模式可用
   - `web-search-safe`（桥接自带 `src/mcp-web-search-safe.js`）：只读 `web_search` / `web_fetch`（带 SSRF 防护），供 agent 查网络用语/资料
 - **会话模型**：每个 QQ 会话（私聊/群）对应一个独立的 DSH 会话，统一归组到「QQ 聊天」工作区（不再散落未分组）；映射持久化在 `state/sessions.json`
-- **机器人自己的资料（昵称 / 个性签名 / 头像）**：AI 可以用 `qq_get_self_profile` / `qq_set_profile` / `qq_set_avatar` 改自己的账号资料，控制台「二代仿真模式」里也有一个资料面板（现状预览、手动改、**一键回滚**、变更记录）。这一项和别的工具不一样——它改的是**账号级身份，全群全私聊可见**，所以默认关，且即使打开也只在「管理员上下文」生效（管理员私聊，或本轮由管理员消息触发；群友在管理员后面接一句不算）。另外还有：内容校验（昵称/签名不许放链接、联系方式、推广字样，不许冒充官方）、每日限流（默认 3 次/天）、旧值留档可回滚（改之前会把当前昵称与当前头像备份到 `state/self-avatar/`）。头像是桥接自己下载后转 base64 交给网关，不把 URL 交给网关抓。网关侧对应 `set_qq_profile` / `set_qq_avatar`
+- **机器人自己的资料（昵称 / 个性签名 / 头像）**：AI 可以用 `qq_get_self_profile` / `qq_set_profile` / `qq_set_avatar` 改自己的账号资料，控制台「聊天模式」里也有一个资料面板（现状预览、手动改、**一键回滚**、变更记录）。这一项和别的工具不一样——它改的是**账号级身份，全群全私聊可见**，所以默认关，且即使打开也只在「管理员上下文」生效（管理员私聊，或本轮由管理员消息触发；群友在管理员后面接一句不算）。另外还有：内容校验（昵称/签名不许放链接、联系方式、推广字样，不许冒充官方）、每日限流（默认 3 次/天）、旧值留档可回滚（改之前会把当前昵称与当前头像备份到 `state/self-avatar/`）。头像是桥接自己下载后转 base64 交给网关，不把 URL 交给网关抓。网关侧对应 `set_qq_profile` / `set_qq_avatar`
 - **主题探索（自主扩展学习）**：控制台「黑话 / 向量检索」页输入一个种子关键词（或 AI 用 `qq_explore_topic` 发起），桥接会在**独立学习会话**里联网把这一圈学回来：先弄清它是什么、里面有哪些梗，再顺着关联主题继续挖（`mygo` → CRYCHIC / Ave Mujica / 夢限大みゅーたいぷ…）。挖到的梗直接进黑话库并生效，主题综述进知识库，之后聊天时自动能吃上。深度与主题总数双上限（`slang.explore.maxDepth` / `maxTopics`，默认 2 层 / 15 个）防关联无限发散；AI 侧另有每小时次数上限。队列/预算/去重/解析容错在 `src/topic-explore.js`（纯函数，可单测），编排与落库在 `src/bridge.js`。实测一次 `mygo` 探索：15 个主题、180 条梗，含「卖狗」「母鸡卡 / 鸡团」「为什么要演奏春日影」这类真实黑话
 - **工作车道（长任务并行）**：DSH 的一个会话同一时刻只跑一个 turn，所以慢工具（pixiv 取图链上限 110s、十几 MB 的图发送、B 站视频）会把整条 QQ 会话堵住——用户在这段时间里问什么都得等它跑完。桥接为此给每个 QQ 会话额外开**独立的「工作车道」会话**：AI 用 `qq_run_task` 把整条长任务投进去，**立即返回**，聊天会话马上就能继续接别的话；工作车道用同一套 preset 与 `qq_*` 工具（所以它能自己把图发出去），跑完把结论回投给聊天会话，由主 AI 决定怎么跟群友说。`config.json` 的 `socialV2.work`（`enabled` / `maxSessions`，默认 2 条车道）控制开关与并行度，超出上限的任务排队但仍不阻塞聊天。车道会话随聊天会话一起退役/归档，控制台「工具」行有开关与 ⚙ 参数
 - **性格定制**：QQ 会话默认使用 `qq-chat` agent preset，`reserved2` 使用 `qq-chat-v2`；源文件在仓库 `dsh/agent-presets/<id>/agent.cordis.yml`，由 `scripts/setup-dsh.mjs` 安装——DSH 0.2+ 装成 profile 里的 `@deepseek-ai/dsh-agent-preset` 插件行，DSH 0.1.x 装到 `~/.dsh/.agent-presets/<id>/`；人格与默认 DSH 一致（coding agent），仅附加 QQ 场景规则；**角色扮演**是可选机制——由控制台或管理端设置 `state/current-role.json` 注入（群友无法更改）
@@ -45,7 +45,7 @@ QQ 消息 ──► SnowLuma（OneBot v11 WS）──► 本桥接进程 ──�
   - `chat`：白名单群 + 白名单私聊 → qq-chat 安全聊天
   - `closed-agent`：仅私聊 owner（config.json 的 ownerQQ，可在控制台设置）→ 完整工具（默认用 DSH 自己声明的默认 preset，即 `standard`；可在控制台「closed-agent preset」下拉改为任意 DSH preset），可在 QQ 上操控 DSH
   - `reserved`（一代仿真）：仿真群友，观望/活跃/试探/退场状态机，选择性参与、按空格分句发送、主动收尾
-  - `reserved2`（二代仿真，运行 `setup-dsh.mjs` 后 DSH 默认）：文本不自动转发，AI 通过 `qq_get_unread_messages` / `qq_send_message` 等工具自主看消息、发言、等待、设置唤醒/潜水；DSH 端使用 `qq-chat-v2` preset
+  - `reserved2`（聊天模式，运行 `setup-dsh.mjs` 后 DSH 默认）：文本不自动转发，AI 通过 `qq_get_unread_messages` / `qq_send_message` 等工具自主看消息、发言、等待、设置唤醒/潜水；DSH 端使用 `qq-chat-v2` preset
 - **交互增强**：
   - agent 通过 `ask_user_question` 提问时，问题会转发到 QQ，回复即自动应答
   - agent 请求工具审批时，转发到 QQ，回复「通过」/「拒绝」即可决策
@@ -104,7 +104,7 @@ npm install        # 安装依赖（postinstall 会自动修补 @snowluma/sdk �
 node scripts/setup-dsh.mjs
 ```
 
-> 全新环境下脚本会把 DSH 默认模式设为 **`reserved2`（二代仿真）**，并创建本地 `state/mode.json` 兜底；这样 AI 使用 `qq_send_message` 等工具收发消息时，DSH 会自动使用 `qq-chat-v2` 模式。如果本机已存在旧的 `state/mode.json` 或 DSH 设置值，脚本会保留不覆盖。之后可在**桥接控制台**（默认 `http://127.0.0.1:3100`）顶部按钮切换模式，控制台会同时写入 DSH 设置与本地兜底文件。
+> 全新环境下脚本会把 DSH 默认模式设为 **`reserved2`（聊天模式）**，并创建本地 `state/mode.json` 兜底；这样 AI 使用 `qq_send_message` 等工具收发消息时，DSH 会自动使用 `qq-chat-v2` 模式。如果本机已存在旧的 `state/mode.json` 或 DSH 设置值，脚本会保留不覆盖。之后可在**桥接控制台**（默认 `http://127.0.0.1:3100`）顶部按钮切换模式，控制台会同时写入 DSH 设置与本地兜底文件。
 
 详细步骤见 **[docs/DSH_SETUP.md](docs/DSH_SETUP.md)**。
 
