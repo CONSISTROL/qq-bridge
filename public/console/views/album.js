@@ -99,15 +99,7 @@ export async function mount(root) {
     // 删到当前页空了（且不是第一页）→ 自动退一页，而不是甩回第一页
     if (!fresh.length && state.page > 1) return load({ page: state.page - 1 });
     state.offset = (state.page - 1) * state.pageSize;
-    const sel = $('#albumSource', view);
-    if (sel && sel.options.length === 0) {
-      const all = document.createElement('option');
-      all.value = ''; all.textContent = '全部来源'; sel.append(all);
-      for (const s of state.sources) {
-        const o = document.createElement('option');
-        o.value = s.id; o.textContent = s.label; sel.append(o);
-      }
-    }
+    renderTabs();
     renderGrid(fresh, { clear: true });
     renderSelInfo();
   };
@@ -250,7 +242,23 @@ export async function mount(root) {
     setMsg($('#albumMsg', view), r.ok ? `✅ 重扫完成：${r.count} 张 / ${fmtBytes(r.bytes)}` : ('❌ ' + (r.error || '失败')));
     await load();
   });
-  delegate(view, 'change', '#albumSource', (ev) => { state.source = ev.target.value; load({ page: 1 }); });
+  // 分类 tab：全部 + 每个来源（带条数）
+  const renderTabs = () => {
+    const box = $('#albumTabs', view);
+    if (!box) return;
+    const counts = state.stats.bySource || {};
+    const tabs = [{ id: '', label: `全部 ${state.stats.count || 0}` }, ...state.sources.map((s) => ({ id: s.id, label: `${s.label} ${counts[s.id] || 0}` }))];
+    box.textContent = '';
+    for (const t of tabs) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'album-tab' + (state.source === t.id ? ' active' : '');
+      b.textContent = t.label;
+      b.dataset.tab = t.id;
+      box.append(b);
+    }
+  };
+  delegate(view, 'click', '.album-tab', (ev, btn) => { state.source = btn.dataset.tab; load({ page: 1 }); });
   delegate(view, 'input', '#albumSearch', debounce((ev) => { state.q = ev.target.value.trim(); load({ page: 1 }); }, 350));
 
   await load();

@@ -10831,10 +10831,12 @@ const agentTokenOk = (key, token) => {
               const q = String(url.searchParams.get('q') ?? '').trim().toLowerCase();
               const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 60));
               const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-              let items = itemsNow();
+              const all = itemsNow();
+              // 分类 tab 的数字要用全集算（否则只显示当前分类的条数）
+              const stats = albumStats(all);
+              let items = all;
               if (source) items = items.filter((it) => it.source === source);
               if (q) items = items.filter((it) => (`${it.notes} ${(it.tags || []).join(' ')} ${it.file}`).toLowerCase().includes(q));
-              const stats = albumStats(items);
               const total = items.length;
               const page = items.slice(offset, offset + limit);
               sendJson({ ok: true, sources: ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), stats, total, offset, limit, hasMore: offset + page.length < total, items: page });
