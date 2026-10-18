@@ -10847,7 +10847,7 @@ const agentTokenOk = (key, token) => {
               const body = await readBody();
               const source = String(body.source ?? '').trim();
               const file = String(body.file ?? '').trim();
-              if (!ALBUM_SOURCES.some((d) => d.id === source) || !file) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
+              if (!file || !(ALBUM_SOURCES.some((d) => d.id === source) || source === STICKER_SOURCE.id)) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
               if (source === 'sticker') {
                 // 收藏表情的「备注/标签」就是 AI 的表情笔记：写回 stickers.json
                 const entry = applyStickerNoteV2(file, body.notes, body.tags, undefined, body.notes);
