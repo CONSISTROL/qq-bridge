@@ -10770,6 +10770,35 @@ const agentTokenOk = (key, token) => {
           const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
           const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() });
           try {
+            // 缩略图：网格里如果直接给原图，一屏几十张就是几百 MB（线上实测相册页极卡）。
+            // 用 sharp 缩到 320px 的 jpg 缓存到 state/album-thumbs/<来源>/，第二次直接读缓存。
+            if (req.method === 'GET' && action === 'thumb') {
+              const source = String(url.searchParams.get('source') ?? '').trim();
+              const name = String(url.searchParams.get('file') ?? '').trim();
+              const width = Math.max(80, Math.min(800, Number(url.searchParams.get('w')) || 320));
+              const def = ALBUM_SOURCES.find((d) => d.id === source);
+              if (!def || !isAlbumImageName(name)) { sendJson({ ok: false, error: '来源或文件名不合法' }, 400); return; }
+              const dir = path.resolve(def.dir(albumCtx));
+              const abs = path.resolve(dir, name);
+              if (!abs.startsWith(dir + path.sep)) { sendJson({ ok: false, error: '路径不合法' }, 400); return; }
+              const thumbDir = path.join(STATE_DIR, 'album-thumbs', source);
+              const thumbFile = path.join(thumbDir, `${width}-${name.replace(/\.[^.]+$/, '')}.jpg`);
+              let buf = null;
+              try { buf = fs.readFileSync(thumbFile); } catch { buf = null; }
+              if (!buf) {
+                try {
+                  fs.mkdirSync(thumbDir, { recursive: true });
+                  buf = await sharp(abs).rotate().resize({ width, withoutEnlargement: true }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
+                  fs.writeFileSync(thumbFile, buf);
+                } catch (error) {
+                  // 缩不出来（损坏/不支持的格式）就退化成原图，别让网格留黑洞
+                  try { buf = fs.readFileSync(abs); } catch { sendJson({ ok: false, error: '图片读不出来' }, 404); return; }
+                }
+              }
+              res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(buf.length), 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+              res.end(buf);
+              return;
+            }
             // 预览/下载：只允许相册来源目录里的文件（防目录穿越）
             if (req.method === 'GET' && action === 'file') {
               const source = String(url.searchParams.get('source') ?? '').trim();
@@ -10789,10 +10818,15 @@ const agentTokenOk = (key, token) => {
             if (req.method === 'GET' && (action === '' || action === 'list')) {
               const source = String(url.searchParams.get('source') ?? '').trim();
               const q = String(url.searchParams.get('q') ?? '').trim().toLowerCase();
+              const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 60));
+              const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
               let items = itemsNow();
               if (source) items = items.filter((it) => it.source === source);
               if (q) items = items.filter((it) => (`${it.notes} ${(it.tags || []).join(' ')} ${it.file}`).toLowerCase().includes(q));
-              sendJson({ ok: true, sources: ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), stats: albumStats(items), items });
+              const stats = albumStats(items);
+              const total = items.length;
+              const page = items.slice(offset, offset + limit);
+              sendJson({ ok: true, sources: ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), stats, total, offset, limit, hasMore: offset + page.length < total, items: page });
               return;
             }
             if (req.method === 'PATCH' && (action === '' || action === 'item')) {
