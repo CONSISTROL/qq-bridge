@@ -5302,6 +5302,39 @@ async function main() {
   };
   // 第二级记忆：每天一次，让机器人按第三级归档给自己写日记。
   // 触发条件：到了配置的小时（默认 4 点）、这一天还没写过、归档里确实有内容。
+  // 插件定时任务（P4）：每隔一分钟扫一遍已启用插件的 jobs，到点请求 URL，
+  // 命中 match 正则就让 AI 在指定会话里说一句（用 notifyAiSession，保持"AI 决定怎么说"）。
+  function startPluginJobs() {
+    const stateFile = path.join(STATE_DIR, 'plugin-jobs.json');
+    const timer = setInterval(async () => {
+      try {
+        const enabled = readJsonSafe(path.join(STATE_DIR, 'plugins-enabled.json'), {}) || {};
+        const last = readJsonSafe(stateFile, {}) || {};
+        const plugins = scanPlugins({ root: process.cwd(), aiRoot: path.join(STATE_DIR, 'ai-plugins'), enabledState: enabled });
+        for (const p of plugins) {
+          if (!p.enabled || !p.jobs.length) continue;
+          for (const j of p.jobs) {
+            const key = `${p.origin}:${p.id}:${j.name}`;
+            if (Date.now() - (Number(last[key]) || 0) < j.everyMin * 60000) continue;
+            last[key] = Date.now();
+            atomicWriteJson(stateFile, last);
+            try {
+              const r = await fetch(j.url, { signal: AbortSignal.timeout(20000), headers: { 'user-agent': 'qq-bridge-plugin-job/1.0' } });
+              const text = (await r.text()).slice(0, 20000);
+              let hit = true;
+              if (j.match) { try { hit = new RegExp(j.match).test(text); } catch { hit = false; } }
+              log(`[plugin-job] ${key} HTTP ${r.status} 命中=${hit}`);
+              if (hit && j.notifyKey) {
+                await notifyAiSession(j.notifyKey, j.prompt || `【插件 ${p.name}】定时任务「${j.name}」命中了（HTTP ${r.status}），看一眼，值得说就在群里说一句。`).catch((error) => log(`[plugin-job] 通知失败：${error?.message ?? error}`));
+              }
+            } catch (error) { log(`[plugin-job] ${key} 请求失败：${error?.message ?? error}`); }
+          }
+        }
+      } catch (error) { log('[plugin-job] 调度失败：' + (error?.message ?? error)); }
+    }, 60000);
+    timer.unref?.();
+  }
+
   function startDiaryScheduler() {
     const cfgD = cfg.socialV2?.memory?.diary ?? {};
     if (cfgD.enabled === false) return;
@@ -17773,6 +17806,7 @@ const agentTokenOk = (key, token) => {
   }
   startDshWatch();
   startDiaryScheduler();
+  startPluginJobs();
   startBusyWatchdogV2();
   void sweepResidualBusyV2OnStart();
   startConsoleServer();

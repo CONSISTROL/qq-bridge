@@ -1,17 +1,26 @@
 {
   "id": "lol-live",
-  "name": "LOL 赛事/直播",
-  "description": "查 B站 LOL 相关直播是否在播、以及热门赛事视频（示例插件，演示声明式插件：只声明 HTTP 能力，不跑任意代码）",
+  "name": "LOL 赛事直播",
+  "description": "查 B站 LOL 官方直播间是否在播（工具），并在开播/有赛程时提醒群里（定时任务）",
   "origin": "user",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "enabled": true,
   "tools": [
     {
       "name": "live_status",
-      "description": "查某个关键词当前有没有 B站直播在播（默认：LOL LPL）。返回在播房间标题与链接。",
-      "url": "https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid=2",
-      "maxChars": 800
+      "description": "查 B站 LOL 官方直播间当前状态（是否在播、标题、链接）",
+      "url": "https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid=672328094",
+      "maxChars": 1200
     }
   ],
-  "jobs": []
+  "jobs": [
+    {
+      "name": "live-watch",
+      "everyMin": 30,
+      "url": "https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid=672328094",
+      "match": "\"liveStatus\":1",
+      "notifyKey": "group:1050666134",
+      "prompt": "LOL 官方直播间正在直播，看一下是不是比赛；值得的话用一句话在群里提一嘴（没人在聊就别硬发）。"
+    }
+  ]
 }
