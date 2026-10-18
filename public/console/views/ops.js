@@ -7,7 +7,7 @@ export const id = 'ops';
 export const title = '运维';
 export const desc = '测试发送、重启桥接、清空 QQ 聊天工作区';
 export const icon = '🛠';
-export const group = '系统';
+export const group = '总览';
 export const order = 4;
 
 export async function mount(root) {
