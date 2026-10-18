@@ -204,3 +204,31 @@ export function emptyTrash({ stateDir, source = '' } = {}) {
   for (const it of items) if (purgeTrash({ stateDir, source: it.source, trashName: it.trashName }).ok) removed += 1;
   return { removed };
 }
+
+// ── QQ 收藏表情（不是本地文件，是 QQ 上的图 + 本地笔记）────────────────────
+// 单列一个来源 `sticker`：id 就是表情的 emoji_id/md5，笔记直接来自 stickers.json
+// （localRemark / desc / localNote / tags）——这就是「AI 记忆里的表情笔记」，
+// 搬进相册统一管理，改这里等于改 AI 的记忆。
+export const STICKER_SOURCE = { id: 'sticker', label: '收藏表情' };
+
+export function collectStickerItems({ stickers = [] } = {}) {
+  const items = [];
+  for (const s of Array.isArray(stickers) ? stickers : []) {
+    const id = String(s?.id ?? s?.emojiId ?? s?.md5 ?? '').trim();
+    if (!id) continue;
+    const notes = String(s.localRemark || s.desc || s.localNote || '').trim();
+    items.push({
+      id: itemId('sticker', id),
+      file: id,
+      source: 'sticker',
+      sourceLabel: STICKER_SOURCE.label,
+      bytes: 0,
+      addedAt: Number(s.lastUsedAt) || 0,
+      notes,
+      tags: Array.isArray(s.tags) ? s.tags : [],
+      useCount: Number(s.useCount) || 0,
+      isSticker: true
+    });
+  }
+  return items;
+}

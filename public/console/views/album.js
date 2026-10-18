@@ -28,6 +28,8 @@ function fmtTime(ms) {
 // ⚠ 缩略图/原图都用**相对路径**：控制台可能被反代在子路径下（如 /qq/），
 // 写成 `/api/...` 会跑到反代自己的接口上（线上表现：网格全黑）。
 function fileUrl(kind, it, extra = '') {
+  // 收藏表情不是磁盘文件：缩略图/原图都走已有的 /api/stickers/image 取回
+  if (it.source === 'sticker') return `api/stickers/image?stickerId=${encodeURIComponent(it.file)}`;
   return `api/album/${kind}?source=${encodeURIComponent(it.source)}&file=${encodeURIComponent(it.file)}${extra}`;
 }
 
@@ -114,6 +116,8 @@ export async function mount(root) {
     $('#albumModalTitle', view).textContent = it.file;
     $('#albumModalMeta', view).textContent = `${it.sourceLabel} · ${fmtBytes(it.bytes)} · 添加于 ${fmtTime(it.addedAt)}`
       + (it.width && it.height ? ` · ${it.width}×${it.height}` : '');
+    const delBtn = $('#albumModalDelete', view);
+    if (delBtn) delBtn.style.display = it.source === 'sticker' ? 'none' : '';
     $('#albumModalNotes', view).value = it.notes || '';
     $('#albumModalTags', view).value = (it.tags || []).join(', ');
     modal.style.display = '';

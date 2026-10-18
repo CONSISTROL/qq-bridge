@@ -19,7 +19,7 @@ import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
 import { classifyFile, extractFileContent } from './file-extract.js';
-import { ALBUM_SOURCES, ALBUM_META_FILE, collectAlbumItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId, listTrash, restoreTrash, purgeTrash, emptyTrash, trashPath } from './album.js';
+import { ALBUM_SOURCES, ALBUM_META_FILE, STICKER_SOURCE, collectAlbumItems, collectStickerItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId, listTrash, restoreTrash, purgeTrash, emptyTrash, trashPath } from './album.js';
 import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { describeAnimation } from './image-meta.js';
@@ -10779,7 +10779,8 @@ const agentTokenOk = (key, token) => {
             return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
           };
           const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
-          const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() });
+          // 收藏表情不是磁盘文件：单独拼进来（笔记就存在 stickers.json 里）
+          const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() }).concat(collectStickerItems({ stickers: stickerEntries }));
           try {
             // 缩略图：网格里如果直接给原图，一屏几十张就是几百 MB（线上实测相册页极卡）。
             // 用 sharp 缩到 320px 的 jpg 缓存到 state/album-thumbs/<来源>/，第二次直接读缓存。
@@ -10839,7 +10840,7 @@ const agentTokenOk = (key, token) => {
               if (q) items = items.filter((it) => (`${it.notes} ${(it.tags || []).join(' ')} ${it.file}`).toLowerCase().includes(q));
               const total = items.length;
               const page = items.slice(offset, offset + limit);
-              sendJson({ ok: true, sources: ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), stats, total, offset, limit, hasMore: offset + page.length < total, items: page });
+              sendJson({ ok: true, sources: [...ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), { id: STICKER_SOURCE.id, label: STICKER_SOURCE.label }], stats, total, offset, limit, hasMore: offset + page.length < total, items: page });
               return;
             }
             if (req.method === 'PATCH' && (action === '' || action === 'item')) {
@@ -10847,6 +10848,13 @@ const agentTokenOk = (key, token) => {
               const source = String(body.source ?? '').trim();
               const file = String(body.file ?? '').trim();
               if (!ALBUM_SOURCES.some((d) => d.id === source) || !file) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
+              if (source === 'sticker') {
+                // 收藏表情的「备注/标签」就是 AI 的表情笔记：写回 stickers.json
+                const entry = applyStickerNoteV2(file, body.notes, body.tags, undefined, body.notes);
+                if (!entry) { sendJson({ ok: false, error: '表情不存在' }, 404); return; }
+                sendJson({ ok: true, id: itemId('sticker', file), item: { id: itemId('sticker', file), file, source: 'sticker', notes: String(entry.localRemark || entry.desc || entry.localNote || ''), tags: entry.tags || [] } });
+                return;
+              }
               const id = itemId(source, file);
               const next = updateAlbumMeta(readMeta(), id, { notes: body.notes, tags: body.tags });
               atomicWriteJson(metaFile, next);
@@ -10857,6 +10865,7 @@ const agentTokenOk = (key, token) => {
             if (req.method === 'POST' && action === 'delete') {
               const body = await readBody();
               const source = String(body.source ?? '').trim();
+              if (source === 'sticker') { sendJson({ ok: false, error: '收藏表情请在 QQ 的表情管理里删除；相册里可以改备注/标签' }, 400); return; }
               const file = String(body.file ?? '').trim();
               const def = ALBUM_SOURCES.find((d) => d.id === source);
               if (!def || !isAlbumImageName(file)) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
