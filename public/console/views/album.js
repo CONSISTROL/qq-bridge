@@ -33,7 +33,7 @@ function fileUrl(kind, it, extra = '') {
 
 export async function mount(root) {
   const view = await mountFragment(root, 'album');
-  const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0, selected: new Set() };
+  const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0, page: 1, pageSize: PAGE, pages: 1, selected: new Set() };
 
   const renderGrid = (list, { clear = false } = {}) => {
     const grid = $('#albumGrid', view);
@@ -63,8 +63,10 @@ export async function mount(root) {
       card.append(pick, img, meta);
       grid.append(card);
     }
-    const more = $('#albumMore', view);
-    if (more) more.style.display = state.hasMore ? '' : 'none';
+    const info = $('#albumPageInfo', view);
+    if (info) info.textContent = `第 ${state.page} / ${state.pages} 页 · 共 ${state.total} 张`;
+    const prev = $('#albumPrev', view); if (prev) prev.disabled = state.page <= 1;
+    const next = $('#albumNext', view); if (next) next.disabled = state.page >= state.pages;
     const stats = $('#albumStats', view);
     if (stats) {
       const bySrc = Object.entries(state.stats.bySource || {})
@@ -78,9 +80,10 @@ export async function mount(root) {
     if (el) el.textContent = state.selected.size ? `已选 ${state.selected.size} 张` : '';
   };
 
-  const load = async ({ append = false } = {}) => {
+  const load = async ({ page = state.page } = {}) => {
     setMsg($('#albumMsg', view), '');
-    const params = new URLSearchParams({ limit: String(PAGE), offset: String(append ? state.offset : 0) });
+    state.page = Math.max(1, Number(page) || 1);
+    const params = new URLSearchParams({ limit: String(state.pageSize), offset: String((state.page - 1) * state.pageSize) });
     if (state.source) params.set('source', state.source);
     if (state.q) params.set('q', state.q);
     const r = await api('api/album?' + params.toString(), 'GET').catch((e) => ({ ok: false, error: e.message }));
@@ -90,9 +93,12 @@ export async function mount(root) {
     state.total = r.total || 0;
     state.hasMore = !!r.hasMore;
     const fresh = r.items || [];
-    if (append) state.items = state.items.concat(fresh);
-    else state.items = fresh;
-    state.offset = state.items.length;
+    state.items = fresh;
+    state.total = r.total || 0;
+    state.pages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    // 删到当前页空了（且不是第一页）→ 自动退一页，而不是甩回第一页
+    if (!fresh.length && state.page > 1) return load({ page: state.page - 1 });
+    state.offset = (state.page - 1) * state.pageSize;
     const sel = $('#albumSource', view);
     if (sel && sel.options.length === 0) {
       const all = document.createElement('option');
@@ -102,7 +108,7 @@ export async function mount(root) {
         o.value = s.id; o.textContent = s.label; sel.append(o);
       }
     }
-    renderGrid(fresh, { clear: !append });
+    renderGrid(fresh, { clear: true });
     renderSelInfo();
   };
 
@@ -154,7 +160,13 @@ export async function mount(root) {
     if (r.ok) { closeModal(); await load(); }
   });
   $('#albumModal', view)?.addEventListener('click', (ev) => { if (ev.target.id === 'albumModal') closeModal(); });
-  delegate($('#albumMore', view) ?? view, 'click', '#albumMore', () => load({ append: true }));
+  delegate(view, 'click', '#albumPrev', () => load({ page: state.page - 1 }));
+  delegate(view, 'click', '#albumNext', () => load({ page: state.page + 1 }));
+  delegate(view, 'click', '#albumJumpGo', () => {
+    const n = Number($('#albumJump', view).value) || 1;
+    load({ page: Math.min(Math.max(1, n), state.pages) });
+  });
+  delegate(view, 'keydown', '#albumJump', (ev) => { if (ev.key === 'Enter') $('#albumJumpGo', view)?.click(); });
   // 勾选（勾选框点击不要触发卡片的大图弹窗）
   delegate($('#albumGrid', view), 'change', '.album-pick', (ev) => {
     const id = ev.target.dataset.pick;
@@ -238,8 +250,8 @@ export async function mount(root) {
     setMsg($('#albumMsg', view), r.ok ? `✅ 重扫完成：${r.count} 张 / ${fmtBytes(r.bytes)}` : ('❌ ' + (r.error || '失败')));
     await load();
   });
-  delegate(view, 'change', '#albumSource', (ev) => { state.source = ev.target.value; load(); });
-  delegate(view, 'input', '#albumSearch', debounce((ev) => { state.q = ev.target.value.trim(); load(); }, 350));
+  delegate(view, 'change', '#albumSource', (ev) => { state.source = ev.target.value; load({ page: 1 }); });
+  delegate(view, 'input', '#albumSearch', debounce((ev) => { state.q = ev.target.value.trim(); load({ page: 1 }); }, 350));
 
   await load();
   return () => {};

@@ -17,8 +17,12 @@
 </div>
 
 <div id="albumGrid" class="album-grid"></div>
-<div class="row" style="justify-content:center;margin:12px 0">
-  <button id="albumMore" class="btn" style="display:none">加载更多</button>
+<div id="albumPager" class="row" style="justify-content:center;gap:10px;margin:14px 0;align-items:center">
+  <button id="albumPrev" class="btn" type="button">‹ 上一页</button>
+  <span id="albumPageInfo" class="muted"></span>
+  <button id="albumNext" class="btn" type="button">下一页 ›</button>
+  <input id="albumJump" type="number" min="1" placeholder="页码" style="width:70px">
+  <button id="albumJumpGo" class="btn" type="button">跳转</button>
 </div>
 
 <!-- 大图弹窗：看原图 + 改备注/标签 + 删除 -->
