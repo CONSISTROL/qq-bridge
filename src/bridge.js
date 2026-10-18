@@ -16283,9 +16283,17 @@ const agentTokenOk = (key, token) => {
     const p = cfg.socialV2?.proactive ?? {};
     const min = Math.max(60 * 1000, Number(p.checkIntervalMinMs) || 30 * 60 * 1000);
     const max = Math.max(min, Number(p.checkIntervalMaxMs) || 90 * 60 * 1000);
-    const delay = Math.floor(min + Math.random() * (max - min));
+    // 用**持久化的截止时间**，不要每次重排都重新抽一个 30~90 分钟的随机值：
+    // 线上实测：每次唤醒/标记已读都会重排定时器，新抽的间隔永远比"已经等了的时间"长，
+    // 于是群里的主动机会 3 个多小时一次都没触发过。现在只在没有截止时间时才抽。
+    const nowMs = Date.now();
+    if (!Number(st.proactiveNextAt) || Number(st.proactiveNextAt) <= nowMs) {
+      st.proactiveNextAt = nowMs + Math.floor(min + Math.random() * (max - min));
+    }
+    const delay = Math.max(60000, Number(st.proactiveNextAt) - nowMs);
     st.proactiveTimer = setTimeout(() => {
       st.proactiveTimer = null;
+      st.proactiveNextAt = 0;
       ensureWakeableV2(st, { key });
       const idleThreshold = Number(p.idleThresholdMs) || 15 * 60 * 1000;
       const idle = Date.now() - (st.lastIncomingAt || 0);
