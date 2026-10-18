@@ -8,7 +8,7 @@ export const group = '总览';
 export const order = 5;
 
 import { api } from '../core/api.js';
-import { $, esc, setMsg, delegate } from '../core/dom.js';
+import { $, esc, setMsg, delegate, confirmDanger } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
 export async function mount(root) {
@@ -53,6 +53,39 @@ export async function mount(root) {
     if (r.ok) await load();
   });
 
+  const loadPending = async () => {
+    const box = $('#plgPending', view);
+    if (!box) return;
+    const r = await api('api/ai-plugins/pending', 'GET').catch(() => null);
+    const pending = Object.values((r && r.pending) || {});
+    if (!pending.length) { box.innerHTML = '<div class="meta">没有待批准的 AI 插件。</div>'; return; }
+    box.innerHTML = '';
+    for (const p of pending) {
+      const card = document.createElement('div');
+      card.className = 'plg-card';
+      const m = p.manifest || {};
+      const tests = (p.testResults || []).map((t) => `${t.tool}: HTTP ${t.status}${t.ok ? ' ✅' : ' ❌'}`).join(' · ');
+      card.innerHTML = `<div class="plg-head"><b>${esc(m.name || p.id)}</b> <span class="pill b">AI 添加</span> <span class="meta">${esc(p.id)}</span>`
+        + ` <button class="small" type="button" data-plg-approve="${esc(p.id)}">批准启用</button>`
+        + ` <button class="small danger" type="button" data-plg-reject="${esc(p.id)}">拒绝并删除</button></div>`
+        + (m.description ? `<div class="meta">${esc(m.description)}</div>` : '')
+        + `<div class="meta">工具：${(m.tools || []).map((t) => esc(t.name)).join(', ') || '无'}</div>`
+        + (tests ? `<div class="meta">自测：${esc(tests)}</div>` : '<div class="meta">还没自测</div>');
+      box.append(card);
+    }
+  };
+  delegate(view, 'click', '[data-plg-approve]', async (ev, btn) => {
+    const r = await api('api/ai-plugins/approve', 'POST', { id: btn.dataset.plgApprove, approve: true }).catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#plgMsg', view), r.ok ? '✅ 已批准并启用' : ('❌ ' + (r.error || '失败')));
+    await loadPending(); await load();
+  });
+  delegate(view, 'click', '[data-plg-reject]', async (ev, btn) => {
+    if (!confirmDanger('拒绝并删除这个 AI 插件？')) return;
+    const r = await api('api/ai-plugins/approve', 'POST', { id: btn.dataset.plgReject, approve: false }).catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#plgMsg', view), r.ok ? '✅ 已拒绝并删除' : ('❌ ' + (r.error || '失败')));
+    await loadPending(); await load();
+  });
+  await loadPending();
   await load();
   return () => {};
 }

@@ -10651,6 +10651,100 @@ const agentTokenOk = (key, token) => {
             return;
           }
         }
+        // ── AI 自研插件（P3）：只能写 state/ai-plugins/，默认关闭，必须人工批准 ──
+        if (url.pathname === '/api/ai-plugins' || url.pathname.startsWith('/api/ai-plugins/')) {
+          const action = url.pathname === '/api/ai-plugins' ? '' : url.pathname.slice('/api/ai-plugins/'.length);
+          const aiRoot = path.join(STATE_DIR, 'ai-plugins');
+          const pendingFile = path.join(STATE_DIR, 'ai-plugins-pending.json');
+          const enabledFile = path.join(STATE_DIR, 'plugins-enabled.json');
+          const readPending = () => { const v = readJsonSafe(pendingFile, {}); return v && typeof v === 'object' ? v : {}; };
+          const readEnabled = () => { const v = readJsonSafe(enabledFile, {}); return v && typeof v === 'object' ? v : {}; };
+          const safeId = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+          const validate = (m) => {
+            const errs = [];
+            if (!m || typeof m !== 'object') return ['manifest 必须是 JSON 对象'];
+            if (!safeId(m.id)) errs.push('id 必须是字母/数字/下划线/短横线');
+            if (!String(m.name || '').trim()) errs.push('name 不能为空');
+            const tools = Array.isArray(m.tools) ? m.tools : [];
+            if (!tools.length && !(Array.isArray(m.jobs) && m.jobs.length)) errs.push('至少声明一个 tool 或 job');
+            for (const t of tools) {
+              if (!t || !String(t.name || '').trim()) errs.push('tool.name 不能为空');
+              if (!/^https?:\/\//.test(String(t.url || ''))) errs.push(`tool ${t && t.name}: url 必须是 http(s)`);
+            }
+            for (const j of Array.isArray(m.jobs) ? m.jobs : []) {
+              if (!/^https?:\/\//.test(String(j?.url || ''))) errs.push('job.url 必须是 http(s)');
+            }
+            return errs;
+          };
+          try {
+            if (req.method === 'GET' && action === 'pending') { sendJson({ ok: true, pending: readPending() }); return; }
+            if (req.method === 'POST' && action === 'write') {
+              // AI 侧唯一入口：写 manifest（强制 origin=ai、enabled=false），并进入待批准队列
+              const body = await readBody();
+              const m = body.manifest && typeof body.manifest === 'object' ? body.manifest : null;
+              const errs = validate(m);
+              if (errs.length) { sendJson({ ok: false, error: 'manifest 不合法', errors: errs }, 400); return; }
+              const id = safeId(m.id);
+              const dir = path.join(aiRoot, id);
+              let count = 0;
+              try { count = fs.readdirSync(aiRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).length; } catch { count = 0; }
+              if (count >= 20 && !fs.existsSync(dir)) { sendJson({ ok: false, error: 'AI 插件数量已达上限（20）' }, 429); return; }
+              const manifest = { ...m, id, origin: 'ai', enabled: false, version: String(m.version || '0.1.0'), description: String(m.description || '').slice(0, 500) };
+              try {
+                fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+              } catch (error) { sendJson({ ok: false, error: `写插件失败：${error.message}` }, 500); return; }
+              const st = readEnabled(); st[`ai:${id}`] = false; atomicWriteJson(enabledFile, st);
+              const pending = readPending();
+              pending[id] = { id, createdAt: Date.now(), manifest, author: String(body.author || 'ai').slice(0, 40) };
+              atomicWriteJson(pendingFile, pending);
+              log(`[plugin] AI 提交插件 ${id}（待批准）`);
+              sendJson({ ok: true, id, pending: true, note: '已进入待批准队列，管理员在控制台「插件 → 待批准」批准后才会启用' });
+              return;
+            }
+            if (req.method === 'POST' && action === 'test') {
+              // 只读自测：按声明各请求一次，回报 HTTP 状态（不启用）
+              const body = await readBody();
+              const id = safeId(body.id);
+              let m = null;
+              try { m = JSON.parse(fs.readFileSync(path.join(aiRoot, id, 'manifest.json'), 'utf8')); } catch { /* 见下 */ }
+              if (!m) { sendJson({ ok: false, error: '插件不存在' }, 404); return; }
+              const results = [];
+              for (const t of Array.isArray(m.tools) ? m.tools.slice(0, 5) : []) {
+                try {
+                  const r = await fetch(t.url, { method: (String(t.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET'), signal: AbortSignal.timeout(12000) });
+                  results.push({ tool: t.name, status: r.status, ok: r.ok });
+                } catch (error) { results.push({ tool: t.name, status: 0, ok: false, error: String(error?.message ?? error).slice(0, 120) }); }
+              }
+              const pending = readPending();
+              if (pending[id]) { pending[id].testedAt = Date.now(); pending[id].testResults = results; atomicWriteJson(pendingFile, pending); }
+              sendJson({ ok: true, id, results });
+              return;
+            }
+            if (req.method === 'POST' && action === 'approve') {
+              const body = await readBody();
+              const id = safeId(body.id);
+              if (body.approve === false) {
+                // 拒绝：删掉 AI 的插件目录与待批准记录
+                try { fs.rmSync(path.join(aiRoot, id), { recursive: true, force: true }); } catch { /* 忽略 */ }
+                const pending = readPending(); delete pending[id]; atomicWriteJson(pendingFile, pending);
+                const st = readEnabled(); delete st[`ai:${id}`]; atomicWriteJson(enabledFile, st);
+                log(`[plugin] 已拒绝 AI 插件 ${id}`);
+                sendJson({ ok: true, id, rejected: true });
+                return;
+              }
+              const pending = readPending();
+              if (!pending[id]) { sendJson({ ok: false, error: '没有这个待批准插件' }, 404); return; }
+              const st = readEnabled(); st[`ai:${id}`] = true; atomicWriteJson(enabledFile, st);
+              delete pending[id]; atomicWriteJson(pendingFile, pending);
+              log(`[plugin] 已批准 AI 插件 ${id}`);
+              sendJson({ ok: true, id, enabled: true });
+              return;
+            }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
+        }
         // ── 插件（声明式）：控制台列表 + AI 侧遍历/调用 ─────────────
         if (url.pathname === '/api/plugins' || url.pathname.startsWith('/api/plugins/')) {
           const action = url.pathname === '/api/plugins' ? '' : url.pathname.slice('/api/plugins/'.length);

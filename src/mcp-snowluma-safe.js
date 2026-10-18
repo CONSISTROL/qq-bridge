@@ -1156,6 +1156,59 @@ if (cfg.socialV2?.tools?.getImages !== false) {
   );
 }
 
+// ── AI 自研插件（P3）：写 manifest → 自测 → 申请启用（必须人工批准）────────────
+defineTool(
+  'qq_plugin_dev',
+  '给自己开发一个**声明式插件**（群友要的功能如果现有插件都没有，就用它）。'
+    + '插件只声明 HTTP 工具/定时任务，不执行任意代码。写完进"待批准"队列，**管理员批准后才会启用**。'
+    + '参数 manifest 示例：{"id":"lol-live","name":"LOL 直播","description":"查比赛是否开播",'
+    + '"tools":[{"name":"check","description":"查是否在播","url":"https://api.example.com/x"}]}',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    manifest: z.string().describe('manifest 的 JSON 字符串（id/name/description/tools/jobs）')
+  },
+  async ({ key, token, manifest }) => {
+    let parsed;
+    try { parsed = JSON.parse(String(manifest)); } catch (error) { return { content: [{ type: 'text', text: `manifest 不是合法 JSON：${error.message}` }], isError: true }; }
+    try {
+      const data = await agentApi('/api/ai-plugins/write', {
+        method: 'POST',
+        body: JSON.stringify({ manifest: parsed, author: key }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 30000
+      });
+      return { content: [{ type: 'text', text: `插件 ${data.id} 已提交，${data.note || '等待管理员批准'}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `提交插件失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_plugin_dev_test',
+  '自测你刚提交的 AI 插件：按 manifest 里的声明各请求一次，返回 HTTP 状态，用来确认 URL 可用（不会启用插件）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    id: z.string().describe('插件 id')
+  },
+  async ({ key, token, id }) => {
+    try {
+      const data = await agentApi('/api/ai-plugins/test', {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 60000
+      });
+      const lines = (data.results || []).map((r) => `· ${r.tool}: HTTP ${r.status}${r.ok ? ' ✅' : ' ❌ ' + (r.error || '')}`).join('\n');
+      return { content: [{ type: 'text', text: `自测结果（未启用，仍待管理员批准）：\n${lines || '（没有可测的 tool）'}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `自测失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
 // ── 插件（声明式）：列表 / 调用 ─────────────────────────────────────────────
 defineTool(
   'qq_plugin_list',
