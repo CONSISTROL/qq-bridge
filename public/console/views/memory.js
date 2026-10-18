@@ -2,7 +2,7 @@
 //
 // 为什么要单独一个分区：记忆不是一个文件，而是七类——
 // 会话记忆（话题/想法/印象，注入提示词）、群成员备注、对话上下文与转录、
-// 黑话库、群知识库、收藏表情笔记、DSH 侧长期记忆文件。
+// 以及 DSH 侧长期记忆文件（黑话/知识库/表情笔记各有独立分区或相册，不在这里重复）。
 // 三代控制台里它们分别藏在「聊天模式 → 轻量记忆」和另外两个分区里，清记忆只能靠 forget-user.sh；
 // 这个视图补上三件事：一眼看清每类多少条/吃多少 token、逐条改删、以及**钉住 + 备份回滚**。
 //
@@ -155,7 +155,8 @@ function contentCell(it) {
 function renderList() {
   const box = $('#memList', state.view);
   if (!box) return;
-  const list = state.items || [];
+  // 表情笔记已归相册，这里即使后端还带回来也不展示
+  const list = (state.items || []).filter((it) => it.kind !== 'stickerNote');
   if (!list.length) {
     box.innerHTML = `<div class="meta" style="padding:8px">这一类${state.keyFilter ? `（会话 ${esc(state.keyFilter)}）` : ''}没有记忆条目。${state.kind === 'context' ? '（对话上下文只在桥接运行、且该会话有过消息时才存在）' : ''}</div>`;
     return;
@@ -435,7 +436,7 @@ export async function mount(root) {
     const f = r.forgotten || {};
     setMsg($('#memForgetMsg', view),
       r.ok
-        ? `✅ 清掉 ${money(r.forgottenTotal)} 条（想法 ${money(f.thoughts)} · 话题 ${money(f.topics)} · 表情笔记 ${money(f.stickerNotes)}）${money(r.skippedPinned) ? `，跳过钉住 ${money(r.skippedPinned)} 条` : ''}`
+        ? `✅ 清掉 ${money(r.forgottenTotal)} 条（想法 ${money(f.thoughts)} · 话题 ${money(f.topics)}）${money(r.skippedPinned) ? `，跳过钉住 ${money(r.skippedPinned)} 条` : ''}`
         : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) await refreshAll();
   });

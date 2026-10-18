@@ -423,18 +423,6 @@ export function createMemoryAdmin(deps) {
         total: { items: knowledge.length, tokens: measure(confirmedKnowledge.map(knowledgeLine)).tokens }
       },
       {
-        id: 'stickers',
-        title: '收藏表情与其含义笔记',
-        scope: 'global',
-        inject: 'onDemand',
-        note: '表情本身在 QQ 账号上；这里管的是 AI 给表情写的备注/标签（选表情时参考）。',
-        stats: {
-          stickers: { items: stickers.length, chars: 0, tokens: 0 },
-          notes: measure(stickerNotes.map(stickerLine))
-        },
-        total: { items: stickers.length, tokens: measure(stickerNotes.map(stickerLine)).tokens }
-      },
-      {
         id: 'longterm',
         title: '长期记忆文件（DSH 侧）',
         scope: 'global',
