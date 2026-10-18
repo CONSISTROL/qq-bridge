@@ -47,7 +47,9 @@ export async function mount(root) {
       card.dataset.file = it.file;
       const img = document.createElement('img');
       img.loading = 'lazy';
-      img.src = `/api/album/file?source=${encodeURIComponent(it.source)}&file=${encodeURIComponent(it.file)}`;
+      // ⚠ 不能写成 `/api/...`（根绝对路径）：控制台可能被反代在子路径下（如 /qq/），
+      // 那样会跑到反代自己的 /api 上（线上表现：相册全是黑的）。去掉开头斜杠让浏览器按当前页面解析。
+      img.src = `api/album/file?source=${encodeURIComponent(it.source)}&file=${encodeURIComponent(it.file)}`;
       img.alt = it.notes || it.file;
       const meta = document.createElement('div');
       meta.className = 'album-meta';
