@@ -13517,6 +13517,8 @@ const agentTokenOk = (key, token) => {
             // 网关侧 message_seq 水位：不读回来，掉线补拉就没有基线（存了不读等于没存）。
             lastGwSeq: Number(val.lastGwSeq) || 0,
             // 令牌宽限名单（旧令牌在 until 之前仍然可用，见 agentTokenOk 的说明）
+            proactiveNextAt: Number(val.proactiveNextAt) || 0,
+            lastDiaryDay: typeof val.lastDiaryDay === 'string' ? val.lastDiaryDay : '',
             prevAgentTokens: Array.isArray(val.prevAgentTokens)
               ? val.prevAgentTokens
                 .filter((e) => e && typeof e.token === 'string' && e.token)
@@ -13621,6 +13623,8 @@ const agentTokenOk = (key, token) => {
           lastUnreadSeq: st.lastUnreadSeq || 0,
           // 网关侧 message_seq 水位：掉线补拉靠它定位「从哪接着补」，丢了就补不了（见 backfillMissedMessages）。
           lastGwSeq: Number(st.lastGwSeq) || 0,
+          proactiveNextAt: Number(st.proactiveNextAt) || 0,
+          lastDiaryDay: typeof st.lastDiaryDay === 'string' ? st.lastDiaryDay : '',
           prevAgentTokens: Array.isArray(st.prevAgentTokens)
             ? st.prevAgentTokens.filter((e) => e && e.token).slice(-2).map((e) => ({ token: String(e.token), until: Number(e.until) || 0 }))
             : [],
