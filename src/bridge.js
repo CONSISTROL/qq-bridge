@@ -1765,6 +1765,21 @@ async function main() {
 
   // ── 表情包体系（聊天模式）本地知识库 ────────────────────────────────────
   let stickerEntries = loadStickerStore(STICKER_FILE);
+  // 表情笔记已迁到相册（state/album-meta.json）：启动时灌回内存，提示词/选图/qq_list_stickers 不用改。
+  try {
+    const meta0 = readJsonSafe(path.join(STATE_DIR, ALBUM_META_FILE), {});
+    if (meta0 && typeof meta0 === 'object') {
+      let n = 0;
+      stickerEntries = stickerEntries.map((e) => {
+        const id = String(e?.id ?? e?.emojiId ?? e?.md5 ?? '');
+        const m = meta0[`sticker:${id}`];
+        if (!m) return e;
+        n += 1;
+        return { ...e, localNote: m.notes || e.localNote || '', tags: Array.isArray(m.tags) ? m.tags : e.tags, localRemark: m.notes || e.localRemark || '' };
+      });
+      if (n) log(`[album] 已从相册载入 ${n} 条表情笔记`);
+    }
+  } catch { /* 忽略 */ }
   let stickerSyncedAt = 0; // 上次从 SnowLuma 拉取收藏表情的时间戳（毫秒）
   let lastStickerLabelNudgeAt = 0; // 上次「手动触发补备注」的时间戳，用于按钮冷却
   let lastForcedAgentStickerSync = 0; // AI 强制刷新表情库的最小间隔保护
@@ -10780,7 +10795,7 @@ const agentTokenOk = (key, token) => {
           };
           const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
           // 收藏表情不是磁盘文件：单独拼进来（笔记就存在 stickers.json 里）
-          const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() }).concat(collectStickerItems({ stickers: stickerEntries }));
+          const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() }).concat(collectStickerItems({ stickers: stickerEntries, meta: readMeta() }));
           try {
             // 缩略图：网格里如果直接给原图，一屏几十张就是几百 MB（线上实测相册页极卡）。
             // 用 sharp 缩到 320px 的 jpg 缓存到 state/album-thumbs/<来源>/，第二次直接读缓存。
@@ -10849,10 +10864,14 @@ const agentTokenOk = (key, token) => {
               const file = String(body.file ?? '').trim();
               if (!file || !(ALBUM_SOURCES.some((d) => d.id === source) || source === STICKER_SOURCE.id)) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
               if (source === 'sticker') {
-                // 收藏表情的「备注/标签」就是 AI 的表情笔记：写回 stickers.json
+                // 表情笔记的真源是相册（album-meta.json）：写这里，同时更新内存里的 stickerEntries
+                // 供提示词/选图即时生效；stickers.json 不再存笔记（已迁移）。
+                if (!stickerEntries.some((e) => String(e.id ?? e.emojiId ?? e.md5) === file)) { sendJson({ ok: false, error: '表情不存在' }, 404); return; }
+                const next = updateAlbumMeta(readMeta(), itemId('sticker', file), { notes: body.notes, tags: body.tags });
+                atomicWriteJson(metaFile, next);
                 const entry = applyStickerNoteV2(file, body.notes, body.tags, undefined, body.notes);
-                if (!entry) { sendJson({ ok: false, error: '表情不存在' }, 404); return; }
-                sendJson({ ok: true, id: itemId('sticker', file), item: { id: itemId('sticker', file), file, source: 'sticker', notes: String(entry.localRemark || entry.desc || entry.localNote || ''), tags: entry.tags || [] } });
+                const saved = next[itemId('sticker', file)] || {};
+                sendJson({ ok: true, id: itemId('sticker', file), item: { id: itemId('sticker', file), file, source: 'sticker', notes: saved.notes || '', tags: saved.tags || [] } });
                 return;
               }
               const id = itemId(source, file);

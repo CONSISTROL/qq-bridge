@@ -211,12 +211,14 @@ export function emptyTrash({ stateDir, source = '' } = {}) {
 // 搬进相册统一管理，改这里等于改 AI 的记忆。
 export const STICKER_SOURCE = { id: 'sticker', label: '收藏表情' };
 
-export function collectStickerItems({ stickers = [] } = {}) {
+export function collectStickerItems({ stickers = [], meta = {} } = {}) {
   const items = [];
   for (const s of Array.isArray(stickers) ? stickers : []) {
     const id = String(s?.id ?? s?.emojiId ?? s?.md5 ?? '').trim();
     if (!id) continue;
-    const notes = String(s.localRemark || s.desc || s.localNote || '').trim();
+    // 笔记真源是相册的 album-meta（sticker:<id>）；stickers.json 只保留 QQ 官方 desc 作为兜底标签。
+    const custom = meta && typeof meta === 'object' ? meta[itemId('sticker', id)] : null;
+    const notes = String(custom?.notes || s.localRemark || s.localNote || s.desc || '').trim();
     items.push({
       id: itemId('sticker', id),
       file: id,
@@ -225,7 +227,7 @@ export function collectStickerItems({ stickers = [] } = {}) {
       bytes: 0,
       addedAt: Number(s.lastUsedAt) || 0,
       notes,
-      tags: Array.isArray(s.tags) ? s.tags : [],
+      tags: Array.isArray(custom?.tags) && custom.tags.length ? custom.tags : (Array.isArray(s.tags) ? s.tags : []),
       useCount: Number(s.useCount) || 0,
       isSticker: true
     });
