@@ -35,9 +35,12 @@ export async function mount(root) {
   const view = await mountFragment(root, 'album');
   const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0 };
 
-  const renderGrid = (list) => {
+  const renderGrid = (list, { clear = false } = {}) => {
     const grid = $('#albumGrid', view);
     if (!grid) return;
+    // 重载（筛选/删除/保存后）必须先把旧卡片清掉，否则删掉的那张还留在网格里，
+    // 看起来就是"要手动刷新页面才变化"（线上真事）。
+    if (clear) grid.textContent = '';
     for (const it of list) {
       const card = document.createElement('div');
       card.className = 'album-card';
@@ -88,7 +91,7 @@ export async function mount(root) {
         o.value = s.id; o.textContent = s.label; sel.append(o);
       }
     }
-    renderGrid(fresh);
+    renderGrid(fresh, { clear: !append });
   };
 
   // ── 大图弹窗 ───────────────────────────────────────────────
