@@ -69,8 +69,14 @@
   .album-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
   @media (max-width: 760px) { .album-modal-body { grid-template-columns: 1fr; } }
   .album-tabs { display: inline-flex; flex-wrap: wrap; gap: 6px; }
-  .album-tab { border: 1px solid var(--line); background: var(--panel); color: inherit; border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
-  .album-tab.active { border-color: var(--accent); color: var(--accent); }
+  .album-tab {
+    border: 1px solid var(--line); background: transparent; color: inherit;
+    border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+    font-weight: 500; line-height: 1.6;
+  }
+  .album-tab:hover { border-color: var(--accent); }
+  /* 选中态用实心强调色 + 白字：之前只改文字颜色，深色主题下和背景撞色，字看不见。 */
+  .album-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 </style>
 <!-- 回收站：查看 / 还原 / 彻底删除 / 清空 -->
 <div id="albumTrashModal" class="album-modal" style="display:none">
