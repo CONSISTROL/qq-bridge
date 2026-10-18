@@ -393,10 +393,13 @@
       "suggestDomains": 3,
       "avoidRepeat": true,
       "avoidKeywords": [],
-      "checkIntervalMinMs": 1800000,
-      "checkIntervalMaxMs": 5400000,
-      "idleThresholdMs": 900000,
-      "probability": 0.3
+      "checkIntervalMinMs": 1200000,
+      "checkIntervalMaxMs": 2400000,
+      "idleThresholdMs": 600000,
+      "quietHours": [
+        1,
+        7
+      ]
     },
     "feedback": {
       "maxLength": 500,

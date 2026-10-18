@@ -16297,17 +16297,14 @@ const agentTokenOk = (key, token) => {
       ensureWakeableV2(st, { key });
       const idleThreshold = Number(p.idleThresholdMs) || 15 * 60 * 1000;
       const idle = Date.now() - (st.lastIncomingAt || 0);
-      const probBase = Number(p.probability);
-      let prob = Math.min(1, Math.max(0, Number.isFinite(probBase) ? probBase : 0.4));
-      const pendingThoughts = Array.isArray(st.pendingThoughts) ? st.pendingThoughts.filter((t) => t && (!t.expiresAt || Date.now() < Number(t.expiresAt))).length : 0;
-      if (pendingThoughts > 0) prob = Math.min(1, prob * 1.4);
-      if (st.lastAiReplyAt && Date.now() - Number(st.lastAiReplyAt) < 30 * 60 * 1000) prob *= 0.5;
-      const hour = new Date().getHours();
-      if (hour >= 23 || hour < 8) prob *= 0.3;
-      const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
-      const aiCount = recent.filter((m) => m && m.isSelf && Date.now() - Number(m.time || 0) < 60 * 60 * 1000).length;
-      if (aiCount >= 5) prob *= 0.3;
-      if (idle >= idleThreshold && Math.random() < prob && !isConversationBusyV2(key, st)) {
+      // owner 要求：**不要概率，纯时间间隔**——到点且群冷（闲置 ≥ 阈值）就主动开一次，
+      // 否则白天群容易冷场。概率/翻倍/打折那套全部去掉，只保留两个硬判定：
+      //   ① 闲置时间够长（idleThresholdMs，默认 10 分钟）
+      //   ② 凌晨静默时段（proactive.quietHours，默认 1~7 点）不打扰
+      const quiet = Array.isArray(p.quietHours) ? p.quietHours : [1, 7];
+      const hourNow = new Date().getHours();
+      const inQuiet = quiet.length === 2 && hourNow >= Number(quiet[0]) && hourNow < Number(quiet[1]);
+      if (!inQuiet && idle >= idleThreshold && !isConversationBusyV2(key, st)) {
         void sendWakePromptV2(key, 'proactiveCheck').catch((error) => log(`[reserved2] proactive 唤醒异常 ${key}:`, error?.message ?? error));
       }
       scheduleProactiveCheckV2(key);
