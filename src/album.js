@@ -134,3 +134,73 @@ export function saveChatImage({ ctx, buffer, name, ext = 'jpg' } = {}) {
   fs.writeFileSync(path.join(dir, fileName), buffer);
   return itemId('chat', fileName);
 }
+
+// ── 回收站 ────────────────────────────────────────────────────────────────
+// 删除不抹盘：文件挪到 state/album-trash/<来源>/<时间戳>-<原名>，这里提供查看/还原/彻底删。
+export const TRASH_DIR = 'album-trash';
+
+export function trashPath({ stateDir, source, trashName }) {
+  return path.join(stateDir, TRASH_DIR, String(source), String(trashName));
+}
+
+/** 解析回收站文件名：`<毫秒时间戳>-<原名>`（原名里可能有 `-`，只切第一个）。 */
+export function parseTrashName(trashName) {
+  const m = /^(\d{10,})-(.+)$/.exec(String(trashName ?? ''));
+  if (!m) return { deletedAt: 0, file: String(trashName ?? '') };
+  return { deletedAt: Number(m[1]) || 0, file: m[2] };
+}
+
+/** 列出回收站（可按来源过滤），新的在前。 */
+export function listTrash({ stateDir, source = '', stat = null } = {}) {
+  const root = path.join(stateDir, TRASH_DIR);
+  const doStat = stat ?? ((f) => { try { const s = fs.statSync(f); return { size: s.size }; } catch { return null; } });
+  const out = [];
+  let dirs = [];
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return out; }
+  for (const src of dirs) {
+    if (source && src !== source) continue;
+    let names = [];
+    try { names = fs.readdirSync(path.join(root, src)); } catch { continue; }
+    for (const trashName of names) {
+      if (!isAlbumImageName(trashName.replace(/^\d{10,}-/, ''))) continue;
+      const st = doStat(path.join(root, src, trashName));
+      const parsed = parseTrashName(trashName);
+      out.push({ source: src, trashName, file: parsed.file, deletedAt: parsed.deletedAt, bytes: st ? st.size : 0 });
+    }
+  }
+  out.sort((a, b) => b.deletedAt - a.deletedAt);
+  return out;
+}
+
+/** 把回收站里的文件还原回它的来源目录（同名已存在时加时间戳后缀，不覆盖）。 */
+export function restoreTrash({ stateDir, root, source, trashName, now = Date.now() }) {
+  const def = ALBUM_SOURCES.find((d) => d.id === source);
+  if (!def) return { ok: false, error: '未知来源' };
+  const from = trashPath({ stateDir, source, trashName });
+  const dir = def.dir({ root, stateDir });
+  const parsed = parseTrashName(trashName);
+  let target = path.join(dir, parsed.file);
+  let n = 1;
+  while (fs.existsSync(target)) target = path.join(dir, `${parsed.file.replace(/(\.[^.]+)$/, '')}-${now}-${n++}$1`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.renameSync(from, target);
+    return { ok: true, file: path.basename(target) };
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
+/** 彻底删除一条（回收站内）。 */
+export function purgeTrash({ stateDir, source, trashName }) {
+  try { fs.unlinkSync(trashPath({ stateDir, source, trashName })); return { ok: true }; }
+  catch (error) { return { ok: false, error: String(error?.message ?? error) }; }
+}
+
+/** 清空回收站（可按来源）。 */
+export function emptyTrash({ stateDir, source = '' } = {}) {
+  const items = listTrash({ stateDir, source });
+  let removed = 0;
+  for (const it of items) if (purgeTrash({ stateDir, source: it.source, trashName: it.trashName }).ok) removed += 1;
+  return { removed };
+}

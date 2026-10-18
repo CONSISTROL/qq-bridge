@@ -33,7 +33,7 @@ function fileUrl(kind, it, extra = '') {
 
 export async function mount(root) {
   const view = await mountFragment(root, 'album');
-  const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0 };
+  const state = { sources: [], items: [], stats: { count: 0, bytes: 0, bySource: {} }, total: 0, hasMore: false, source: '', q: '', offset: 0, selected: new Set() };
 
   const renderGrid = (list, { clear = false } = {}) => {
     const grid = $('#albumGrid', view);
@@ -45,6 +45,12 @@ export async function mount(root) {
       const card = document.createElement('div');
       card.className = 'album-card';
       card.dataset.id = it.id;
+      const pick = document.createElement('input');
+      pick.type = 'checkbox';
+      pick.className = 'album-pick';
+      pick.checked = state.selected.has(it.id);
+      pick.dataset.pick = it.id;
+      if (pick.checked) card.classList.add('picked');
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.decoding = 'async';
@@ -54,7 +60,7 @@ export async function mount(root) {
       meta.className = 'album-meta';
       meta.innerHTML = `<div class="album-notes">${esc(it.notes || it.file)}</div>`
         + `<div class="album-sub">${esc(it.sourceLabel)} · ${fmtBytes(it.bytes)}</div>`;
-      card.append(img, meta);
+      card.append(pick, img, meta);
       grid.append(card);
     }
     const more = $('#albumMore', view);
@@ -65,6 +71,11 @@ export async function mount(root) {
         .map(([id, n]) => `${(state.sources.find((s) => s.id === id) || {}).label || id} ${n}`).join(' · ');
       stats.textContent = `共 ${state.stats.count} 张 · ${fmtBytes(state.stats.bytes)}${bySrc ? ' · ' + bySrc : ''}`;
     }
+  };
+
+  const renderSelInfo = () => {
+    const el = $('#albumSelInfo', view);
+    if (el) el.textContent = state.selected.size ? `已选 ${state.selected.size} 张` : '';
   };
 
   const load = async ({ append = false } = {}) => {
@@ -92,6 +103,7 @@ export async function mount(root) {
       }
     }
     renderGrid(fresh, { clear: !append });
+    renderSelInfo();
   };
 
   // ── 大图弹窗 ───────────────────────────────────────────────
@@ -141,6 +153,84 @@ export async function mount(root) {
   });
   $('#albumModal', view)?.addEventListener('click', (ev) => { if (ev.target.id === 'albumModal') closeModal(); });
   delegate($('#albumMore', view) ?? view, 'click', '#albumMore', () => load({ append: true }));
+  // 勾选（勾选框点击不要触发卡片的大图弹窗）
+  delegate($('#albumGrid', view), 'change', '.album-pick', (ev) => {
+    const id = ev.target.dataset.pick;
+    const card = ev.target.closest('.album-card');
+    if (ev.target.checked) { state.selected.add(id); card?.classList.add('picked'); }
+    else { state.selected.delete(id); card?.classList.remove('picked'); }
+    renderSelInfo();
+  });
+  delegate(view, 'click', '#albumSelectAll', () => {
+    const all = state.items.map((it) => it.id);
+    const full = all.length > 0 && all.every((id) => state.selected.has(id));
+    state.selected = full ? new Set() : new Set(all);
+    for (const el of view.querySelectorAll('.album-pick')) {
+      el.checked = state.selected.has(el.dataset.pick);
+      el.closest('.album-card')?.classList.toggle('picked', el.checked);
+    }
+    renderSelInfo();
+  });
+  delegate(view, 'click', '#albumDeleteSel', async () => {
+    if (!state.selected.size) { setMsg($('#albumMsg', view), '先勾选要删除的图片'); return; }
+    if (!confirmDanger(`删除选中的 ${state.selected.size} 张？\n（都会进回收站，可还原）`)) return;
+    const items = state.items.filter((it) => state.selected.has(it.id)).map((it) => ({ source: it.source, file: it.file }));
+    const r = await api('api/album/delete-batch', 'POST', { items }).catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#albumMsg', view), r.ok ? `✅ 已删除 ${r.removed} 张（进回收站）` : ('❌ ' + (r.error || '失败')));
+    if (r.ok) { state.selected.clear(); await load(); }
+  });
+  // 回收站
+  const renderTrash = async () => {
+    const list = $('#albumTrashList', view);
+    setMsg($('#albumTrashMsg', view), '加载中…');
+    const r = await api('api/album/trash', 'GET').catch((e) => ({ ok: false, error: e.message }));
+    if (!r.ok) { setMsg($('#albumTrashMsg', view), '❌ ' + (r.error || '加载失败')); return; }
+    setMsg($('#albumTrashMsg', view), `共 ${r.stats.count} 张 / ${fmtBytes(r.stats.bytes)}`);
+    list.textContent = '';
+    for (const it of r.items) {
+      const card = document.createElement('div');
+      card.className = 'album-trash-card';
+      card.dataset.source = it.source;
+      card.dataset.trash = it.trashName;
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `api/album/trash-file?source=${encodeURIComponent(it.source)}&name=${encodeURIComponent(it.trashName)}`;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${it.file} · ${fmtBytes(it.bytes)} · ${it.deletedAt ? fmtTime(it.deletedAt) : ''}`;
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.gap = '6px';
+      const btnRestore = document.createElement('button');
+      btnRestore.className = 'btn'; btnRestore.type = 'button'; btnRestore.textContent = '还原';
+      btnRestore.dataset.trashAct = 'restore';
+      const btnPurge = document.createElement('button');
+      btnPurge.className = 'danger'; btnPurge.type = 'button'; btnPurge.textContent = '彻底删除';
+      btnPurge.dataset.trashAct = 'purge';
+      row.append(btnRestore, btnPurge);
+      card.append(img, meta, row);
+      list.append(card);
+    }
+  };
+  delegate(view, 'click', '#albumTrashBtn', async () => { const m = $('#albumTrashModal', view); if (m) m.style.display = ''; await renderTrash(); });
+  delegate($('#albumTrashModal', view), 'click', '#albumTrashClose', () => { const m = $('#albumTrashModal', view); if (m) m.style.display = 'none'; });
+  delegate($('#albumTrashModal', view), 'click', '#albumTrashEmpty', async () => {
+    if (!confirmDanger('清空回收站？这些图会被**永久删除**，无法还原。')) return;
+    const r = await api('api/album/trash-empty', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#albumTrashMsg', view), r.ok ? `✅ 已清空（${r.removed} 张）` : ('❌ ' + (r.error || '失败')));
+    if (r.ok) { await renderTrash(); await load(); }
+  });
+  delegate($('#albumTrashModal', view), 'click', '[data-trash-act]', async (ev, btn) => {
+    const card = btn.closest('.album-trash-card');
+    const source = card.dataset.source;
+    const trashName = card.dataset.trash;
+    const act = btn.dataset.trashAct;
+    if (act === 'purge' && !confirmDanger('彻底删除这张？无法还原。')) return;
+    const r = await api(act === 'restore' ? 'api/album/trash-restore' : 'api/album/trash-purge', 'POST', { source, trashName })
+      .catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#albumTrashMsg', view), r.ok ? (act === 'restore' ? '✅ 已还原' : '✅ 已彻底删除') : ('❌ ' + (r.error || '失败')));
+    if (r.ok) { await renderTrash(); await load(); }
+  });
   delegate(view, 'click', '#albumRescan', async () => {
     const r = await api('api/album/rescan', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#albumMsg', view), r.ok ? `✅ 重扫完成：${r.count} 张 / ${fmtBytes(r.bytes)}` : ('❌ ' + (r.error || '失败')));

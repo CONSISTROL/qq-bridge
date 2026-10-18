@@ -19,7 +19,7 @@ import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
 import { classifyFile, extractFileContent } from './file-extract.js';
-import { ALBUM_SOURCES, ALBUM_META_FILE, collectAlbumItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId } from './album.js';
+import { ALBUM_SOURCES, ALBUM_META_FILE, collectAlbumItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId, listTrash, restoreTrash, purgeTrash, emptyTrash, trashPath } from './album.js';
 import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { describeAnimation } from './image-meta.js';
@@ -10868,6 +10868,64 @@ const agentTokenOk = (key, token) => {
               const next = updateAlbumMeta(readMeta(), itemId(source, file), { notes: '', tags: [] });
               atomicWriteJson(metaFile, next);
               sendJson({ ok: true, id: itemId(source, file), trashedTo: trashDir });
+              return;
+            }
+            // ── 回收站：查看 / 还原 / 彻底删 / 清空 ──────────────────────
+            if (req.method === 'GET' && action === 'trash') {
+              const source = String(url.searchParams.get('source') ?? '').trim();
+              const items = listTrash({ stateDir: STATE_DIR, source });
+              sendJson({ ok: true, items, stats: { count: items.length, bytes: items.reduce((n, x) => n + (Number(x.bytes) || 0), 0) } });
+              return;
+            }
+            if (req.method === 'GET' && action === 'trash-file') {
+              const source = String(url.searchParams.get('source') ?? '').trim();
+              const trashName = String(url.searchParams.get('name') ?? '').trim();
+              if (!trashName || trashName.includes('/') || trashName.includes('..')) { sendJson({ ok: false, error: '文件名不合法' }, 400); return; }
+              let buf;
+              try { buf = fs.readFileSync(trashPath({ stateDir: STATE_DIR, source, trashName })); } catch { sendJson({ ok: false, error: '文件不存在' }, 404); return; }
+              const mime = /\.png$/i.test(trashName) ? 'image/png' : /\.webp$/i.test(trashName) ? 'image/webp' : /\.gif$/i.test(trashName) ? 'image/gif' : 'image/jpeg';
+              res.writeHead(200, { 'content-type': mime, 'content-length': String(buf.length), 'Cache-Control': 'private, max-age=60', 'X-Content-Type-Options': 'nosniff' });
+              res.end(buf);
+              return;
+            }
+            if (req.method === 'POST' && action === 'trash-restore') {
+              const body = await readBody();
+              const r = restoreTrash({ stateDir: STATE_DIR, root: process.cwd(), source: String(body.source ?? ''), trashName: String(body.trashName ?? '') });
+              sendJson(r.ok ? { ok: true, file: r.file } : { ok: false, error: r.error }, r.ok ? 200 : 400);
+              return;
+            }
+            if (req.method === 'POST' && action === 'trash-purge') {
+              const body = await readBody();
+              const r = purgeTrash({ stateDir: STATE_DIR, source: String(body.source ?? ''), trashName: String(body.trashName ?? '') });
+              sendJson(r.ok ? { ok: true } : { ok: false, error: r.error }, r.ok ? 200 : 400);
+              return;
+            }
+            if (req.method === 'POST' && action === 'trash-empty') {
+              const body = await readBody();
+              const r = emptyTrash({ stateDir: STATE_DIR, source: String(body.source ?? '') });
+              sendJson({ ok: true, removed: r.removed });
+              return;
+            }
+            // 批量删除：网格里勾选多张一次删（全部进回收站）
+            if (req.method === 'POST' && action === 'delete-batch') {
+              const body = await readBody();
+              const list = Array.isArray(body.items) ? body.items.slice(0, 500) : [];
+              let removed = 0;
+              const failed = [];
+              for (const it of list) {
+                const source = String(it?.source ?? '');
+                const file = String(it?.file ?? '');
+                const def = ALBUM_SOURCES.find((d) => d.id === source);
+                if (!def || !isAlbumImageName(file)) { failed.push({ source, file, error: '参数不合法' }); continue; }
+                const dir = path.resolve(def.dir(albumCtx));
+                const abs = path.resolve(dir, file);
+                if (!abs.startsWith(dir + path.sep)) { failed.push({ source, file, error: '路径不合法' }); continue; }
+                const trashDir = path.join(STATE_DIR, 'album-trash', source);
+                fs.mkdirSync(trashDir, { recursive: true });
+                try { fs.renameSync(abs, path.join(trashDir, `${Date.now()}-${file}`)); removed += 1; }
+                catch (error) { failed.push({ source, file, error: String(error?.message ?? error) }); }
+              }
+              sendJson({ ok: true, removed, failed });
               return;
             }
             if (req.method === 'POST' && action === 'rescan') {

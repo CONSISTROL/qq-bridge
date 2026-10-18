@@ -7,7 +7,11 @@
 <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
   <select id="albumSource"></select>
   <input id="albumSearch" type="search" placeholder="搜备注/标签/文件名…" style="min-width:220px">
-  <button id="albumRescan" class="btn">重扫</button>
+  <button id="albumRescan" class="btn" type="button">重扫</button>
+  <button id="albumSelectAll" class="btn" type="button">全选本页</button>
+  <button id="albumDeleteSel" class="danger" type="button">删除选中</button>
+  <button id="albumTrashBtn" class="btn" type="button">回收站</button>
+  <span id="albumSelInfo" class="muted"></span>
   <span id="albumStats" class="muted"></span>
   <span id="albumMsg" class="msg"></span>
 </div>
@@ -61,3 +65,30 @@
   .album-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
   @media (max-width: 760px) { .album-modal-body { grid-template-columns: 1fr; } }
 </style>
+<!-- 回收站：查看 / 还原 / 彻底删除 / 清空 -->
+<div id="albumTrashModal" class="album-modal" style="display:none">
+  <div class="album-modal-box" style="width:min(900px,96vw)">
+    <div class="album-modal-head">
+      <span class="album-modal-title">回收站（删除的图先放这里，可还原）</span>
+      <span class="row" style="gap:8px">
+        <button id="albumTrashEmpty" class="danger" type="button">清空回收站</button>
+        <button id="albumTrashClose" class="btn" type="button">关闭</button>
+      </span>
+    </div>
+    <div class="album-modal-body" style="grid-template-columns:1fr">
+      <div id="albumTrashMsg" class="msg"></div>
+      <div id="albumTrashList" class="album-trash-list"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .album-trash-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .album-trash-card { border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: var(--panel); }
+  .album-trash-card img { width: 100%; height: 100px; object-fit: cover; border-radius: 6px; background: #16181d; display: block; }
+  .album-trash-card .meta { font-size: 11px; color: var(--muted); margin: 4px 0; word-break: break-all; }
+  .album-card { position: relative; }
+  .album-pick { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; z-index: 2; cursor: pointer; }
+  .album-card.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+</style>
+
