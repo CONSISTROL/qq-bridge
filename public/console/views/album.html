@@ -1,0 +1,25 @@
+<div class="view-head">
+  <h2>相册</h2>
+  <p class="muted">所有图片统一入口：<b>聊天收到的图</b>（谁在群里/私聊发的）、<b>AI 发出的图</b>、<b>本地图库</b>、<b>pixiv 抓取</b>、<b>视频帧</b>。<br>
+    每张图带元数据：<b>添加时间</b>、<b>来源</b>、<b>备注/标签</b>（点卡片编辑；备注存在 <code>state/album-meta.json</code>，重扫不丢）。右键删除＝进回收站。</p>
+</div>
+
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+  <select id="albumSource"></select>
+  <input id="albumSearch" type="search" placeholder="搜备注/标签/文件名…" style="min-width:220px">
+  <button id="albumRescan" class="btn">重扫</button>
+  <span id="albumStats" class="muted"></span>
+  <span id="albumMsg" class="msg"></span>
+</div>
+
+<div id="albumGrid" class="album-grid"></div>
+
+<style>
+  .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+  .album-card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--panel); }
+  .album-card:hover { border-color: var(--accent); }
+  .album-card img { width: 100%; height: 130px; object-fit: cover; display: block; background: #111; }
+  .album-meta { padding: 6px 8px; }
+  .album-notes { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .album-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+</style>

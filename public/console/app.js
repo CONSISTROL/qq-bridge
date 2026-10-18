@@ -9,20 +9,18 @@ import { startStatusPoll } from './core/status.js';
 import { $ } from './core/dom.js';
 
 import * as overview from './views/overview.js';
-import * as social1 from './views/social1.js';
 import * as social2 from './views/social2.js';
 import * as slang from './views/slang.js';
 import * as knowledge from './views/knowledge.js';
 import * as memory from './views/memory.js';
-import * as images from './views/images.js';
-import * as stickers from './views/stickers.js';
+import * as album from './views/album.js';
 import * as persona from './views/persona.js';
 import * as security from './views/security.js';
 import * as ops from './views/ops.js';
 import * as tools from './views/tools.js';
 import * as mc from './views/mc.js';
 
-const VIEWS = [overview, social1, social2, slang, knowledge, memory, images, stickers, persona, security, ops, tools, mc];
+const VIEWS = [overview, social2, slang, knowledge, memory, album, persona, security, ops, tools, mc];
 const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 

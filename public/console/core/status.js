@@ -8,10 +8,9 @@ import { every } from './poll.js';
 import { $ } from './dom.js';
 
 export const MODE_LABEL = {
-  chat: '聊天模式',
+  chat: '直连模式（自动转发）',
   'closed-agent': '封闭 Agent',
-  reserved: '一代仿真模式',
-  reserved2: '二代仿真模式'
+  reserved2: '聊天模式'
 };
 
 let latest = null;

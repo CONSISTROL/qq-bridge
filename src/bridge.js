@@ -19,6 +19,7 @@ import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, validateFetchUrl } from './safe-fetch.js';
 import { classifyFile, extractFileContent } from './file-extract.js';
+import { ALBUM_SOURCES, ALBUM_META_FILE, collectAlbumItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId } from './album.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -721,6 +722,11 @@ function loadConfig() {
           libraryMaxRatio: 2.0,        // 图库候选的长宽比上限（挡手机长截图）
           libraryMaxBytes: 3 * 1024 * 1024
         }
+      },
+      // 相册：聊天里 AI 看过的图会落一份到 state/album-inbox，和本地图库/pixiv/视频帧/发送记录
+      // 一起进控制台的「相册」（元数据在 state/album-meta.json）。关掉就不落盘，只临时读。
+      album: {
+        enabled: true
       },
       // 语音合成（发语音条）：文本 → edge-tts → RVC 变声（默认 aiyi 音色）→ QQ record 段。
       // 服务跑在 tzd（RVC + torch + 模型都在那台 8 核机器上），协议见 scripts/tts-server.py。
@@ -10671,6 +10677,86 @@ const agentTokenOk = (key, token) => {
             return;
           }
         }
+        // ── 相册（仅控制台可用）────────────────────────────────────
+        // 统一图片索引：聊天收到的图 / AI 发出的图 / 本地图库 / pixiv 抓取 / 视频帧，
+        // 元数据（添加时间、来源、备注、标签）落在 state/album-meta.json。
+        if (url.pathname === '/api/album' || url.pathname.startsWith('/api/album/')) {
+          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+          const action = url.pathname === '/api/album' ? '' : url.pathname.slice('/api/album/'.length);
+          const metaFile = path.join(STATE_DIR, ALBUM_META_FILE);
+          const readMeta = () => {
+            const raw = readJsonSafe(metaFile, {});
+            return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+          };
+          const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
+          const itemsNow = () => collectAlbumItems({ ctx: albumCtx, meta: readMeta() });
+          try {
+            // 预览/下载：只允许相册来源目录里的文件（防目录穿越）
+            if (req.method === 'GET' && action === 'file') {
+              const source = String(url.searchParams.get('source') ?? '').trim();
+              const name = String(url.searchParams.get('file') ?? '').trim();
+              const def = ALBUM_SOURCES.find((d) => d.id === source);
+              if (!def || !isAlbumImageName(name)) { sendJson({ ok: false, error: '来源或文件名不合法' }, 400); return; }
+              const dir = path.resolve(def.dir(albumCtx));
+              const abs = path.resolve(dir, name);
+              if (!abs.startsWith(dir + path.sep)) { sendJson({ ok: false, error: '路径不合法' }, 400); return; }
+              let buf;
+              try { buf = fs.readFileSync(abs); } catch { sendJson({ ok: false, error: '文件不存在' }, 404); return; }
+              const mime = /.png$/i.test(name) ? 'image/png' : /.webp$/i.test(name) ? 'image/webp' : /.gif$/i.test(name) ? 'image/gif' : 'image/jpeg';
+              res.writeHead(200, { 'content-type': mime, 'content-length': String(buf.length), 'Cache-Control': 'private, max-age=60', 'X-Content-Type-Options': 'nosniff' });
+              res.end(buf);
+              return;
+            }
+            if (req.method === 'GET' && (action === '' || action === 'list')) {
+              const source = String(url.searchParams.get('source') ?? '').trim();
+              const q = String(url.searchParams.get('q') ?? '').trim().toLowerCase();
+              let items = itemsNow();
+              if (source) items = items.filter((it) => it.source === source);
+              if (q) items = items.filter((it) => (`${it.notes} ${(it.tags || []).join(' ')} ${it.file}`).toLowerCase().includes(q));
+              sendJson({ ok: true, sources: ALBUM_SOURCES.map((d) => ({ id: d.id, label: d.label })), stats: albumStats(items), items });
+              return;
+            }
+            if (req.method === 'PATCH' && (action === '' || action === 'item')) {
+              const body = await readBody();
+              const source = String(body.source ?? '').trim();
+              const file = String(body.file ?? '').trim();
+              if (!ALBUM_SOURCES.some((d) => d.id === source) || !file) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
+              const id = itemId(source, file);
+              const next = updateAlbumMeta(readMeta(), id, { notes: body.notes, tags: body.tags });
+              atomicWriteJson(metaFile, next);
+              const item = collectAlbumItems({ ctx: albumCtx, meta: next }).find((it) => it.id === id) || null;
+              sendJson({ ok: true, id, item });
+              return;
+            }
+            if (req.method === 'POST' && action === 'delete') {
+              const body = await readBody();
+              const source = String(body.source ?? '').trim();
+              const file = String(body.file ?? '').trim();
+              const def = ALBUM_SOURCES.find((d) => d.id === source);
+              if (!def || !isAlbumImageName(file)) { sendJson({ ok: false, error: 'source/file 不合法' }, 400); return; }
+              const dir = path.resolve(def.dir(albumCtx));
+              const abs = path.resolve(dir, file);
+              if (!abs.startsWith(dir + path.sep)) { sendJson({ ok: false, error: '路径不合法' }, 400); return; }
+              // 不直接抹盘：挪进回收站目录，能手动还原
+              const trashDir = path.join(STATE_DIR, 'album-trash', source);
+              fs.mkdirSync(trashDir, { recursive: true });
+              try { fs.renameSync(abs, path.join(trashDir, `${Date.now()}-${file}`)); } catch (error) { sendJson({ ok: false, error: `删除失败：${error?.message ?? error}` }, 500); return; }
+              const next = updateAlbumMeta(readMeta(), itemId(source, file), { notes: '', tags: [] });
+              atomicWriteJson(metaFile, next);
+              sendJson({ ok: true, id: itemId(source, file), trashedTo: trashDir });
+              return;
+            }
+            if (req.method === 'POST' && action === 'rescan') {
+              const items = itemsNow();
+              sendJson({ ok: true, ...albumStats(items) });
+              return;
+            }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) {
+            sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
+          }
+          return;
+        }
         // ── AI 图片管理端点（仅控制台可用）──────────────────────────────────
         // 管的是「AI 从网上抓下来落盘的图片」：本地图库 / pixiv 样图 / B站帧缓存。
         // 删除一律进回收站（state/image-trash/<批次>/），能整批或逐张还原，也可彻底清空；
@@ -10949,6 +11035,24 @@ const agentTokenOk = (key, token) => {
           const loaded = Math.min(pageSize, Math.max(0, total - imageOffset));
           const hasMore = imageOffset + loaded < total;
           const nextOffset = Math.min(total, imageOffset + loaded);
+          // 相册：把这次读到的图落一份到 state/album-inbox（来源＝聊天），控制台统一管理。
+          // 以前这些图只下载到临时目录、看完就删；现在相册里能翻到「谁在哪条消息里发的」。
+          if (cfg.socialV2?.album?.enabled !== false && images.length) {
+            try {
+              const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
+              for (const img of images) {
+                const b64 = String(img?.data ?? '');
+                if (!b64) continue;
+                const buf = Buffer.from(b64, 'base64');
+                if (!buf.length) continue;
+                const mime = String(img?.mimeType ?? 'image/jpeg');
+                const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : 'jpg';
+                saveChatImage({ ctx: albumCtx, buffer: buf, name: `${key.replace(':', '-')}-${messageId}-${img?.index ?? 0}.${ext}` });
+              }
+            } catch (error) {
+              log(`[album] 存聊天图失败：${error?.message ?? error}`);
+            }
+          }
           sendJson({
             ok: true, messageId, media, images, total, offset: imageOffset, hasMore,
             ...(hasMore ? { note: `本条消息共 ${total} 个图片/表情，本次给了第 ${imageOffset + 1}~${nextOffset} 个；要看后面的，再调用一次并传 imageOffset=${nextOffset}。` } : {}),

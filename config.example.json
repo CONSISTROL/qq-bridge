@@ -441,6 +441,9 @@
       "maxChars": 0,
       "cooldownMs": 0,
       "timeoutMs": 180000
+    },
+    "album": {
+      "enabled": true
     }
   },
   "moderation": {

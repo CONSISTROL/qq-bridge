@@ -18,6 +18,8 @@ const tests = [
   'test-speech-style.mjs',
   // 机器人资料的纯逻辑（内容校验/广告识别/变更历史/回滚取值）
   'test-self-profile.mjs',
+  // 相册：统一索引 + 元数据（备注/标签/来源/添加时间）
+  'test-album.mjs',
   // 表情包时机判定与选图（含严肃语境门、行动导向提示、一步发送指引）
   'test-sticker-picker.mjs',
   // 聊天文件读取（PDF → 文本；扫描件 → 渲染页面图）的纯逻辑 + 真 poppler 集成

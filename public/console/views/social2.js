@@ -1,4 +1,4 @@
-// 二代仿真模式（reserved2）控制台：07 全部内容
+// 聊天模式（reserved2）控制台：07 全部内容
 //
 // 这个分区内容最多（参数、工具开关、工具调用日志、轻量记忆、唤醒状态、会话状态、
 // 工具级配置弹窗）。相对旧实现的两处结构性改动：
@@ -12,7 +12,7 @@ import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
 
 export const id = 'social2';
-export const title = '二代仿真模式';
+export const title = '聊天模式';
 export const desc = 'AI 工具开关、唤醒/发送/等待参数、工具日志、轻量记忆、工具级配置';
 export const icon = '🤖';
 export const group = '仿真';
@@ -909,7 +909,7 @@ export async function mount(root) {
   // 基线要在表单填好之后建，否则「刚加载出来的值」会被当成用户改动
   const dirty = trackDirty(view, {
     selector: MANUAL_SELECTOR,
-    label: '二代参数',
+    label: '聊天模式参数',
     onChange: (n) => {
       $('#v2DirtyHint', view).textContent = n ? `● 有 ${n} 项未保存` : '';
       $('#v2ConfigSave', view).classList.toggle('dirty', n > 0);
@@ -949,9 +949,9 @@ export async function mount(root) {
     refreshActivity();
   });
   $('#v2ResetBtn', view).addEventListener('click', async () => {
-    if (!confirmDanger('确定重置二代 AI 状态？\n将清空所有二代会话、唤醒配置、未读消息和定时器；工具调用日志会保留。')) return;
+    if (!confirmDanger('确定重置聊天模式 AI 状态？\n将清空所有聊天会话、唤醒配置、未读消息和定时器；工具调用日志会保留。')) return;
     const r = await api('/api/socialV2/reset', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
-    setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已重置二代状态' : ('❌ ' + (r.error || '失败')), r.ok);
+    setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已重置聊天模式状态' : ('❌ ' + (r.error || '失败')), r.ok);
     $('#v2AllStatesOutput', view).textContent = '（全部会话状态：空）';
     $('#v2StateOutput', view).textContent = '（空）';
     refreshActivity();
