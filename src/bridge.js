@@ -10815,7 +10815,7 @@ const agentTokenOk = (key, token) => {
               else reason = JSON.stringify(r).slice(0, 120);
             } catch (error) { reason = String(error?.message ?? error).slice(0, 120); }
             if (ok) { recordSentMessagesV2(key, [`[${kind === 'video' ? '视频' : '音频'}] ${title || mediaUrl}`]); log(`[media] 已发${kind === 'video' ? '视频' : '音频'} ${key}（${Math.round(got.bytes / 1024)}KB）`); sendJson({ ok: true, key, messageId: mid, kind, bytes: got.bytes, fallback: false }); return; }
-            // 媒体段发不出去 → 降级成标题+链接
+            // 视频段/语音段都已实测可用（retcode 0）；这里只在**真失败**时降级成标题+链接
             log(`[media] ${kind} 段发送失败（${reason}），降级为文本链接`);
             const mid2 = await sendText();
             sendJson({ ok: true, key, messageId: mid2, kind, fallback: true, note: `媒体段发不出去（${reason}），已降级为标题+链接` });
