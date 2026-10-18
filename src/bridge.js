@@ -22,6 +22,7 @@ import { classifyFile, extractFileContent } from './file-extract.js';
 import { ALBUM_SOURCES, ALBUM_META_FILE, STICKER_SOURCE, collectAlbumItems, collectStickerItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId, listTrash, restoreTrash, purgeTrash, emptyTrash, trashPath } from './album.js';
 import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
+import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -10740,6 +10741,66 @@ const agentTokenOk = (key, token) => {
             sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
             return;
           }
+        }
+        // ── 语音包（控制台「语料 → 语音包」）────────────────────────
+        // 目标音色的参考音频都收在这里；可以从 B站视频直接抽一段音频加进去。
+        if (url.pathname === '/api/voice-packs' || url.pathname.startsWith('/api/voice-packs/')) {
+          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+          const action = url.pathname === '/api/voice-packs' ? '' : url.pathname.slice('/api/voice-packs/'.length);
+          try {
+            if (req.method === 'GET' && action === 'file') {
+              const abs = clipPath({ stateDir: STATE_DIR, id: url.searchParams.get('pack'), file: url.searchParams.get('file') });
+              if (!abs) { sendJson({ ok: false, error: '参数不合法' }, 400); return; }
+              let buf; try { buf = fs.readFileSync(abs); } catch { sendJson({ ok: false, error: '文件不存在' }, 404); return; }
+              const mime = /\.mp3$/i.test(abs) ? 'audio/mpeg' : /\.m4a$/i.test(abs) ? 'audio/mp4' : /\.ogg$/i.test(abs) ? 'audio/ogg' : 'audio/wav';
+              res.writeHead(200, { 'content-type': mime, 'content-length': String(buf.length), 'Cache-Control': 'private, max-age=60' });
+              res.end(buf); return;
+            }
+            if (req.method === 'GET') { sendJson({ ok: true, packs: listPacks({ stateDir: STATE_DIR }) }); return; }
+            const body = await readBody();
+            if (action === 'create') {
+              const r = createPack({ stateDir: STATE_DIR, name: body.name, id: body.id, notes: body.notes, engine: body.engine });
+              sendJson(r.ok ? { ok: true, id: r.id } : { ok: false, error: r.error }, r.ok ? 200 : 400); return;
+            }
+            if (action === 'remove') { sendJson(removePack({ stateDir: STATE_DIR, id: body.pack })); return; }
+            if (action === 'remove-clip') { sendJson(removeClip({ stateDir: STATE_DIR, id: body.pack, file: body.file })); return; }
+            if (action === 'add-bili') {
+              // bvid/url → cid → dash 音频直链 → 下载 → ffmpeg 转 16k 单声道 wav
+              const raw = String(body.bvid || body.url || '').trim();
+              const bvid = (/BV[0-9A-Za-z]{10}/.exec(raw) || [])[0];
+              if (!bvid) { sendJson({ ok: false, error: '请给 B站视频的 bvid 或链接（形如 BV1xx411c7mD）' }, 400); return; }
+              const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36';
+              const pg = await fetch(`https://api.bilibili.com/x/player/pagelist?bvid=${bvid}`, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com' } }).then((r) => r.json()).catch(() => null);
+              const cid = pg?.data?.[0]?.cid;
+              if (!cid) { sendJson({ ok: false, error: '拿不到该视频的分P信息（视频不存在或接口被限流）' }, 400); return; }
+              const pu = await fetch(`https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com' } }).then((r) => r.json()).catch(() => null);
+              const auds = (pu?.data?.dash?.audio || []).slice().sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0));
+              if (!auds.length) { sendJson({ ok: false, error: '这个视频没有可下载的音轨' }, 400); return; }
+              const src = auds[0].baseUrl;
+              const ab = await fetch(src, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com' } });
+              if (!ab.ok) { sendJson({ ok: false, error: `下载音轨失败（HTTP ${ab.status}）` }, 502); return; }
+              const rawAudio = Buffer.from(await ab.arrayBuffer());
+              const ffmpeg = await resolveFfmpegPath();
+              if (!ffmpeg) { sendJson({ ok: false, error: '本机没有 ffmpeg，转不了音频' }, 500); return; }
+              const tmp = path.join(STATE_DIR, `voice-${Date.now()}.m4a`);
+              fs.writeFileSync(tmp, rawAudio);
+              const wav = path.join(STATE_DIR, `voice-${Date.now()}.wav`);
+              const startSec = Math.max(0, Number(body.startSec) || 0);
+              const durSec = Math.max(1, Math.min(600, Number(body.durationSec) || 30));
+              const ok = await new Promise((resolve) => {
+                const child = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(startSec), '-t', String(durSec), '-i', tmp, '-vn', '-ac', '1', '-ar', '16000', wav]);
+                child.on('close', (code) => resolve(code === 0)); child.on('error', () => resolve(false));
+              });
+              try { fs.unlinkSync(tmp); } catch { /* 清理失败无所谓 */ }
+              if (!ok) { try { fs.unlinkSync(wav); } catch { /* 忽略 */ } sendJson({ ok: false, error: 'ffmpeg 转码失败' }, 500); return; }
+              const buf = fs.readFileSync(wav); try { fs.unlinkSync(wav); } catch { /* 忽略 */ }
+              const r = addClip({ stateDir: STATE_DIR, id: body.pack, buffer: buf, ext: 'wav', label: `${bvid}-${startSec}s` });
+              sendJson(r.ok ? { ok: true, ...r, pack: body.pack } : { ok: false, error: r.error }, r.ok ? 200 : 400);
+              return;
+            }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
         }
         // ── 记忆 API（AI 工具与控制台共用）───────────────────────────
         // 一个端点四种 op：查原文归档 / 存日记 / 列日记 / 召回（日记命中 + 原文锚点）。

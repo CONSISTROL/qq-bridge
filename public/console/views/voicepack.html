@@ -1,0 +1,30 @@
+<div class="view-head">
+  <h2>语音包</h2>
+  <p class="muted">目标音色的<b>参考音频</b>：建一个包，然后从 B站视频里抽一段加进来（16k 单声道 wav，RVC 训练/变声都能直接用）。</p>
+</div>
+
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+  <input id="vpName" placeholder="新包名字（如：爱音）" style="width:160px">
+  <input id="vpNotes" placeholder="说明（可选）" style="width:200px">
+  <button id="vpCreate" class="btn" type="button">建包</button>
+</div>
+
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+  <select id="vpPackSel"></select>
+  <input id="vpBvid" placeholder="B站 bvid 或链接（BV1xx411c7mD）" style="width:280px">
+  <input id="vpStart" type="number" value="0" min="0" placeholder="起始秒" style="width:90px">
+  <input id="vpDur" type="number" value="30" min="1" max="600" placeholder="时长秒" style="width:90px">
+  <button id="vpAddBili" class="btn" type="button">从 B站抽音频</button>
+  <span id="vpMsg" class="msg"></span>
+</div>
+
+<div id="vpList" class="vp-list"></div>
+
+<style>
+  .vp-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .vp-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel); }
+  .vp-head { display: flex; gap: 8px; align-items: baseline; }
+  .vp-clips { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .vp-clip { display: grid; grid-template-columns: 1fr 260px 40px; gap: 8px; align-items: center; }
+  .vp-clip audio { width: 100%; height: 28px; }
+</style>
