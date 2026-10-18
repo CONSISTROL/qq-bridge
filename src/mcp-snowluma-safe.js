@@ -1209,6 +1209,57 @@ defineTool(
   }
 );
 
+// ── 分享音乐 / 视频 ────────────────────────────────────────────────────────
+defineTool(
+  'qq_send_music',
+  '分享一首歌：给音频直链（mp3/m4a 等）和标题，桥接下载后作为**语音条**发出去（≤60 秒的片段最合适）；'
+    + '太长或发不出去时会自动降级成「标题 + 链接」文本，不会失败。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    url: z.string().describe('音频公网直链（http(s)）'),
+    title: z.string().optional().describe('歌名/说明（可选，会一起发出去）')
+  },
+  async ({ key, token, url: mediaUrl, title }) => {
+    try {
+      const data = await agentApi('/api/socialV2/send-media', {
+        method: 'POST',
+        body: JSON.stringify({ key, kind: 'music', url: mediaUrl, title: title || '' }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 120000
+      });
+      return { content: [{ type: 'text', text: data.fallback ? `已发链接（${data.note}）` : `已分享音频（${Math.round((data.bytes || 0) / 1024)}KB）` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `分享音乐失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+defineTool(
+  'qq_send_video',
+  '分享一个视频：给视频公网直链和标题，桥接下载后尝试作为**视频段**发出去；'
+    + '网关不支持时自动降级成「标题 + 链接」文本（一定发得出去）。大文件慢，注意别刷屏。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    url: z.string().describe('视频公网直链（http(s)）'),
+    title: z.string().optional().describe('视频标题/说明（可选）')
+  },
+  async ({ key, token, url: mediaUrl, title }) => {
+    try {
+      const data = await agentApi('/api/socialV2/send-media', {
+        method: 'POST',
+        body: JSON.stringify({ key, kind: 'video', url: mediaUrl, title: title || '' }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 180000
+      });
+      return { content: [{ type: 'text', text: data.fallback ? `已发链接（${data.note}）` : `已分享视频（${Math.round((data.bytes || 0) / 1024)}KB）` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `分享视频失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
 // ── 插件（声明式）：列表 / 调用 ─────────────────────────────────────────────
 defineTool(
   'qq_plugin_list',

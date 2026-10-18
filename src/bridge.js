@@ -10778,6 +10778,54 @@ const agentTokenOk = (key, token) => {
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
+        // ── 分享音乐/视频：优先发媒体段，失败自动降级成「标题+链接」文本 ──────
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-media') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const kind = String(body.kind ?? 'music') === 'video' ? 'video' : 'music';
+          const mediaUrl = String(body.url ?? '').trim();
+          const title = String(body.title ?? '').slice(0, 80);
+          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
+          const km = /^(group|private):(\d+)$/.exec(key);
+          if (!km) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          if (!/^https?:\/\//i.test(mediaUrl)) { sendJson({ ok: false, error: 'url 必须是公网 http(s)' }, 400); return; }
+          if (agentToken && !agentTokenOk(key, agentToken) && !anyAgentTokenOk(agentToken)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const gid = Number(km[2]);
+          const textOf = () => (title ? `${title}\n${mediaUrl}` : mediaUrl);
+          const sendText = async () => {
+            const seg = [{ type: 'text', data: { text: textOf() } }];
+            const r = km[1] === 'group' ? await bot.raw('send_group_msg', { group_id: gid, message: seg }) : await bot.raw('send_private_msg', { user_id: gid, message: seg });
+            recordSentMessagesV2(key, [textOf()]);
+            return r?.data?.message_id ?? r?.message_id ?? null;
+          };
+          const tmp = path.join(STATE_DIR, `media-${Date.now()}.bin`);
+          try {
+            const got = await safeFetchToFile(mediaUrl, 20 * 1024 * 1024, tmp, { timeoutMs: 60000 });
+            const b64 = fs.readFileSync(tmp).toString('base64');
+            const segs = kind === 'video'
+              ? [{ type: 'video', data: { file: 'base64://' + b64 } }]
+              : [{ type: 'record', data: { file: 'base64://' + b64 } }];
+            let ok = false, mid = null, reason = '';
+            try {
+              const r = km[1] === 'group' ? await bot.raw('send_group_msg', { group_id: gid, message: segs }) : await bot.raw('send_private_msg', { user_id: gid, message: segs });
+              // 注意 bot.raw() 返回的是 OneBot 的 **data 字段本身**（{message_id}），不是整包响应；
+              // 只认 data.message_id 会把成功误判成失败，接着又补发一条文本（线上真事）。
+              const gotMid = r?.message_id ?? r?.data?.message_id ?? null;
+              if (gotMid != null || r?.status === 'ok') { ok = true; mid = gotMid; }
+              else reason = JSON.stringify(r).slice(0, 120);
+            } catch (error) { reason = String(error?.message ?? error).slice(0, 120); }
+            if (ok) { recordSentMessagesV2(key, [`[${kind === 'video' ? '视频' : '音频'}] ${title || mediaUrl}`]); log(`[media] 已发${kind === 'video' ? '视频' : '音频'} ${key}（${Math.round(got.bytes / 1024)}KB）`); sendJson({ ok: true, key, messageId: mid, kind, bytes: got.bytes, fallback: false }); return; }
+            // 媒体段发不出去 → 降级成标题+链接
+            log(`[media] ${kind} 段发送失败（${reason}），降级为文本链接`);
+            const mid2 = await sendText();
+            sendJson({ ok: true, key, messageId: mid2, kind, fallback: true, note: `媒体段发不出去（${reason}），已降级为标题+链接` });
+            return;
+          } catch (error) {
+            try { const mid3 = await sendText(); sendJson({ ok: true, key, messageId: mid3, kind, fallback: true, note: `下载/发送失败（${String(error?.message ?? error).slice(0, 80)}），已降级为标题+链接` }); }
+            catch (e2) { sendJson({ ok: false, error: `分享失败：${String(e2?.message ?? e2)}` }, 500); }
+            return;
+          } finally { try { fs.unlinkSync(tmp); } catch { /* 忽略 */ } }
+        }
         // ── 插件（声明式）：控制台列表 + AI 侧遍历/调用 ─────────────
         if (url.pathname === '/api/plugins' || url.pathname.startsWith('/api/plugins/')) {
           const action = url.pathname === '/api/plugins' ? '' : url.pathname.slice('/api/plugins/'.length);
