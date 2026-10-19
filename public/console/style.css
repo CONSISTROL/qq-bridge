@@ -532,3 +532,11 @@
     border: 1px solid var(--card-border);
     flex: 0 0 auto;
   }
+
+/* 聊天模式 → 插件（插件 → 能力）：按插件分组的能力开关 */
+.v2-plugins { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.v2-plugin { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+.v2-plugin.off { opacity: .55; }
+.v2-plugin-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.v2-cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 12px; margin-top: 6px; }
+.v2-cap { display: flex; align-items: center; gap: 6px; font-size: 12px; }

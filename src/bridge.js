@@ -24,6 +24,7 @@ import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchive
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
+import { capabilityEnabled, migrateLegacyTools, pluginCatalog } from './capabilities.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -5414,7 +5415,12 @@ const agentTokenOk = (key, token) => {
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
-    const v2ToolEnabled = (flag) => cfg.socialV2?.tools?.[flag] !== false;
+    // 插件→能力：新的开关结构在 config.socialV2.plugins；没有就回退到旧的扁平 tools 表。
+    const v2ToolEnabled = (flag) => {
+      const plugins = cfg.socialV2?.plugins;
+      if (plugins && typeof plugins === 'object') return capabilityEnabled(plugins, flag);
+      return cfg.socialV2?.tools?.[flag] !== false;
+    };
     const server = http.createServer(async (req, res) => {
       let url;
       try { url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`); }
@@ -7325,6 +7331,55 @@ const agentTokenOk = (key, token) => {
             scheduleWakeV2(key, 'unseenBacklog');
           }
           return;
+        }
+        // 插件→能力：控制台的「聊天模式 → 插件」用它渲染与开关
+        if (url.pathname === '/api/socialV2/plugins') {
+          if (!cfg.socialV2) cfg.socialV2 = {};
+          if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') {
+            cfg.socialV2.plugins = migrateLegacyTools(cfg.socialV2.tools || {});
+            saveConfig();
+          }
+          if (req.method === 'GET') {
+            sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins), raw: cfg.socialV2.plugins });
+            return;
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const pid = String(body.plugin ?? '').trim();
+            const cid = String(body.capability ?? '').trim();
+            const on = body.enabled !== false;
+            if (String(body.bulk ?? '') === 'all') {
+              // 批量：全部插件开/关；开启时跳过需要人工确认的高危能力（能力表里 default 即"默认关"的那些）
+              const { PLUGINS } = await import('./capabilities.js');
+              for (const pl of PLUGINS) {
+                const cur0 = cfg.socialV2.plugins[pl.id] || {};
+                cur0.enabled = on;
+                cur0.capabilities = cur0.capabilities && typeof cur0.capabilities === 'object' ? cur0.capabilities : {};
+                for (const c of pl.capabilities) {
+                  const isOptIn = c.default !== true && (c.id === 'sendCard' || c.id === 'setStickerRemark' || c.id === 'setMemberCard' || c.id === 'setProfile' || c.id === 'phoneExec' || c.id === 'phoneTap' || c.id === 'phoneSwipe' || c.id === 'phoneKey');
+                  cur0.capabilities[c.id] = on ? (isOptIn ? false : true) : false;
+                }
+                cfg.socialV2.plugins[pl.id] = cur0;
+              }
+              saveConfig();
+              sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
+              return;
+            }
+            const cur = cfg.socialV2.plugins[pid];
+            if (!cur || typeof cur !== 'object') { sendJson({ ok: false, error: '没有这个插件' }, 404); return; }
+            if (cid) {
+              if (!cur.capabilities || typeof cur.capabilities !== 'object') cur.capabilities = {};
+              cur.capabilities[cid] = on;
+              // 单独开某个能力时，把插件本身也打开（否则开了也没用）
+              if (on) cur.enabled = true;
+            } else {
+              cur.enabled = on;
+            }
+            saveConfig();
+            log(`[plugin] ${pid}${cid ? '/' + cid : ''} → ${on ? '开' : '关'}`);
+            sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
+            return;
+          }
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/wake-config') {
           const body = await readBody();
@@ -17874,6 +17929,16 @@ const agentTokenOk = (key, token) => {
   startDshWatch();
   startDiaryScheduler();
   startPluginJobs();
+  // 一次性迁移：旧 socialV2.tools（扁平 47 个开关）→ socialV2.plugins（插件→能力）。
+  try {
+    if (!cfg.socialV2) cfg.socialV2 = {};
+    if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') {
+      const migrated = migrateLegacyTools(cfg.socialV2.tools || {});
+      cfg.socialV2.plugins = migrated;
+      saveConfig();
+      log('[config] 已把旧 tools 开关迁移为 plugins（插件→能力）结构');
+    }
+  } catch (error) { log('迁移插件配置失败：' + (error?.message ?? error)); }
   // PDF 能力自检：poppler-utils 缺失时提前在日志里说明（否则只会在用户点开 PDF 时才炸）。
   try {
     // 注意：这是 ESM 模块，没有 require（用了会一直误报"缺少 poppler"）；用已导入的 spawnSync。

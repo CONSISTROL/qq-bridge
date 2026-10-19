@@ -191,9 +191,8 @@ function readForm(view) {
     if (f.unit && f.unit !== 1) setPath(body, f.path, Math.round(n * f.unit));
     else setPath(body, f.path, fractional ? Math.round(n * 100) / 100 : n);
   }
-  const tools = {};
-  for (const el of $$('[data-v2-tool]', view)) tools[el.dataset.v2Tool] = el.checked;
-  body.tools = tools;
+  // 工具开关已改成「插件 → 能力」（/api/socialV2/plugins 即时保存），这里不再收集旧的扁平 tools，
+  // 否则会用空表覆盖掉旧配置。
   return body;
 }
 
@@ -771,20 +770,11 @@ export async function mount(root) {
   const saveToolSwitch = (el) => saveSwitch(el, { tools: { [el.dataset.v2Tool]: el.checked } });
 
   const setAllTools = async (enabled) => {
-    const tools = {};
-    const boxes = $$('[data-v2-tool]', view);
-    for (const el of boxes) {
-      // 「全部开启」不该顺手打开默认关闭的高危工具（真·QQ 写操作）：这类只能一个个手动开。
-      if (enabled && OPT_IN_TOOLS.has(el.dataset.v2Tool)) continue;
-      tools[el.dataset.v2Tool] = enabled;
-    }
-    for (const el of boxes) el.classList.add('saving');
-    const r = await api('/api/socialV2/config', 'POST', { tools }).catch((e) => ({ ok: false, error: e.message }));
-    for (const el of boxes) el.classList.remove('saving');
-    if (!r.ok) { toast(r.error || '保存失败', 'err'); return; }
-    for (const el of boxes) el.checked = enabled;
-    if (r.config) state.config = r.config;
-    toast(enabled ? '已启用全部工具' : '已禁用全部工具', 'ok');
+    // 插件→能力：全部开/关走插件接口；高危能力（OPT_IN_TOOLS 映射到能力 id）不随"全部开启"打开。
+    const r = await api('/api/socialV2/plugins', 'POST', { bulk: 'all', enabled, skipOptIn: enabled }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { toast((r && r.error) || '保存失败', 'err'); return; }
+    renderPlugins(r.plugins || []);
+    toast(enabled ? '已启用全部插件能力' : '已禁用全部插件能力', 'ok');
   };
 
   const loadToolLog = async () => {
@@ -928,6 +918,53 @@ export async function mount(root) {
     setPath(patch, field.path, el.checked);
     saveSwitch(el, patch);
   });
+  // ── 插件 → 能力 ─────────────────────────────────────────────
+  // 工具开关不再是 47 个散装复选框，而是按插件分组：插件整组开关 + 组内每个能力单独开关。
+  const renderPlugins = (plugins) => {
+    const box = $('#v2Plugins', view);
+    if (!box) return;
+    box.textContent = '';
+    for (const p of plugins) {
+      const card = document.createElement('div');
+      card.className = 'v2-plugin' + (p.enabled ? '' : ' off');
+      const head = document.createElement('div');
+      head.className = 'v2-plugin-head';
+      const capOn = p.capabilities.filter((c) => c.enabled).length;
+      head.innerHTML = `<b>${p.icon || ''} ${p.name}</b> <span class="meta">${capOn}/${p.capabilities.length} 项</span>`;
+      const sw = document.createElement('input');
+      sw.type = 'checkbox'; sw.className = 'switch'; sw.checked = p.enabled;
+      sw.addEventListener('change', () => setPlugin(p.id, null, sw.checked));
+      head.append(sw);
+      const desc = document.createElement('div');
+      desc.className = 'meta';
+      desc.textContent = p.desc || '';
+      const grid = document.createElement('div');
+      grid.className = 'v2-cap-grid';
+      for (const c of p.capabilities) {
+        const lab = document.createElement('label');
+        lab.className = 'v2-cap';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'switch'; cb.checked = c.enabled;
+        cb.addEventListener('change', () => setPlugin(p.id, c.id, cb.checked));
+        lab.append(cb, document.createTextNode(' ' + c.label));
+        grid.append(lab);
+      }
+      card.append(head, desc, grid);
+      box.append(card);
+    }
+  };
+  const loadPlugins = async () => {
+    const r = await api('/api/socialV2/plugins', 'GET').catch(() => null);
+    if (!r || !r.ok) { const box = $('#v2Plugins', view); if (box) box.innerHTML = '<div class="meta">插件清单加载失败</div>'; return []; }
+    renderPlugins(r.plugins || []);
+    return r.plugins || [];
+  };
+  const setPlugin = async (plugin, capability, enabled) => {
+    const r = await api('/api/socialV2/plugins', 'POST', { plugin, capability: capability || '', enabled }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) toast('❌ ' + ((r && r.error) || '保存失败'), false);
+    renderPlugins((r && r.plugins) || await loadPlugins());
+  };
+  await loadPlugins();
   $('#v2ToolsAllOn', view).addEventListener('click', () => setAllTools(true));
   $('#v2ToolsAllOff', view).addEventListener('click', () => setAllTools(false));
 
