@@ -85,3 +85,33 @@ export function parseList(text) {
 export function joinList(list) {
   return (Array.isArray(list) ? list : []).join(', ');
 }
+
+/**
+ * 让 textarea 随内容自动长高（长文本不用在小框里滚来滚去）。
+ *
+ * 做法：全局接管——一个 input/change 监听 + 一个 MutationObserver（视图是动态渲染的，
+ * 只在挂载时扫一遍会漏掉后插入的框）。高度上限 70vh，超过才出现滚动条，
+ * 避免一屏提示词把整个页面顶没。
+ */
+export function autoGrowTextareas(doc = document, maxVh = 70) {
+  const resize = (el) => {
+    if (!(el instanceof HTMLTextAreaElement) || el.dataset.autogrow === 'off') return;
+    el.style.height = 'auto';
+    const max = Math.round((window.innerHeight || 800) * (maxVh / 100));
+    el.style.height = Math.min(el.scrollHeight + 2, max) + 'px';
+    el.style.overflowY = el.scrollHeight + 2 > max ? 'auto' : 'hidden';
+  };
+  const resizeAll = (root) => { for (const el of root.querySelectorAll('textarea')) resize(el); };
+  doc.addEventListener('input', (ev) => { if (ev.target instanceof HTMLTextAreaElement) resize(ev.target); }, true);
+  const mo = new MutationObserver((muts) => {
+    for (const m of muts) for (const node of m.addedNodes) {
+      if (!(node instanceof Element)) continue;
+      if (node instanceof HTMLTextAreaElement) resize(node);
+      else resizeAll(node);
+    }
+  });
+  mo.observe(doc.body, { childList: true, subtree: true });
+  window.addEventListener('resize', () => resizeAll(doc));
+  resizeAll(doc);
+  return () => { mo.disconnect(); };
+}

@@ -161,7 +161,8 @@
      否则一屏只能看到三四行，改长文本像在针眼里穿线。 */
   textarea {
     resize: vertical;
-    min-height: 160px;
+    min-height: 90px;   /* 下限：小的备注框别太矮；实际高度由 autoGrowTextareas 按内容撑开 */
+    max-height: 70vh;
     height: auto;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     font-size: 12.5px;
@@ -174,8 +175,7 @@
     overflow-y: auto;
   }
   /* 大屏时再高一点；小屏（手机）给 40vh，别一屏塞满 */
-  @media (min-width: 1100px) { textarea { min-height: 220px; } }
-  @media (max-width: 700px) { textarea { min-height: 40vh; } }
+  @media (max-width: 700px) { textarea { min-height: 120px; } }
   /* 聚焦时给个明确的状态，长文本最容易看不出"光标在哪" */
   textarea:focus, input[type=text]:focus, input[type=number]:focus, select:focus {
     outline: none;

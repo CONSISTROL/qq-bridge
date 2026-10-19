@@ -6,7 +6,7 @@ import { initTheme } from './core/theme.js';
 import { captureTokenFromUrl } from './core/api.js';
 import { defineView, getViews, startRouter } from './core/router.js';
 import { startStatusPoll } from './core/status.js';
-import { $ } from './core/dom.js';
+import { $, autoGrowTextareas } from './core/dom.js';
 
 import * as overview from './views/overview.js';
 import * as social2 from './views/social2.js';
@@ -27,6 +27,8 @@ const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统']
 const GROUP_FALLBACK = '系统';
 
 for (const view of VIEWS) defineView(view);
+// 长文本框自动随内容长高（长提示词/备注不用在小框里滚）
+autoGrowTextareas();
 
 function renderNav() {
   const nav = $('#nav');
