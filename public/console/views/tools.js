@@ -4,7 +4,7 @@ import { $, toast, setMsg } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
 export const id = 'tools';
-export const title = '工具';
+export const title = '工具清单';
 export const desc = 'DSH 侧工具清单、后台控制端引导（向某个会话的 agent 投递提醒）';
 export const icon = '🧰';
 export const group = '总览';
