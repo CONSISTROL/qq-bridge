@@ -81,8 +81,9 @@ export const PLUGINS = [
     icon: '📱',
     desc: '让它在手机上"看"和"动"：看屏幕、操作手机、刷 B站（具体怎么刷它自己安排）',
     capabilities: [
-      { id: 'screen', label: '看屏幕（状态 / 截图）', flags: ['phoneStatus', 'phoneScreen', 'phoneScreenshot'] },
-      { id: 'control', label: '操作手机（点击 / 滑动 / 按键）', flags: ['phoneTap', 'phoneSwipe', 'phoneKey'], default: false },
+      // 基础能力：插件开了就有，不单独给用户开关（owner：看屏幕/操作手机是插件本身的能力）。
+      { id: 'screen', label: '看屏幕（状态 / 截图）', flags: ['phoneStatus', 'phoneScreen', 'phoneScreenshot'], base: true },
+      { id: 'control', label: '操作手机（点击 / 滑动 / 按键）', flags: ['phoneTap', 'phoneSwipe', 'phoneKey'], base: true },
       { id: 'bili', label: '刷 B站（它自己会在手机上逛、看、回来跟你讲）', flags: ['biliSearch', 'biliSubtitles', 'biliFrames', 'biliLive', 'biliAudio'] },
       { id: 'shell', label: '在手机上执行命令（高危）', flags: ['phoneExec'], default: false }
     ]
@@ -91,7 +92,7 @@ export const PLUGINS = [
 
 /** flag → 所属能力（建立反查表，判定用）。 */
 const FLAG_TO_CAP = new Map();
-for (const p of PLUGINS) for (const c of p.capabilities) for (const f of c.flags) FLAG_TO_CAP.set(f, { plugin: p.id, cap: c.id, def: c.default === true });
+for (const p of PLUGINS) for (const c of p.capabilities) for (const f of c.flags) FLAG_TO_CAP.set(f, { plugin: p.id, cap: c.id, def: c.default === true, base: c.base === true });
 
 export const ALL_FLAGS = [...FLAG_TO_CAP.keys()];
 
@@ -101,6 +102,7 @@ export function migrateLegacyTools(legacyTools = {}) {
   for (const p of PLUGINS) {
     const caps = {};
     for (const c of p.capabilities) {
+      if (c.base) continue; // 基础能力不存开关
       const known = c.flags.filter((f) => Object.prototype.hasOwnProperty.call(legacyTools, f));
       caps[c.id] = known.length ? known.every((f) => legacyTools[f] !== false) : c.default === true;
     }
@@ -118,6 +120,8 @@ export function capabilityEnabled(pluginsState, flag) {
   const plugin = st[info.plugin];
   if (!plugin || typeof plugin !== 'object') return true;
   if (plugin.enabled === false) return false;
+  // 基础能力（看屏幕 / 操作手机）不单独存开关：插件开着就能用
+  if (info.base) return true;
   const caps = plugin.capabilities && typeof plugin.capabilities === 'object' ? plugin.capabilities : null;
   if (!caps) return true;
   return caps[info.cap] !== false;
@@ -127,14 +131,19 @@ export function capabilityEnabled(pluginsState, flag) {
 export function pluginCatalog(pluginsState = {}) {
   return PLUGINS.map((p) => {
     const st = pluginsState[p.id] || {};
-    const caps = p.capabilities.map((c) => ({
-      id: c.id,
-      label: c.label,
-      optIn: c.default === true,
-      enabled: (st.capabilities && typeof st.capabilities === 'object')
-        ? st.capabilities[c.id] !== false
-        : c.default === true
-    }));
+    const caps = p.capabilities.map((c) => {
+      const base = c.base === true;
+      return {
+        id: c.id,
+        label: c.label,
+        optIn: c.default === true,
+        base,
+        // 基础能力：插件开=可用；其余看自己的能力开关
+        enabled: base
+          ? st.enabled !== false
+          : (st.capabilities && typeof st.capabilities === 'object' ? st.capabilities[c.id] !== false : c.default === true)
+      };
+    });
     return { id: p.id, name: p.name, icon: p.icon, desc: p.desc, enabled: st.enabled !== false && caps.some((c) => c.enabled), capabilities: caps };
   });
 }

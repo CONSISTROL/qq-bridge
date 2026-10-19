@@ -942,11 +942,16 @@ export async function mount(root) {
       grid.className = 'v2-cap-grid';
       for (const c of p.capabilities) {
         const lab = document.createElement('label');
-        lab.className = 'v2-cap';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.className = 'switch'; cb.checked = c.enabled;
-        cb.addEventListener('change', () => setPlugin(p.id, c.id, cb.checked));
-        lab.append(cb, document.createTextNode(' ' + c.label));
+        lab.className = 'v2-cap' + (c.base ? ' v2-cap-base' : '');
+        if (c.base) {
+          // 基础能力（看屏幕/操作手机）：跟着插件开关走，不给单独开关
+          lab.append(document.createTextNode('· ' + c.label + '（基础）'));
+        } else {
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.className = 'switch'; cb.checked = c.enabled;
+          cb.addEventListener('change', () => setPlugin(p.id, c.id, cb.checked));
+          lab.append(cb, document.createTextNode(' ' + c.label));
+        }
         grid.append(lab);
       }
       card.append(head, desc, grid);
