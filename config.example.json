@@ -399,7 +399,8 @@
       "quietHours": [
         1,
         7
-      ]
+      ],
+      "cooldownMs": 14400000
     },
     "feedback": {
       "maxLength": 500,

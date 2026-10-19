@@ -16594,6 +16594,10 @@ const agentTokenOk = (key, token) => {
       const hourNow = new Date().getHours();
       const inQuiet = quiet.length === 2 && hourNow >= Number(quiet[0]) && hourNow < Number(quiet[1]);
       if (!inQuiet && idle >= idleThreshold && !isConversationBusyV2(key, st)) {
+        // 冒泡冷却：真的开口之后，下一次机会至少隔 cooldownMs（默认 4 小时）。
+        // 否则一个整天没人说话的群会每隔 20~40 分钟就冒一次泡（线上反馈：太频繁）。
+        const cooldown = Math.max(30 * 60 * 1000, Number(p.cooldownMs) || 4 * 60 * 60 * 1000);
+        st.proactiveNextAt = Date.now() + cooldown;
         void sendWakePromptV2(key, 'proactiveCheck').catch((error) => log(`[reserved2] proactive 唤醒异常 ${key}:`, error?.message ?? error));
       }
       scheduleProactiveCheckV2(key);
