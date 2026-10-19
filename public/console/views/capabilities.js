@@ -8,7 +8,7 @@ export const title = '插件';
 export const desc = '它有哪些能力：按插件分组，逐项开关（拨动即写入 config.json 并立即生效）';
 export const icon = '🧩';
 export const group = '总览';
-export const order = 4;
+export const order = 2;
 
 import { api } from '../core/api.js';
 import { $, toast, delegate } from '../core/dom.js';

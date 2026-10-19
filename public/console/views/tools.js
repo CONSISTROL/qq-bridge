@@ -4,11 +4,11 @@ import { $, toast, setMsg } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
 export const id = 'tools';
-export const title = '插件';
+export const title = '工具';
 export const desc = 'DSH 侧工具清单、后台控制端引导（向某个会话的 agent 投递提醒）';
 export const icon = '🧰';
 export const group = '总览';
-export const order = 5;
+export const order = 6;
 
 export async function mount(root) {
   const view = await mountFragment(root, 'tools');
