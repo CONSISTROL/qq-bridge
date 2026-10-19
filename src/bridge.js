@@ -5416,6 +5416,8 @@ const agentTokenOk = (key, token) => {
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     // 插件→能力：新的开关结构在 config.socialV2.plugins；没有就回退到旧的扁平 tools 表。
+    // 保存配置：这个作用域里没有现成的 configFile，直接算路径（之前误写成不存在的 saveConfig()）
+    const persistConfig = () => atomicWriteJson(path.join(ROOT, 'config.json'), cfg);
     const v2ToolEnabled = (flag) => {
       const plugins = cfg.socialV2?.plugins;
       if (plugins && typeof plugins === 'object') return capabilityEnabled(plugins, flag);
@@ -7337,7 +7339,8 @@ const agentTokenOk = (key, token) => {
           if (!cfg.socialV2) cfg.socialV2 = {};
           if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') {
             cfg.socialV2.plugins = migrateLegacyTools(cfg.socialV2.tools || {});
-            saveConfig();
+            cfg.socialV2.pluginsVersion = 2;
+            persistConfig();
           }
           if (req.method === 'GET') {
             sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins), raw: cfg.socialV2.plugins });
@@ -7361,7 +7364,7 @@ const agentTokenOk = (key, token) => {
                 cur0.enabled = on;
                 cfg.socialV2.plugins[pl.id] = cur0;
               }
-              saveConfig();
+              persistConfig();
               sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
               return;
             }
@@ -7375,7 +7378,7 @@ const agentTokenOk = (key, token) => {
             } else {
               cur.enabled = on;
             }
-            saveConfig();
+            persistConfig();
             log(`[plugin] ${pid}${cid ? '/' + cid : ''} → ${on ? '开' : '关'}`);
             sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
             return;
@@ -17937,7 +17940,7 @@ const agentTokenOk = (key, token) => {
     if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object' || Number(cfg.socialV2.pluginsVersion) !== PLUGINS_VERSION) {
       cfg.socialV2.plugins = migrateLegacyTools(cfg.socialV2.tools || {});
       cfg.socialV2.pluginsVersion = PLUGINS_VERSION;
-      saveConfig();
+      atomicWriteJson(path.join(ROOT, 'config.json'), cfg);
       log(`[config] 插件配置已迁移到 v${PLUGINS_VERSION}（插件→能力，粗粒度）`);
     }
   } catch (error) { log('迁移插件配置失败：' + (error?.message ?? error)); }
