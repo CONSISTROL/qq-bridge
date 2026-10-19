@@ -24,7 +24,7 @@ import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchive
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
-import { capabilityEnabled, migrateLegacyTools, pluginCatalog } from './capabilities.js';
+import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -7353,12 +7353,12 @@ const agentTokenOk = (key, token) => {
               const { PLUGINS } = await import('./capabilities.js');
               for (const pl of PLUGINS) {
                 const cur0 = cfg.socialV2.plugins[pl.id] || {};
-                cur0.enabled = on;
                 cur0.capabilities = cur0.capabilities && typeof cur0.capabilities === 'object' ? cur0.capabilities : {};
                 for (const c of pl.capabilities) {
-                  const isOptIn = c.default !== true && (c.id === 'sendCard' || c.id === 'setStickerRemark' || c.id === 'setMemberCard' || c.id === 'setProfile' || c.id === 'phoneExec' || c.id === 'phoneTap' || c.id === 'phoneSwipe' || c.id === 'phoneKey');
-                  cur0.capabilities[c.id] = on ? (isOptIn ? false : true) : false;
+                  // 「全部开启」跳过 opt-in（高危）能力：改账号、改群名片、手机操作/命令
+                  cur0.capabilities[c.id] = on ? !OPT_IN_CAPS.has(`${pl.id}:${c.id}`) : false;
                 }
+                cur0.enabled = on;
                 cfg.socialV2.plugins[pl.id] = cur0;
               }
               saveConfig();
@@ -17932,11 +17932,13 @@ const agentTokenOk = (key, token) => {
   // 一次性迁移：旧 socialV2.tools（扁平 47 个开关）→ socialV2.plugins（插件→能力）。
   try {
     if (!cfg.socialV2) cfg.socialV2 = {};
-    if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') {
-      const migrated = migrateLegacyTools(cfg.socialV2.tools || {});
-      cfg.socialV2.plugins = migrated;
+    // 版本号：注册表结构变过（细粒度 → 粗粒度）就要重新迁移，否则会拿着旧能力 id 判断。
+    const PLUGINS_VERSION = 2;
+    if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object' || Number(cfg.socialV2.pluginsVersion) !== PLUGINS_VERSION) {
+      cfg.socialV2.plugins = migrateLegacyTools(cfg.socialV2.tools || {});
+      cfg.socialV2.pluginsVersion = PLUGINS_VERSION;
       saveConfig();
-      log('[config] 已把旧 tools 开关迁移为 plugins（插件→能力）结构');
+      log(`[config] 插件配置已迁移到 v${PLUGINS_VERSION}（插件→能力，粗粒度）`);
     }
   } catch (error) { log('迁移插件配置失败：' + (error?.message ?? error)); }
   // PDF 能力自检：poppler-utils 缺失时提前在日志里说明（否则只会在用户点开 PDF 时才炸）。
