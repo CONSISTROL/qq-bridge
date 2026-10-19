@@ -1,0 +1,11 @@
+<div class="view-head">
+  <h2>插件</h2>
+  <p class="muted">这个 bot 现在有哪些能力。按插件分组：插件整组开关 + 组内逐项开关，<b>拨动即写入 config.json 并立即生效</b>。
+    标了「（基础）」的能力跟着插件开关走（例如手机插件的「看屏幕 / 操作手机」）。</p>
+</div>
+<div class="row" style="gap:10px;align-items:center">
+  <button id="capAllOn" class="btn" type="button">全部启用</button>
+  <button id="capAllOff" class="danger" type="button">全部禁用</button>
+  <span id="capCounts" class="muted"></span>
+</div>
+<div id="capList" class="v2-plugins"></div>

@@ -2,7 +2,7 @@
 // 插件 = 一个目录 + manifest.json，只能声明两类能力：HTTP 工具、定时任务（不执行任意代码）。
 // 来源用**所在目录**判定：plugins/ = 用户添加，state/ai-plugins/ = AI 自己添加。
 export const id = 'plugins';
-export const title = '插件';
+export const title = '自定义插件';
 export const desc = '声明式插件：用户添加 / AI 添加，各自的工具与定时任务';
 export const group = '总览';
 export const order = 5;
