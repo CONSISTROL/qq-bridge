@@ -16585,7 +16585,10 @@ const agentTokenOk = (key, token) => {
       st.proactiveNextAt = 0;
       ensureWakeableV2(st, { key });
       const idleThreshold = Number(p.idleThresholdMs) || 15 * 60 * 1000;
-      const idle = Date.now() - (st.lastIncomingAt || 0);
+      // owner 要求：按「群里**最后一条消息**的时间」判冷场——包括我自己发的那条。
+      // 之前只看 lastIncomingAt（群友发言），我自己刚说完没人接时它仍认为"冷"，于是又冒泡。
+      const lastAny = Math.max(Number(st.lastIncomingAt) || 0, Number(st.lastAiReplyAt) || 0);
+      const idle = Date.now() - lastAny;
       // owner 要求：**不要概率，纯时间间隔**——到点且群冷（闲置 ≥ 阈值）就主动开一次，
       // 否则白天群容易冷场。概率/翻倍/打折那套全部去掉，只保留两个硬判定：
       //   ① 闲置时间够长（idleThresholdMs，默认 10 分钟）
