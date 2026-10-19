@@ -157,7 +157,34 @@
     width: 100%;
     box-sizing: border-box;
   }
-  textarea { resize: vertical; min-height: 80px; font-family: monospace; }
+  /* 长文本编辑（提示词、备注、语料）：等宽字体 + 宽松行高 + 足够的初始高度，
+     否则一屏只能看到三四行，改长文本像在针眼里穿线。 */
+  textarea {
+    resize: vertical;
+    min-height: 160px;
+    height: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding: 10px 12px;
+    letter-spacing: .01em;
+    tab-size: 2;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-y: auto;
+  }
+  /* 大屏时再高一点；小屏（手机）给 40vh，别一屏塞满 */
+  @media (min-width: 1100px) { textarea { min-height: 220px; } }
+  @media (max-width: 700px) { textarea { min-height: 40vh; } }
+  /* 聚焦时给个明确的状态，长文本最容易看不出"光标在哪" */
+  textarea:focus, input[type=text]:focus, input[type=number]:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  /* 只读/禁用时的区分 */
+  textarea[readonly] { opacity: .8; }
+  textarea:disabled { opacity: .5; cursor: not-allowed; }
   input[type=number] { background: var(--bg); border: 1px solid var(--ctrl-border); border-radius: 8px; color: var(--text); padding: 6px 8px; font-size: 13px; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
