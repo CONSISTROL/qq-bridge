@@ -7334,6 +7334,41 @@ const agentTokenOk = (key, token) => {
           }
           return;
         }
+        // 读用户资料：昵称/签名/等级/性别 + 群身份（群里的名片、角色、入群时间、最后发言）
+        // 空间（Qzone）需要登录 cookie，这里只给链接，不假装能读。
+        if (url.pathname === '/api/socialV2/user-profile') {
+          const key = String(url.searchParams.get('key') ?? '').trim();
+          const userId = String(url.searchParams.get('userId') ?? '').replace(/\D/g, '');
+          if (!userId) { sendJson({ ok: false, error: 'userId 不能为空' }, 400); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('memberProfile')) { sendJson({ ok: false, error: '工具未启用：读用户资料' }, 403); return; }
+          try {
+            const stranger = await postOneBot('get_stranger_info', { user_id: Number(userId) }, { timeoutMs: 10000, retries: 1 }).catch(() => null);
+            const gm = /^group:(\d+)$/.exec(key) ? await postOneBot('get_group_member_info', { group_id: Number(key.split(':')[1]), user_id: Number(userId) }, { timeoutMs: 10000, retries: 1 }).catch(() => null) : null;
+            const fmt = (t) => (Number(t) ? new Date(Number(t) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '');
+            sendJson({
+              ok: true,
+              userId,
+              nickname: String(stranger?.nickname ?? gm?.nickname ?? ''),
+              signature: String(stranger?.long_nick ?? ''),
+              sex: String(stranger?.sex ?? ''),
+              age: Number(stranger?.age) || 0,
+              qqLevel: Number(stranger?.qq_level ?? stranger?.level) || 0,
+              avatar: memberAvatarUrl(userId, 640),
+              group: gm ? {
+                card: String(gm.card ?? ''),
+                role: String(gm.role ?? ''),
+                level: String(gm.level ?? ''),
+                title: String(gm.title ?? ''),
+                joinTime: fmt(gm.join_time),
+                lastSentTime: fmt(gm.last_sent_time)
+              } : null,
+              spaceUrl: `https://user.qzone.qq.com/${userId}`,
+              spaceNote: '空间需要登录态，桥接读不了；只能给链接（对方设了权限也可能打不开）'
+            });
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
+        }
         // 插件→能力：控制台的「聊天模式 → 插件」用它渲染与开关
         if (url.pathname === '/api/socialV2/plugins') {
           if (!cfg.socialV2) cfg.socialV2 = {};

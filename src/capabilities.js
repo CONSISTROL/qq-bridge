@@ -53,6 +53,7 @@ export const PLUGINS = [
     desc: '给群友记备注',
     capabilities: [
       { id: 'remark', label: '记群友备注', flags: ['memberRemark'] },
+      { id: 'profile', label: '读资料（头像 / 签名 / 等级 / 群身份）', flags: ['memberProfile'] },
       { id: 'card', label: '改群名片（动账号）', flags: ['setMemberCard'], default: false }
     ]
   },

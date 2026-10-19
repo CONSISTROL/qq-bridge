@@ -1260,6 +1260,44 @@ defineTool(
   }
 );
 
+// ── 读用户资料（头像 / 签名 / 等级 / 群身份）──────────────────────────────
+defineTool(
+  'qq_get_user_profile',
+  '看某个人的资料：昵称、签名、QQ 等级、性别年龄；在群里还能看到群名片、群角色（群主/管理/成员）、'
+    + '入群时间、最后发言时间。头像会直接以图片返回（看得见）。空间（Qzone）只能给链接——那需要登录态，读不了。'
+    + 'userId 可以是群友 QQ，也可以是**你自己**（想看自己资料时传自己的号）。',
+  {
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+    token: z.string().describe('会话令牌'),
+    userId: z.string().describe('目标 QQ 号')
+  },
+  async ({ key, token, userId }) => {
+    try {
+      const p = await agentApi(`/api/socialV2/user-profile?key=${encodeURIComponent(key)}&userId=${encodeURIComponent(userId)}`, {
+        method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000
+      });
+      const lines = [
+        `QQ ${p.userId}${p.nickname ? '（' + p.nickname + '）' : ''}`,
+        p.signature ? `签名：${p.signature}` : '签名：（空）',
+        p.qqLevel ? `QQ 等级：${p.qqLevel}` : '',
+        p.sex ? `性别/年龄：${p.sex}${p.age ? ' / ' + p.age : ''}` : '',
+        p.group ? `群身份：${p.group.role || 'member'}${p.group.card ? '（名片：' + p.group.card + '）' : ''}${p.group.level ? ' · 群等级 ' + p.group.level : ''}` : '',
+        p.group && p.group.joinTime ? `入群：${p.group.joinTime}` : '',
+        p.group && p.group.lastSentTime ? `最后发言：${p.group.lastSentTime}` : '',
+        `空间：${p.spaceUrl}（${p.spaceNote || '需登录态'}）`
+      ].filter(Boolean);
+      const blocks = [{ type: 'text', text: lines.join('\n') }];
+      try {
+        const img = await agentApi(`/api/socialV2/member-avatar?key=${encodeURIComponent(key)}&userId=${encodeURIComponent(userId)}&size=640`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+        if (img && img.data) blocks.push({ type: 'image', data: String(img.data), mimeType: String(img.mimeType || 'image/jpeg') });
+      } catch { /* 头像拿不到就只给文字 */ }
+      return { content: blocks };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `读资料失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
 // ── 插件（声明式）：列表 / 调用 ─────────────────────────────────────────────
 defineTool(
   'qq_plugin_list',
