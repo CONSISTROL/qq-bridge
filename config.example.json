@@ -400,7 +400,7 @@
         1,
         7
       ],
-      "cooldownMs": 14400000,
+      "cooldownMs": 0,
       "rememberSelfSaid": 60,
       "repeatWindowHours": 336,
       "repeatSimThreshold": 0.72

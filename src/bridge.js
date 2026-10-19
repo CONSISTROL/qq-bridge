@@ -16655,8 +16655,10 @@ const agentTokenOk = (key, token) => {
       if (!inQuiet && idle >= idleThreshold && !isConversationBusyV2(key, st)) {
         // 冒泡冷却：真的开口之后，下一次机会至少隔 cooldownMs（默认 4 小时）。
         // 否则一个整天没人说话的群会每隔 20~40 分钟就冒一次泡（线上反馈：太频繁）。
-        const cooldown = Math.max(30 * 60 * 1000, Number(p.cooldownMs) || 4 * 60 * 60 * 1000);
-        st.proactiveNextAt = Date.now() + cooldown;
+        // owner：冒泡只取决于「群里最后一条消息的时间」——冒泡本身会写进 lastAiReplyAt，
+        // 3 小时的冷场计时自然从这里重启，所以不需要再叠一层冷却（cooldownMs=0 即关闭）。
+        const cooldown = Math.max(0, Number(p.cooldownMs) || 0);
+        st.proactiveNextAt = Date.now() + (cooldown || 3 * 60 * 60 * 1000);
         void sendWakePromptV2(key, 'proactiveCheck').catch((error) => log(`[reserved2] proactive 唤醒异常 ${key}:`, error?.message ?? error));
       }
       scheduleProactiveCheckV2(key);
