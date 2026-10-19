@@ -389,7 +389,7 @@
     },
     "proactive": {
       "enabled": true,
-      "rememberOpeners": 5,
+      "rememberOpeners": 20,
       "suggestDomains": 3,
       "avoidRepeat": true,
       "avoidKeywords": [],
@@ -400,7 +400,10 @@
         1,
         7
       ],
-      "cooldownMs": 14400000
+      "cooldownMs": 14400000,
+      "rememberSelfSaid": 60,
+      "repeatWindowHours": 336,
+      "repeatSimThreshold": 0.72
     },
     "feedback": {
       "maxLength": 500,
