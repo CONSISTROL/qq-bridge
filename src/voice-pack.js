@@ -34,7 +34,8 @@ export function listPacks({ stateDir } = {}) {
         .filter((n) => AUDIO_RE.test(n))
         .map((n) => {
           const st = fs.statSync(path.join(dir, 'clips', n));
-          return { file: n, bytes: st.size, addedAt: Math.round(st.mtimeMs) };
+          const labels = meta.clipLabels && typeof meta.clipLabels === 'object' ? meta.clipLabels : {};
+          return { file: n, label: String(labels[n] || ''), bytes: st.size, addedAt: Math.round(st.mtimeMs) };
         })
         .sort((a, b) => b.addedAt - a.addedAt);
     } catch { /* 还没有片段 */ }
