@@ -7383,6 +7383,26 @@ const agentTokenOk = (key, token) => {
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
           return;
         }
+        // ── 购物平台注册表（动态插件可自助扩充）──────────────────────
+        if (url.pathname === '/api/shop/platforms' || url.pathname === '/api/shop/platforms/add') {
+          const file = path.join(STATE_DIR, 'shop-platforms.json');
+          const readAll = () => { const v = readJsonSafe(file, { platforms: [] }); return Array.isArray(v?.platforms) ? v : { platforms: [] }; };
+          try {
+            if (req.method === 'GET') { sendJson({ ok: true, ...readAll() }); return; }
+            const body = await readBody();
+            const id = String(body.id ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
+            const template = String(body.template ?? '').trim();
+            if (!id || !template) { sendJson({ ok: false, error: '需要 id 和 template（template 里用 {q} 占位关键词）' }, 400); return; }
+            const data = readAll();
+            if (data.platforms.some((p) => p.id === id)) { sendJson({ ok: false, error: '这个平台已经在了' }, 400); return; }
+            data.platforms.push({ id, name: String(body.name || id).slice(0, 20), pkg: String(body.pkg || '').slice(0, 80), template: template.slice(0, 400), source: String(body.source || 'ai') });
+            atomicWriteJson(file, data);
+            log(`[shop] 新增平台 ${id}（来源 ${body.source || 'ai'}）`);
+            sendJson({ ok: true, platform: { id, name: body.name || id } });
+            return;
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
+        }
         // ── 档案（取代日记）：跨会话共享的事实型记忆 ──────────────────
         if (url.pathname === '/api/socialV2/profile' || url.pathname.startsWith('/api/socialV2/profile/')) {
           const action = url.pathname === '/api/socialV2/profile' ? '' : url.pathname.slice('/api/socialV2/profile/'.length);

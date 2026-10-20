@@ -36,6 +36,8 @@ export function readManifest(file) {
         // kind=phone：不跑 HTTP，而是调用桥接的手机动作（白名单 action），用于 App 类能力
         kind: t.kind === 'phone' ? 'phone' : 'http',
         action: t.kind === 'phone' ? String(t.action || '') : '',
+        // 手机动作的附加参数（例如 shopping 的 app=jd/douyin）要保留，否则全落到默认值
+        app: t.kind === 'phone' ? String(t.app || '') : '',
         method: String(t.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET',
         url: String(t.url || ''),
         body: t.body && typeof t.body === 'object' ? t.body : null,

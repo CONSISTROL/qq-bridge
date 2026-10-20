@@ -365,33 +365,31 @@ export async function phonePostMoment({ text = '', pin = '', send = true } = {})
  * 为什么走手机 App：京东/什么值得买的网页都有反爬（实测 302 跳验证、202 空页），
  * App 反而能用 deep link 直接带关键词进去，不需要中文输入法。
  */
-export async function phoneShopping({ keyword = '', app = 'jd', pin = '' } = {}) {
+export async function phoneShopping({ keyword = '', app = 'jd', pin = '', platformsPath = '' } = {}) {
   const kw = String(keyword || '').trim();
   if (!kw) return { ok: false, error: 'keyword 不能为空' };
+  const fs = await import('node:fs');
+  const pathMod = await import('node:path');
+  const file = platformsPath || pathMod.join(process.cwd(), 'state', 'shop-platforms.json');
+  let platforms = [];
+  try { platforms = JSON.parse(fs.readFileSync(file, 'utf8')).platforms || []; } catch { platforms = []; }
+  if (!platforms.length) return { ok: false, error: '没有平台注册表（state/shop-platforms.json）' };
+  const want = String(app || 'jd');
+  const picked = want === 'all' || want === 'both' ? platforms : platforms.filter((p) => p.id === want || p.pkg === want);
+  if (!picked.length) return { ok: false, error: `未知平台：${want}（可用：${platforms.map((p) => p.id).join('/')}）` };
   let wake = await phoneWake();
   if (!wake.unlocked && pin) { const u = await phoneUnlock({ pin }); if (u.unlocked) wake = { ...wake, unlocked: true }; }
   if (!wake.unlocked) return { ok: false, error: wake.note || '手机仍锁屏' };
   const enc = encodeURIComponent;
-  const targets = [];
-  const wantJd = app === 'jd' || app === 'both';
-  const wantSmzdm = app === 'smzdm' || app === 'both';
   const results = [];
-  const shoot = async (label) => { const s = await phoneScreenshot(); return s.ok ? { label, data: s.data, bytes: s.bytes } : null; };
-  if (wantJd) {
-    const params = enc(JSON.stringify({ category: 'jump', des: 'productList', keyword: kw }));
-    const url = `openapp.jdmobile://virtual?params=${params}`;
+  for (const p of picked) {
+    const url = String(p.template || '').replace('{q}', kw).replace('{q_enc}', enc(kw));
+    if (!url) continue;
     await sh(`am start -a android.intent.action.VIEW -d ${JSON.stringify(url)}`, { timeoutMs: 25000 });
-    await new Promise((r) => setTimeout(r, 3500));
+    await new Promise((r) => setTimeout(r, 3800));
     const fg = (await sh('dumpsys window | grep -m1 mCurrentFocus')).out;
-    results.push({ app: 'jd', foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '', shot: await shoot('京东') });
-  }
-  if (wantSmzdm) {
-    // 什么值得买 App 的 `smzdm://` 只能拉到首页；关键词搜索退回浏览器打开搜索页
-    const url = `https://search.smzdm.com/?s=${enc(kw)}`;
-    await sh(`am start -a android.intent.action.VIEW -d ${JSON.stringify(url)}`, { timeoutMs: 25000 });
-    await new Promise((r) => setTimeout(r, 4000));
-    const fg = (await sh('dumpsys window | grep -m1 mCurrentFocus')).out;
-    results.push({ app: 'smzdm', foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '', shot: await shoot('什么值得买') });
+    const s = await phoneScreenshot();
+    results.push({ app: p.id, name: p.name, foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '', shot: s.ok ? { bytes: s.bytes, data: s.data } : null });
   }
   return { ok: true, keyword: kw, results };
 }

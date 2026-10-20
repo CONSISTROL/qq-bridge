@@ -1,31 +1,38 @@
 {
   "id": "shopping",
   "name": "购物比价（京东 / 什么值得买）",
-  "description": "群里有人问「推荐/多少钱/值不值/便宜点的」这类购物需求时，去手机上打开京东、什么值得买搜一下，截图回来给结论",
+  "description": "群里有人问「推荐/多少钱/值不值/便宜点的」时，去手机上打开 京东/什么值得买/抖音商城/淘宝/闲鱼/小红书 搜一下，截图回来给结论（平台列表在 state/shop-platforms.json，可随时加）",
   "origin": "user",
   "version": "1.0.0",
   "enabled": true,
   "tools": [
     {
       "name": "jd",
-      "description": "在京东 App 里搜商品（deep link 带关键词，无需输入法）",
       "kind": "phone",
       "action": "shopping",
-      "app": "jd"
+      "app": "jd",
+      "description": "京东搜商品"
     },
     {
       "name": "smzdm",
-      "description": "在什么值得买搜商品（打开搜索页）",
       "kind": "phone",
       "action": "shopping",
-      "app": "smzdm"
+      "app": "smzdm",
+      "description": "什么值得买搜商品"
     },
     {
-      "name": "both",
-      "description": "京东 + 什么值得买 各搜一次，两张截图对比",
+      "name": "douyin",
       "kind": "phone",
       "action": "shopping",
-      "app": "both"
+      "app": "douyin",
+      "description": "抖音商城搜商品"
+    },
+    {
+      "name": "all",
+      "kind": "phone",
+      "action": "shopping",
+      "app": "all",
+      "description": "所有平台各搜一遍（截图多，慎用）"
     }
   ],
   "jobs": []

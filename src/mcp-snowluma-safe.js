@@ -1319,6 +1319,28 @@ defineTool(
   }
 );
 
+// ── 购物平台注册表：动态插件自助扩充 ──────────────────────────────────────
+defineTool(
+  'qq_shop_platform_add',
+  '给购物插件加一个电商平台（群里提到新的平台、而插件里还没有时用）。'
+    + 'template 是打开搜索页的 URL/深链，用 {q} 占位关键词（例如 "snssdk1128://search?keyword={q}"）。'
+    + '加完立刻可用（调用 shopping 插件时 app 传这个 id）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    id: z.string().describe('平台 id（小写英文，如 pdd / pinduoduo）'),
+    name: z.string().describe('平台名（如 拼多多）'),
+    template: z.string().describe('搜索深链/URL，用 {q} 占位关键词'),
+    pkg: z.string().optional().describe('Android 包名（可选）')
+  },
+  async ({ key, token, id, name, template, pkg }) => {
+    try {
+      const d = await agentApi('/api/shop/platforms/add', { method: 'POST', body: JSON.stringify({ id, name, template, pkg, source: 'ai' }), headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      return { content: [{ type: 'text', text: d.ok ? `已加入平台 ${d.platform?.name}（${d.platform?.id}），现在可以用 shopping 插件搜它了` : `没加成：${d.error || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `加平台失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 档案（取代日记）：跨会话共享的事实记忆 ──────────────────────────────
 defineTool(
   'qq_profile_save',
