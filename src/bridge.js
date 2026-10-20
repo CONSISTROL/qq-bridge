@@ -21,7 +21,6 @@ import { safeFetch, safeFetchBuffer, safeFetchToFile, looksLikeImageBuffer, vali
 import { classifyFile, extractFileContent } from './file-extract.js';
 import { ALBUM_SOURCES, ALBUM_META_FILE, STICKER_SOURCE, collectAlbumItems, collectStickerItems, updateAlbumMeta, albumStats, saveChatImage, isAlbumImageName, itemId, listTrash, restoreTrash, purgeTrash, emptyTrash, trashPath } from './album.js';
 import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchiveRecord } from './memory-archive.js';
-import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
@@ -5307,7 +5306,7 @@ async function main() {
       log('⚠️ DSH 不可用（重启中？），QQ 消息将入队等待');
     }
   };
-  // 第二级记忆：每天一次，让机器人按第三级归档把值得记的事整理进档案（旧实现叫「日记」，已废弃）。
+  // 第二级记忆：档案（事实型，跨会话共享）。
   // 触发条件：到了配置的小时（默认 4 点）、这一天还没写过、归档里确实有内容。
   // 插件定时任务（P4）：每隔一分钟扫一遍已启用插件的 jobs，到点请求 URL，
   // 命中 match 正则就让 AI 在指定会话里说一句（用 notifyAiSession，保持"AI 决定怎么说"）。
@@ -5342,31 +5341,7 @@ async function main() {
     timer.unref?.();
   }
 
-  function startDiaryScheduler() {
-    const cfgD = cfg.socialV2?.memory?.diary ?? {};
-    if (cfgD.enabled === false) return;
-    const hour = Math.max(0, Math.min(23, Number(cfgD.hour) || 4));
-    const timer = setInterval(() => {
-      try {
-        if (new Date().getHours() !== hour) return;
-        const yesterday = dayKey(Date.now() - 86400000);
-        for (const key of [...socialV2.conversations.keys()]) {
-          const st = getSocialV2State(key);
-          if (st.lastDiaryDay === yesterday) continue;
-          const stats = archiveStatsOf({ stateDir: STATE_DIR, key });
-          if (!stats.lines) continue;
-          if (readDiary({ stateDir: STATE_DIR, key, day: yesterday })) { st.lastDiaryDay = yesterday; continue; }
-          st.lastDiaryDay = yesterday;
-          saveSocialV2State();
-          void notifyAiSession(key, `【档案】把昨天（${yesterday}）的聊天里值得长期记住的事记进档案：先用 qq_search_history 看一眼当天都聊了什么，再用 qq_diary_save 保存（day=${yesterday}）。只写「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」，别写流水账，也别把话说死——细节留给原文归档。`).catch((error) => log(`[memory] 日记提醒发送失败 ${key}：${error?.message ?? error}`));
-          log(`[memory] 已提醒 ${key} 整理档案（${yesterday}）`);
-        }
-      } catch (error) {
-        log('[memory] 档案调度失败：' + (error?.message ?? error));
-      }
-    }, 10 * 60 * 1000);
-    timer.unref?.();
-  }
+
 
   function startDshWatch() {
     if (dshCheckStarted) return;
@@ -7479,7 +7454,7 @@ const agentTokenOk = (key, token) => {
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
-        // ── 档案（取代日记）：跨会话共享的事实型记忆 ──────────────────
+        // ── 档案：跨会话共享的事实型记忆 ──────────────────
         if (url.pathname === '/api/socialV2/profile' || url.pathname.startsWith('/api/socialV2/profile/')) {
           const action = url.pathname === '/api/socialV2/profile' ? '' : url.pathname.slice('/api/socialV2/profile/'.length);
           try {
@@ -11372,7 +11347,7 @@ const agentTokenOk = (key, token) => {
           return;
         }
         // ── 记忆 API（AI 工具与控制台共用）───────────────────────────
-        // 一个端点四种 op：查原文归档 / 存日记 / 列日记 / 召回（日记命中 + 原文锚点）。
+        // 一个端点两种 op：查原文归档 / 召回（归档原文锚点）。
         if (url.pathname === '/api/socialV2/memory') {
           const body = req.method === 'POST' ? await readBody() : {};
           const key = String(body.key ?? url.searchParams.get('key') ?? '').trim();
@@ -11389,24 +11364,13 @@ const agentTokenOk = (key, token) => {
               sendJson({ ok: true, key, hits, stats, note: hits.length ? '' : '归档里没搜到（可能超出保留天数，或说法不一样）' });
               return;
             }
-            if (op === 'diary-save') {
-              const r = saveDiary({ stateDir: STATE_DIR, key, day: body.day || dayKey(Date.now() - 86400000), summary: body.summary, topics: body.topics, openThreads: body.openThreads, members: body.members, rawCount: body.rawCount });
-              sendJson(r.ok ? { ok: true, day: r.day, file: r.file } : { ok: false, error: r.error }, r.ok ? 200 : 400);
-              return;
-            }
-            if (op === 'diary-list') {
-              const items = listDiary({ stateDir: STATE_DIR, key, limit: Number(body.limit) || 30 });
-              sendJson({ ok: true, key, items });
-              return;
-            }
             if (op === 'recall') {
               const query = String(body.query ?? '').trim();
-              const diaryHits = searchDiary({ stateDir: STATE_DIR, key, query, limit: Number(body.limit) || 5 });
               const anchors = query ? searchArchive({ stateDir: STATE_DIR, key, query, limit: Number(body.limit) || 8 }) : [];
-              sendJson({ ok: true, key, query, diaryHits, anchors, note: '先用日记定位哪天聊过，再用 anchors 里的原文核对；别凭日记把细节说死' });
+              sendJson({ ok: true, key, query, anchors, note: '直接从完整归档里捞原文锚点（日记已废弃）；别凭日记把细节说死' });
               return;
             }
-            sendJson({ ok: false, error: '未知 op（search / diary-save / diary-list / recall）' }, 400);
+            sendJson({ ok: false, error: '未知 op（search / recall）' }, 400);
           } catch (error) {
             sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
           }
@@ -15823,7 +15787,7 @@ const agentTokenOk = (key, token) => {
     for (let i = 0; i < list.length; i++) {
       const text = redactKnownTokensOnly(String(list[i] ?? '')).slice(0, 200);
 
-      // 第三级记忆：自己说的话也要进归档，否则日记只剩别人说的话。
+      // 第三级记忆：自己说的话也要进归档（否则回溯时只有别人说的话）。
       if (cfg.socialV2?.memory?.archive?.enabled !== false) {
         try {
           appendArchive({
@@ -16274,7 +16238,7 @@ const agentTokenOk = (key, token) => {
       // 更早的题材不再往提示词里硬塞：走**记忆机制**——提示它自己去查（qq_recall 查日记+原文锚点，
       // qq_search_history 查完整归档）。归档里连我自己主动发的话都记着，所以它是真能查到的。
       out += '【开口前先翻一下记忆】不确定这个话题以前聊没聊过，就先查你自己的记忆：\n'
-        + '- `qq_recall`（关键词，比如「天气」「战队」这种实词）：先查日记里聊过什么，再给原文锚点；\n'
+        + '- `qq_recall`（关键词，比如「天气」「战队」这种实词）：直接查完整归档里的原文；\n'
         + '- `qq_search_history`：查这个群的完整归档（包含**你自己主动开过的头**）。\n'
         + '查到以前开过、或者同一圈子/同一人物的另一件事，就换一个**完全不相干**的题材；查不到再开口。\n';
       if (repeatHead) {
@@ -16455,7 +16419,7 @@ const agentTokenOk = (key, token) => {
     const memoryHint = (() => {
       const msgs = Array.isArray(st.recentMessages) ? st.recentMessages : [];
       const lastIn = [...msgs].reverse().find((m) => m && !m.isSelf);
-      if (!lastIn || !looksLikeMemoryQuery(String(lastIn.text || ''))) return '';
+      if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
       return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查日记（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
     const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
@@ -18352,7 +18316,6 @@ const agentTokenOk = (key, token) => {
     syncStickerLibrary(true).catch((error) => log('启动预热表情库失败:', error?.message ?? error));
   }
   startDshWatch();
-  startDiaryScheduler();
   startPluginJobs();
   // 白天始终监听：dayActiveHours 窗口内，白名单会话强制 active；窗口外允许它自己潜水（夜里别被叫醒）。
   function applyWakePolicy(reason = 'startup') {

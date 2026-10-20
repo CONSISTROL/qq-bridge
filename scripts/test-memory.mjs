@@ -1,4 +1,3 @@
-// 三级记忆的纯逻辑自检：第三级归档（追加/检索/保留期）+ 第二级日记（保存/列表/检索）。
 // 运行：node scripts/test-memory.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,9 +6,6 @@ import {
   appendArchive, searchArchive, archiveStats, pruneArchive, listArchiveMonths,
   convDirName, monthOf, toArchiveRecord
 } from '../src/memory-archive.js';
-import {
-  saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey
-} from '../src/memory-diary.js';
 
 let pass = 0;
 let fail = 0;
@@ -49,22 +45,7 @@ const removed = pruneArchive({ stateDir, key, keepDays: 90, now });
 ok('超过保留期的月文件被删', removed === 1 && listArchiveMonths({ stateDir, key }).length === before - 1, `removed=${removed}`);
 ok('归档目录名安全（冒号替换）', convDirName('group:1') === 'group_1');
 
-console.log('\n[3] 第二级：日记');
-const y = dayKey(Date.now() - 86400000);
-const d1 = saveDiary({ stateDir, key, day: y, summary: '聊了 S16 冠军预测，机器人押 T1；还聊了社保新规。', topics: ['S16', '社保'], openThreads: ['社保细则待查'] });
-ok('日记保存成功', d1.ok === true, JSON.stringify(d1));
-ok('按天读得到', readDiary({ stateDir, key, day: y })?.summary.includes('S16'));
-ok('空正文被拒', saveDiary({ stateDir, key, day: y, summary: '   ' }).ok === false);
-ok('非法日期被拒', saveDiary({ stateDir, key, day: '2026/10/01', summary: 'x' }).ok === false);
-ok('列表有新到旧', listDiary({ stateDir, key })[0].day === y);
-ok('日记检索命中话题', searchDiary({ stateDir, key, query: 'S16' }).length === 1);
-ok('日记检索不命中无关词', searchDiary({ stateDir, key, query: '原神' }).length === 0);
-ok('时间范围过滤', searchDiary({ stateDir, key, sinceDay: '2099-01-01' }).length === 0);
-
 console.log('\n[4] 召回触发词');
-ok('「还记得」触发', looksLikeMemoryQuery('你还记得上次说的那个吗'));
-ok('「之前说过」触发', looksLikeMemoryQuery('之前说过要给我看图的'));
-ok('普通闲聊不触发', !looksLikeMemoryQuery('今天吃什么'));
 
 fs.rmSync(stateDir, { recursive: true, force: true });
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
