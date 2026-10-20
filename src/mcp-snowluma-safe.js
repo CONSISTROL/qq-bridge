@@ -1319,6 +1319,40 @@ defineTool(
   }
 );
 
+// ── 档案（取代日记）：跨会话共享的事实记忆 ──────────────────────────────
+defineTool(
+  'qq_profile_save',
+  '把一条**事实**记进档案：关于主人（偏好/习惯/约定）、关于这个群/这个人（梗、忌讳、关系、待办）。'
+    + '档案是**跨会话共享**的——私聊里记下的事，群里它也能用；所以只写"以后还用得上"的结论，别写流水账。'
+    + 'scope：all=所有会话可用；owner=只和主人有关；group:群号 / private:QQ号=只在该会话用。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    text: z.string().describe('一条事实（短、具体、可核对）'),
+    scope: z.enum(['all', 'owner']).optional().describe('写入范围，默认 all'),
+    tags: z.array(z.string()).optional().describe('标签')
+  },
+  async ({ key, token, text, scope, tags }) => {
+    try {
+      const d = await agentApi('/api/socialV2/profile/add', { method: 'POST', body: JSON.stringify({ text, scope: scope || 'all', tags: tags || [] }), headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      return { content: [{ type: 'text', text: d.ok ? `已记进档案（${d.item?.scope}）：${d.item?.text}` : `没记：${d.error || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `记档案失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_profile_list',
+  '看档案里有什么（跨会话共享的事实）。可按关键词搜。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), q: z.string().optional().describe('关键词') },
+  async ({ key, token, q }) => {
+    try {
+      const d = await agentApi(`/api/socialV2/profile?key=${encodeURIComponent(key)}&q=${encodeURIComponent(q || '')}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      const lines = [...(d.shared || []), ...(d.local || [])].map((t) => '- ' + t).join('\n');
+      return { content: [{ type: 'text', text: lines || '（档案里还没有相关记录）' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `查档案失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 自主性（L2）：自己的目标 / 预算 ─────────────────────────────────────────
 defineTool(
   'qq_autonomy_status',

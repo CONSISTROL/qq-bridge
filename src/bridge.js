@@ -25,6 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
+import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
 import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
@@ -7380,6 +7381,24 @@ const agentTokenOk = (key, token) => {
             biliHotCache = { at: now, items, limit };
             sendJson({ ok: true, cached: false, items: items.slice(0, limit) });
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
+          return;
+        }
+        // ── 档案（取代日记）：跨会话共享的事实型记忆 ──────────────────
+        if (url.pathname === '/api/socialV2/profile' || url.pathname.startsWith('/api/socialV2/profile/')) {
+          const action = url.pathname === '/api/socialV2/profile' ? '' : url.pathname.slice('/api/socialV2/profile/'.length);
+          try {
+            if (req.method === 'GET') {
+              const key = String(url.searchParams.get('key') ?? '').trim();
+              const q = String(url.searchParams.get('q') ?? '').trim();
+              const pf = profileForPrompt({ stateDir: STATE_DIR, key });
+              sendJson({ ok: true, shared: pf.shared, local: pf.local, items: listProfile({ stateDir: STATE_DIR, q, limit: 200 }) });
+              return;
+            }
+            const body = await readBody();
+            if (action === 'add') { sendJson(addProfile({ stateDir: STATE_DIR, text: body.text, scope: body.scope || 'all', tags: body.tags, from: body.from || 'ai' })); return; }
+            if (action === 'remove') { sendJson(removeProfile({ stateDir: STATE_DIR, id: body.id })); return; }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
         // ── 自主性（L2）：自己的目标 / 每日自由行动预算 / 行动日志 ──────────
@@ -14913,7 +14932,7 @@ const agentTokenOk = (key, token) => {
       const stV2 = getSocialV2State(key);
       tokenLine = `【会话令牌】${stV2.agentToken}（调用状态/发送工具时请在参数中带上此令牌）\n\n`;
     }
-    const promptText = `${roleLine}${selfLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
+    const promptText = `${roleLine}${selfLine}${profileLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
     let popSilent = null;
     try {
       const sessionId = await ensureSession(key);
@@ -16166,6 +16185,13 @@ const agentTokenOk = (key, token) => {
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
+    // 档案：跨会话共享的事实（私聊学到的在群里也能用）
+    let profileLine = '';
+    try {
+      const pf = profileForPrompt({ stateDir: STATE_DIR, key });
+      const lines = [...pf.shared, ...pf.local];
+      if (lines.length) profileLine = `【档案】关于主人/这个会话，你已经记下的事实（跨会话共享，别重复问）：\n${lines.map((t) => '- ' + t).join('\n')}\n\n`;
+    } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
@@ -16339,12 +16365,19 @@ const agentTokenOk = (key, token) => {
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
+    // 档案：跨会话共享的事实（私聊学到的在群里也能用）
+    let profileLine = '';
+    try {
+      const pf = profileForPrompt({ stateDir: STATE_DIR, key });
+      const lines = [...pf.shared, ...pf.local];
+      if (lines.length) profileLine = `【档案】关于主人/这个会话，你已经记下的事实（跨会话共享，别重复问）：\n${lines.map((t) => '- ' + t).join('\n')}\n\n`;
+    } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-    return `${roleLine}${selfLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+    return `${roleLine}${selfLine}${profileLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
 
   /**
