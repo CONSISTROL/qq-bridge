@@ -177,7 +177,7 @@ try {
   test('existing mode, DSH settings and non-link plugin directory remain untouched', () => {
     const f = fixture('preserve', '[]\n');
     fs.mkdirSync(path.join(f.repo, 'state'), { recursive: true });
-    const mode = '{"mode":"closed-agent","closedAgentPreset":"custom"}\n';
+    const mode = '{"mode":"reserved2"}\n';
     fs.writeFileSync(path.join(f.repo, 'state/mode.json'), mode);
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);

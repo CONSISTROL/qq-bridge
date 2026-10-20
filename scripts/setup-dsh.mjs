@@ -7,8 +7,9 @@
 //        插件行（0.2 的 preset registry 不再扫描 ~/.dsh/.agent-presets/ 目录）
 //      - DSH 0.1.x：仍按老办法复制到 ~/.dsh/.agent-presets/<id>/
 //      两条路都保留；用 QQ_BRIDGE_DSH_PRESET_FORMAT=auto|modern|legacy 可强制。
-//   2. 在 DSH profile 的 cordis.patch.yml 中挂载三个 MCP server：
+//   2. 在 DSH profile 的 cordis.patch.yml 中挂载 MCP server：
 //      mcp-snowluma / mcp-snowluma-host / mcp-web-search-safe
+//      （另可选 mcp-phone：域外手机远端，需 config.json 里 phone.enabled=true）
 //   3. 在 profile package.json 中注册 qq-mode-console 插件
 //
 // 用法：
@@ -61,7 +62,10 @@ function yamlSingleQuote(s) {
 }
 
 // 由桥接托管的 MCP 条目 id：脚本对这三个 id 拥有所有权，可安全地按 id 增删。
-const MANAGED_MCP_IDS = ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe'];
+const MANAGED_MCP_IDS = ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe', 'mcp-phone'];
+
+// 由桥接托管的其它 profile 插件条目（非 MCP，但同样需要按 id 增删）。
+const MANAGED_PLUGIN_IDS = ['qq-mode'];
 
 // 由桥接托管的 agent preset：仓库 dsh/agent-presets/<id>/ 是唯一真源，
 // profile patch 里的行 id 固定为 preset-<id>，脚本对它们拥有所有权。
@@ -233,6 +237,16 @@ function presetEntries(profileDir, format) {
   return out;
 }
 
+/** 读取 config.json（缺失/损坏时返回空对象）。 */
+function readBridgeConfig() {
+  try {
+    const text = fs.readFileSync(path.join(REPO_ROOT, 'config.json'), 'utf8');
+    return JSON.parse(text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text);
+  } catch {
+    return {};
+  }
+}
+
 function mcpEntries() {
   const node = process.execPath;
   const servers = {
@@ -240,6 +254,15 @@ function mcpEntries() {
     'mcp-snowluma-host': { serverName: 'snowluma-host', script: path.join(REPO_ROOT, 'src', 'mcp-host-server.js') },
     'mcp-web-search-safe': { serverName: 'web-search-safe', script: path.join(REPO_ROOT, 'src', 'mcp-web-search-safe.js') },
   };
+  // 手机远端（mcp-phone）是**机器专属**能力：需要一台跑着 Termux sshd 的手机，
+  // 并在服务器上配好 `ssh phone` 反向隧道。默认不挂载，避免在别的机器上引入必然失败的 MCP。
+  // 开启方式：config.json 里加 { "phone": { "enabled": true } }。
+  // 注意：QQ 群聊 preset（qq-chat / qq-chat-v2）挂着 qq-tool-restrict 白名单，
+  // mcp__phone__* 不在白名单内，因此**群友触达不到手机**；只有没有该限制的
+  // preset（如 standard）才会看到这些工具。
+  if (readBridgeConfig()?.phone?.enabled === true) {
+    servers['mcp-phone'] = { serverName: 'phone', script: path.join(REPO_ROOT, 'src', 'mcp-phone.js'), toolCallTimeoutMs: 120000 };
+  }
   let out = '# === qq-bridge MCP BEGIN ===\n';
   out += '# 由 scripts/setup-dsh.mjs 维护；这段区块会被整体替换，请勿手工编辑内部条目。\n';
   for (const [id, s] of Object.entries(servers)) {
@@ -255,6 +278,12 @@ function mcpEntries() {
     // qq_wait_for_messages 最长可等 10 分钟；DSH 默认 60s 会提前掐断工具调用。
     if (s.toolCallTimeoutMs) out += `        toolCallTimeoutMs: ${s.toolCallTimeoutMs}\n`;
   }
+  // qq-mode 设置命名空间：DSH 0.2 要求 profile 里存在 id === ns 的插件条目，
+  // 否则 settings.update 会报 No configurable plugin entry。
+  out += `- insert:\n`;
+  out += `    - id: qq-mode\n`;
+  out += `      name: qq-mode-console\n`;
+  out += `      config: {}\n`;
   out += '# === qq-bridge MCP END ===\n';
   return out;
 }
@@ -282,10 +311,20 @@ function prepareCordisPatch(format) {
     if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
       fatal(`invalid patch operation in ${patchFile}; file unchanged`);
     }
-    if (!Object.hasOwn(operation, 'insert')) { kept.push(operation); continue; }
+    // 顶层直接条目（老格式）也必须受管：历史上 qq-mode 曾以 `- id: qq-mode` 直接写在数组里，
+    // 新格式则放在 insert 块内，两者并存会让 DSH 把同一个插件加载两次（控制台/设置出现两份）。
+    if (!Object.hasOwn(operation, 'insert')) {
+      if (MANAGED_MCP_IDS.includes(operation.id) || MANAGED_PLUGIN_IDS.includes(operation.id)) {
+        removedMcp++;
+        continue;
+      }
+      kept.push(operation);
+      continue;
+    }
     if (!Array.isArray(operation.insert)) fatal(`insert must be an array in ${patchFile}; file unchanged`);
     const entries = operation.insert.filter((entry) => {
-      if (MANAGED_MCP_IDS.includes(entry?.id)) { removedMcp++; return false; }
+      if (MANAGED_MCP_IDS.includes(entry?.id)
+        || MANAGED_PLUGIN_IDS.includes(entry?.id)) { removedMcp++; return false; }
       if (MANAGED_PRESET_IDS.includes(entry?.id)) { removedPreset++; return false; }
       return true;
     });
@@ -403,9 +442,8 @@ function ensureLocalModeFile() {
     return;
   }
   ensureDir(stateDir);
-  // DSH 0.1.5 起不再有 'router-standard' preset；留空表示「用 DSH 自己声明的默认 preset」，
-  // 由 bridge.js 的 resolvePresetName() 兜底（硬编码已下线的名字只会换来每次启动的误导性告警）。
-  fs.writeFileSync(modeFile, `${JSON.stringify({ mode: 'reserved2', closedAgentPreset: '' }, null, 2)}\n`, 'utf8');
+  // 运行模式固定为 reserved2（其余模式已删除），这里只做兜底落盘。
+  fs.writeFileSync(modeFile, `${JSON.stringify({ mode: 'reserved2' }, null, 2)}\n`, 'utf8');
   log(`state/mode.json created with mode=reserved2 (fallback if DSH settings are not available)`);
 }
 

@@ -52,13 +52,15 @@ for (const p of ['qq-chat', 'qq-chat-v2']) {
 
 const patch = fs.readFileSync(path.join(DSH_HOME, 'profiles/web/cordis.patch.yml'), 'utf8');
 const patchDoc = yaml.load(patch);
-const mcpIds = patchDoc.filter((e) => e?.insert).flatMap((e) => e.insert.map((x) => x.id));
-check('profile patch 含 3 个 MCP 且无重复', mcpIds.length === 3 && new Set(mcpIds).size === 3, mcpIds.join(', '));
+// 同一份 patch 里还有 agent-preset 行，必须只挑 mcp-* 才是 MCP 条目。
+const insertIds = patchDoc.filter((e) => e?.insert).flatMap((e) => e.insert.map((x) => x.id));
+const mcpIds = insertIds.filter((id) => String(id).startsWith('mcp-'));
+check('profile patch 至少含 3 个 MCP 且无重复', mcpIds.length >= 3 && new Set(mcpIds).size === mcpIds.length, mcpIds.join(', '));
 const snowlumaEntry = patchDoc.filter((e) => e?.insert).flatMap((e) => e.insert).find((x) => x.id === 'mcp-snowluma');
 check('mcp-snowluma 带 toolCallTimeoutMs=725000', snowlumaEntry?.config?.toolCallTimeoutMs === 725000);
 check('mcp 路径指向本仓库', mcpIds.every((id) => {
   const e = patchDoc.filter((x) => x?.insert).flatMap((x) => x.insert).find((y) => y.id === id);
-  return String(e.config.args[0]).includes('qq-bridge');
+  return String(e?.config?.args?.[0] ?? '').includes('qq-bridge');
 }));
 
 const pkg = JSON.parse(fs.readFileSync(path.join(DSH_HOME, 'profiles/web/package.json'), 'utf8'));
@@ -80,7 +82,6 @@ check('bridge.js 可执行代码无 router-standard 残留', !bridgeCode.include
 // setup-dsh.mjs 曾被漏改：0.1.5 适配只清了 bridge.js，脚本里仍在写死已下线的 preset 名。
 const setupCode = stripComments(fs.readFileSync(path.join(ROOT, 'scripts/setup-dsh.mjs'), 'utf8'));
 check('setup-dsh.mjs 可执行代码无 router-standard 残留', !setupCode.includes('router-standard'));
-check('setup-dsh.mjs 新装默认 closedAgentPreset 留空（交给 DSH 默认 preset）', /closedAgentPreset:\s*''/.test(setupCode));
 check('bridge.js 默认模型为 deepseek-flash', /model:\s*'deepseek-flash'/.test(bridgeCode));
 check('bridge.js 不再有「无参创建会话」兜底', !/sessions\.create\(\{\}\)/.test(bridgeCode));
 check('bridge.js 含 preset 清单/默认 preset 解析', bridgeSrc.includes('resolvePresetName') && bridgeSrc.includes('refreshPresetList'));
@@ -88,10 +89,10 @@ check('bridge.js 含 preset 清单/默认 preset 解析', bridgeSrc.includes('re
 // 安全不变量回归防线：群聊/仿真会话在 preset 缺失时必须 fail-closed。
 // 旧实现会在 preset 不在 DSH 清单里时静默回退到 DSH 默认 preset（standard，含 bash/
 // 文件读写），把本地工具暴露给 QQ 群 —— 与 RULES.md「无本地工具」的承诺直接矛盾。
-check('preset 解析带 strict 开关', /resolvePresetName\(name, \{ strict = false \} = \{\}\)/.test(bridgeCode));
-check('非 closed-agent 模式以 strict 解析 preset', /resolvePresetName\(wanted, \{ strict: true \}\)/.test(bridgeCode));
-check('群聊模式缺少 preset 时拒绝建会话（fail-closed）', /strictPreset && !preset/.test(bridgeCode));
-check('群聊模式不再重试「无 preset」建会话', /strictPreset \? \[true\] : \[true, false\]/.test(bridgeCode));
+check('preset 解析无 strict 开关（一律 fail-closed）', /function resolvePresetName\(name\)/.test(bridgeCode));
+check('缺少 preset 时拒绝建会话（fail-closed）', /if \(!preset\)/.test(bridgeCode));
+check('不再重试「无 preset」建会话', /for \(const withPreset of \[true\]\)/.test(bridgeCode));
+check('运行模式固定为 reserved2', /const VALID_MODES = \['reserved2'\]/.test(bridgeCode));
 
 // ── 3b. 版本身份一致性 ──────────────────────────────────────────────────────
 // v0.1.5 曾带着自称 0.1.2-alpha.1 的 package-lock.json 发布出去（package.json 却是
@@ -139,7 +140,9 @@ check('DSH 全局默认模型 = deepseek-flash', dm?.value?.model === 'deepseek-
 const ap = await rpc('agentPresets/list', {});
 const presetIds = ap.value?.presets?.map((p) => p.id) ?? [];
 check('agentPresets/list 含 qq-chat 与 qq-chat-v2', presetIds.includes('qq-chat') && presetIds.includes('qq-chat-v2'), presetIds.join(', '));
-check('DSH 默认 preset 为 standard（closed-agent 留空时的兜底）', st.value?.namespaces?.find((n) => n.ns === 'agent-presets')?.value?.default === 'standard');
+// closed-agent 删除后已没有「回落 DSH 默认 preset」的路径，这里只校验命名空间存在。
+const apNs = st.value?.namespaces?.find((n) => n.ns === 'agent-presets');
+check('agent-presets 命名空间可读', Boolean(apNs), apNs ? '' : '命名空间缺失');
 
 // 点号 endpoint（旧协议）应返回纯文本 404（不是 JSON 信封）——证明协议确为斜杠式
 const dotRes = await fetch(`${BASE}/api/session.list`, {

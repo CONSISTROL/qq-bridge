@@ -20,6 +20,7 @@ function renderStatus(view, s) {
 
 function renderPending(view, list) {
   const box = $('#pendingList', view);
+  if (!box) return; // 片段里缺这块时不要让整个视图崩掉
   if (!box) return; // 总览已移除「挂起审批」卡
   if (!list.length) { box.innerHTML = '<div class="empty">无挂起请求</div>'; return; }
   let html = '<table><tr><th>会话</th><th>类型</th><th>详情</th></tr>';
@@ -34,10 +35,10 @@ function renderPending(view, list) {
 }
 
 async function refreshSessions(view) {
-  if (!$('#sessionList', view)) return; // 总览已移除「会话映射」卡
   const s = await api('/api/sessions').catch(() => null);
   if (!s) return;
   const box = $('#sessionList', view);
+  if (!box) return;
   if (!s.sessions.length) { box.innerHTML = '<div class="empty">暂无会话<br><b>收到 QQ 消息后这里会出现</b>。</div>'; return; }
   let html = '<table><tr><th>QQ 会话</th><th>DSH 会话 ID</th><th>类型</th><th></th></tr>';
   for (const x of s.sessions) {

@@ -97,7 +97,7 @@ Then restart DSH. See [docs/DSH_SETUP.md](docs/DSH_SETUP.md) for details.
 - `config.json` and `state/` are **never committed**; the repository only ships `config.example.json`.
 - MCP send tools enforce whitelist checks and reject CQ-code injection.
 - Local paths, credentials, tokens and other sensitive patterns are filtered by the audit layer.
-- Process control for SnowLuma (`start_snowluma` / `stop_snowluma`) is disabled by default and only allowed in `closed-agent` mode when explicitly enabled.
+- Process control for SnowLuma (`start_snowluma` / `stop_snowluma`) is disabled by default and only allowed when the reserved2 gate passes (owner-only private allowlist + no fresh group activity).
 - The console uses a generated token when none is configured.
 
 ## Repository Layout

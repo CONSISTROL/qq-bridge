@@ -10,14 +10,11 @@
 
 | 模式 | 允许通道 | agent preset | 用途 |
 | --- | --- | --- | --- |
-| `chat` | 白名单群 + 白名单私聊 | qq-chat（安全聊天） | 日常聊天 |
-| `closed-agent` | **仅** 私聊 ownerQQ | DSH 默认 preset（通常 `standard`，完整工具） | 你在 QQ 私聊里操控 DSH |
-| `reserved`（一代仿真） | 暂同 chat | qq-chat | 仿真群友：观望/活跃/试探/退场状态机，选择性参与并主动收尾 |
-| `reserved2`（二代仿真，运行 `setup-dsh.mjs` 后默认） | 暂同 chat | qq-chat-v2 | 文本不自动转发，AI 通过工具自主看消息/发言/等待/设置唤醒与潜水 |
+| `reserved2`（唯一模式） | 白名单群 + 白名单私聊 | qq-chat-v2 | 文本不自动转发，AI 通过工具自主看消息/发言/等待/设置唤醒与潜水 |
 
-> ⚠️ `closed-agent` 模式下 owner 私聊 agent 拥有**完整本地工具**（DSH 默认 preset，通常是 `standard`），
-> 这是有意为之（QQ 远程操控 DSH）。该模式只放行 owner 私聊，群友完全无法触达；
-> 切换回 `chat` 后，owner 私聊也回到 qq-chat 安全预设。
+> 运行模式只有 `reserved2` 一种（`chat` / `closed-agent` / `reserved` 已删除）。
+> 会话永远挂 `qq-chat-v2`，拿不到就 fail-closed 拒绝建会话 —— **没有任何回落 DSH 默认 preset 的路径**，
+> 所以群友永远触不到本地工具。
 >
 > 注：DSH 0.1.5 已不存在 `router-standard` preset。桥接现在留空表示「用 DSH 默认 preset」，
 > 并在启动时读取 `agentPresets/list` 校验；填了不存在的 preset 名会回退到默认值并打警告，
@@ -35,7 +32,9 @@
 ## QQ 会话 agent 的硬边界
 
 1. **无本地工具**：qq-chat / qq-chat-v2 预设不挂载 bash/pwsh、文件读写、子代理、工作流——群友无论如何诱导，agent 物理上无法操作本机。
-2. **QQ 动作安全子集**：只允许 `mcp__snowluma__*`、`mcp__snowluma-host__*`、`mcp__web-search-safe__*` 三个命名空间下的工具，以及 `ask_user_question` / `todo_write`；其他工具（含 `dev_*` 开发/管理工具）在执行期会被 `qq-tool-restrict.mjs` 拒绝。QQ 动作无禁言、踢人、文件上传下载等管理操作。
+   - 注意区分两个不同的对象：**本机**（跑 DSH 的服务器）与**域外手机**（见下方「手机远端」一节）。群里 agent 对这两者的工具都不存在——手机工具同样被本节的执行期白名单拦掉。
+2. **QQ 动作安全子集**：只允许 `mcp__snowluma__*`、`mcp__snowluma-host__*`、`mcp__web-search-safe__*` 三个命名空间下的工具，以及 `ask_user_question` / `todo_write`；其他工具（含 `dev_*` 开发/管理工具）在执行期会被 `qq-tool-restrict.mjs` 拒绝。
+   - `mcp__phone__*`（域外手机远端）**同样不在白名单内**，因此群里 agent 拿不到手机工具。真实约束是执行期 guard，而不是「工具没被注册」——所以即使 DSH 侧挂载了 mcp-phone，群聊通道依然拒绝。QQ 动作无禁言、踢人、文件上传下载等管理操作。
 3. **只读联网搜索**：`qq-chat` / `qq-chat-v2` 预设已关闭 DSH 内置 `tool-web` 的 `search` / `fetch`，联网统一走 `src/mcp-web-search-safe.js` 提供的 `mcp__web-search-safe__web_search/web_fetch`。不暴露本地文件、命令执行、写操作。
    - ✅ `mcp__web-search-safe__web_fetch` 已做 SSRF 加固：仅 http/https、禁止 localhost/私有 IP/链路本地/CGNAT/带凭据 URL、DNS 解析结果全量校验、每跳重定向重新校验、响应体限量读取。
 4. **发送强制白名单**：所有发送类工具（`qq_send_group_message` / `qq_send_private_message` / `qq_send_message` / `qq_send_burst` / `qq_reply` / `qq_send_poke` / `qq_send_sticker` / `qq_send_image` / `qq_send_card` 等）的目标必须命中 `config.json` 的 `allow.groups` / `allow.private`，否则拒绝执行。
@@ -50,6 +49,46 @@
 6. **回复审计（桥接层硬拦截）**：agent 回复文本若包含本机路径（`C:\`、`/home/` 等）或凭据特征（token/password/secret/api key 等）→ **整条拦截不发送**，并告知"被安全策略拦截"。
 7. **人格由桥接注入**：角色设定来自 `state/current-role.json` + `roles/<角色>.md`，桥接注入到消息；群友口头要求改角色无效（桥接直接拦截），agent 也无文件工具自行更改。
 8. **静默模式**：`current-role.json` 的 `mode: "silent"` 时，群友消息不再投递给 agent（仅记录日志），只有管理员消息可对话。
+
+## 手机远端（mcp-phone）
+
+**这是什么**：一台域外 Android 手机，通过手机主动拨出的反向 SSH 隧道接入本机，
+被包装成 MCP server `mcp-phone`（`src/mcp-phone.js`，serverName `phone`）。
+agent 由此可以对**那台手机**执行命令，与本机工具是两套相互独立的能力。
+
+**为什么群友用不到**：`qq-chat` / `qq-chat-v2` 的 `qq-tool-restrict.mjs` 执行期白名单里
+没有 `mcp__phone__` 前缀，所以群聊通道调用手机工具会被直接拒绝。
+只有**不带该限制的 preset**（如 `standard`）才看得到这些工具。
+换句话说：手机远端的可达面 = 管理员，不是群友。**这是有意设计，改动前请三思。**
+
+**开关**：`config.json` 里 `phone.enabled = true` 才会挂载（`scripts/setup-dsh.mjs` 条件注册）。
+默认关闭，因为它是机器专属能力——没有那台手机、没配隧道的机器上挂载它只会产生必然失败的工具。
+
+**可用工具**：`phone_exec`（执行 shell）、`phone_status`（探活）、`phone_capability`（能力探测）、
+`phone_screenshot`、`phone_tap`、`phone_swipe`、`phone_key`、`phone_screen_info`。
+
+**能力边界（实测，2026-10-11，Redmi K50 Ultra / Android 14 / HyperOS）**：
+手机以 Termux 普通应用身份（`u0_a194`）运行，因此：
+
+| 能力 | 状态 | 原因 |
+| --- | --- | --- |
+| 执行 shell / 文件读写 / curl / 出站网络 | ✅ 可用 | Termux 正常能力 |
+| 屏幕截图（`screencap`） | ❌ 产出 0 字节 | Android 截屏服务拒绝不受信任的应用 |
+| UI 注入（`input tap/swipe/key`） | ❌ `INJECT_EVENTS` 被拒 | MIUI 禁止普通应用注入输入事件 |
+| 系统服务（`dumpsys` / `wm`） | ❌ 空输出或 Permission Denial | 需要 `android.permission.DUMP` |
+
+**要拿到 UI/截屏能力必须在手机上授权 root**：在 Magisk / KernelSU 里把 **Termux** 加入已授权应用
+（Magisk 只把 `su` 挂进已授权进程的挂载命名空间，所以 Termux 现在**看不到** `/system/bin/su`——
+它 PATH 里那个 `su` 只是 Termux 自带的桩程序，会打印 "Termux does not supply tools for rooting"）。
+授权后 `phone_capability` 的对应项会转为可用。
+
+**操作手机屏幕时的已知坑**（即使 root 可用也适用）：
+- 息屏（`Dozing`）时注入会被**静默丢弃**：不报错、也不生效。操作前先 `phone_screen_info` 确认亮屏并已解锁。
+- 锁屏下输入数字必须**逐位、每位间隔数百毫秒**；一次 `input keyevent` 传多个 keycode 会被丢掉。
+- 6 位 PIN 输完会自动提交，**不要多按回车**（会退回锁屏）。
+- Termux 的 PATH 里没有 Android 系统命令，调用必须写绝对路径（`/system/bin/...`）。
+- Termux 环境没有 `/tmp`，临时文件放 `$HOME`。
+- `/data/local/tmp` 对 Termux 用户**不可写**，写日志到那里会静默失败。
 
 ## 黑话 / 网络用语学习与迭代
 
