@@ -74,9 +74,11 @@ export async function phoneAct({ action, x, y, x2, y2, ms, keycode, text } = {})
   } else {
     return { ok: false, error: 'action 只能是 tap / swipe / key / text' };
   }
-  // 锁屏时点/滑等于白点：先尝试进入可操作状态
-  const kg = await sh('dumpsys window policy | grep -m1 -E "showing="');
-  if (/showing=true/.test(kg.out)) await phonePrepare();
+  // 锁屏时点/滑等于白点：先尝试进入可操作状态（只在本次进程里试一次，别每次操作都跑 20 秒）
+  if (!globalThis.__qqPhonePrepared) {
+    const kg = await sh('dumpsys window policy | grep -m1 -E "showing="');
+    if (/showing=true/.test(kg.out)) { await phonePrepare(); globalThis.__qqPhonePrepared = true; }
+  }
   const r = await sh(cmd, { timeoutMs: 20000 });
   return r.ok ? { ok: true, action: a, cmd } : { ok: false, error: r.err || r.out || '执行失败' };
 }
@@ -89,29 +91,47 @@ export async function phoneShell(cmd, { timeoutMs = 60000 } = {}) {
 }
 
 /** 刷 B站（高层）：打开 App → 可选的搜索 → 刷几屏 → 截图 + 前台标题。 */
-export async function phoneBili({ task = 'feed', query = '', swipes = 3 } = {}) {
-  // 先亮屏 + 上滑解锁：锁屏状态下 App 起来了也看不到，等于白刷。
+export async function phoneBili({ task = 'feed', query = '', swipes = 3, pin = '' } = {}) {
+  // 先亮屏；还锁着就用数字密码解（有配置的话），再不行才走 prepare
   let wake = await phoneWake();
   if (!wake.unlocked) {
-    // 锁屏 → 尝试进入「可全程操作」状态（关闭锁屏+常亮），再试一次
-    const prep = await phonePrepare();
-    wake = prep.wake || wake;
-    if (!wake.unlocked) return { ok: false, error: wake.note, wake, prepare: prep };
+    if (String(pin || '').trim()) {
+      const u = await phoneUnlock({ pin });
+      if (u.unlocked) wake = { ...wake, unlocked: true, note: u.note };
+    }
+    if (!wake.unlocked) {
+      const prep = await phonePrepare();
+      const u2 = String(pin || '').trim() ? await phoneUnlock({ pin }) : null;
+      if (u2?.unlocked) wake = { ...wake, unlocked: true, note: u2.note };
+      else {
+        wake = prep.wake || wake;
+        if (!wake.unlocked) return { ok: false, error: wake.note, wake, prepare: prep };
+      }
+    }
   }
   const pkgs = ['tv.danmaku.bili', 'com.bilibili.app', 'tv.danmaku.bilibili'];
   const exists = await sh('pm list packages | grep -i bili | head -3');
   const pkg = (pkgs.find((p) => exists.out.includes(p))) || (exists.out.match(/package:(\S+)/)?.[1] ?? '');
   if (!pkg) return { ok: false, error: '手机上没找到 B站 App（pm list packages 里没有 bili）' };
-  const home = await sh('input keyevent 3'); // 先回桌面
+  await sh('input keyevent 3'); // 先回桌面
+  // MIUI 上 monkey 常常起不来（实测起完前台还是桌面），所以优先用 am start + 解析出来的 Activity
+  const resolved = (await sh(`cmd package resolve-activity --brief ${pkg} | tail -1`)).out.trim();
+  const act = resolved.includes('/') ? resolved : '';
   let launch = '';
   if (task === 'search' && query) {
-    // 直接走 B站 搜索 deep link（多数版本支持）
     launch = `am start -a android.intent.action.VIEW -d ${JSON.stringify(`bilibili://search?keyword=${encodeURIComponent(query)}`)} ${pkg}`;
+  } else if (act) {
+    launch = `am start -n ${act}`;
   } else {
     launch = `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`;
   }
   const r = await sh(launch, { timeoutMs: 30000 });
-  await new Promise((res) => setTimeout(res, 2500));
+  await new Promise((res) => setTimeout(res, 3000));
+  // 未登录/新装时会有「完善信息，获取精准推荐」弹层挡住首页：
+  // 实测按返回会直接退出 App，正确做法是点一下弹层**上方**的空白区（首页 ~18% 高度处）把它收掉。
+  const H2 = Number((await sh('wm size')).out.match(/x(\d+)/)?.[1]) || 2712;
+  await sh(`input tap ${Math.round(((await sh('wm size')).out.match(/(\d+)x/)?.[1] || 1220) / 2)} ${Math.round(H2 * 0.18)}`, { timeoutMs: 10000 });
+  await new Promise((res) => setTimeout(res, 1200));
   for (let i = 0; i < Math.max(0, Math.min(10, Number(swipes) || 0)); i++) {
     await sh('input swipe 540 1600 540 500 320', { timeoutMs: 12000 });
     await new Promise((res) => setTimeout(res, i === 0 ? 2200 : 1200));
@@ -209,17 +229,35 @@ export async function phoneUnprepare() {
 export async function phoneUnlock({ pin = '' } = {}) {
   const code = String(pin || '').replace(/\s+/g, '');
   if (!/^\d{4,8}$/.test(code)) return { ok: false, error: '没有可用的数字密码（config.phone.unlockPin），或格式不对' };
-  await phoneWake();
   const locked = async () => /showing=true/.test((await sh('dumpsys window policy | grep -m1 -E "showing="')).out);
+  await phoneWake();
   if (!(await locked())) return { ok: true, alreadyUnlocked: true, note: '本来就是解锁状态' };
-  // 先点一下密码框区域，确保输入焦点在锁屏上，再输入
-  await sh('input tap 610 1400', { timeoutMs: 10000 });
-  await new Promise((r) => setTimeout(r, 700));
-  const typed = await sh(`input text ${JSON.stringify(code)}`, { timeoutMs: 15000 });
-  if (!typed.ok) return { ok: false, error: `输入密码失败：${(typed.err || typed.out).slice(0, 120)}` };
-  await sh('input keyevent 66', { timeoutMs: 10000 }); // ENTER
-  await new Promise((r) => setTimeout(r, 1800));
-  const stillLocked = await locked();
+  // 屏幕分辨率（数字键盘坐标按比例算，换机型也能用）
+  const size = (await sh('wm size')).out.match(/(\d+)x(\d+)/);
+  const W = size ? Number(size[1]) : 1220;
+  const H = size ? Number(size[2]) : 2712;
+  const col = (i) => Math.round(W * [0.25, 0.5, 0.75][i]);
+  // 实测 MIUI 数字键盘四行中心（按高度比例）
+  const row = (i) => Math.round(H * [0.555, 0.632, 0.710, 0.787][i]);
+  const key = (d) => {
+    if (d === '0') return [col(1), row(3)];
+    const n = Number(d);
+    return [col((n - 1) % 3), row(Math.floor((n - 1) / 3))];
+  };
+  // 优先点数字键（锁屏上 input text 常常不生效，实测 6 位 PIN 点击可用）
+  for (const d of code) {
+    const [x, y] = key(d);
+    await sh(`input tap ${x} ${y}`, { timeoutMs: 12000 });
+    await new Promise((r) => setTimeout(r, 220));
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  let stillLocked = await locked();
+  if (stillLocked) {
+    // 兜底：有些机型要按回车确认
+    await sh('input keyevent 66', { timeoutMs: 10000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    stillLocked = await locked();
+  }
   return { ok: !stillLocked, unlocked: !stillLocked, note: stillLocked ? '密码不对或没解掉（仍是锁屏）' : '已解锁' };
 }
 

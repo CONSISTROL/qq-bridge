@@ -5417,6 +5417,11 @@ const agentTokenOk = (key, token) => {
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     // 插件→能力：新的开关结构在 config.socialV2.plugins；没有就回退到旧的扁平 tools 表。
+    // 手机解锁密码：直接从磁盘读（进程内 cfg 可能被归一化过，读不到 phone 段）
+    const phonePin = () => {
+      try { const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8').replace(/^\uFEFF/, '')); return String(raw?.phone?.unlockPin ?? ''); }
+      catch { return ''; }
+    };
     // 保存配置：这个作用域里没有现成的 configFile，直接算路径（之前误写成不存在的 saveConfig()）
     const persistConfig = () => atomicWriteJson(path.join(ROOT, 'config.json'), cfg);
     const v2ToolEnabled = (flag) => {
@@ -7351,7 +7356,7 @@ const agentTokenOk = (key, token) => {
             if (req.method === 'POST' && action === 'prepare') {
               if (!need('phoneKey', '操作手机')) return;
               const prep = await phonePrepare();
-              if (!prep.wake?.unlocked && String(cfg.phone?.unlockPin ?? '')) Object.assign(prep, await phoneEnsureUnlocked({ pin: String(cfg.phone.unlockPin) }));
+              if (!prep.wake?.unlocked && phonePin()) Object.assign(prep, await phoneEnsureUnlocked({ pin: phonePin() }));
               sendJson(prep);
               return;
             }
@@ -7362,7 +7367,7 @@ const agentTokenOk = (key, token) => {
             }
             if (req.method === 'POST' && action === 'wake') {
               if (!need('phoneKey', '操作手机')) return;
-              const pin = String(cfg.phone?.unlockPin ?? '');
+              const pin = phonePin();
               sendJson(pin ? await phoneEnsureUnlocked({ pin }) : await phoneWake());
               return;
             }
@@ -7371,7 +7376,7 @@ const agentTokenOk = (key, token) => {
               // ?wake=1：先亮屏（手机有密码时仍会停在锁屏，返回里如实说）
               let wakeInfo = null;
               if (String(url.searchParams.get('wake') ?? '') === '1') {
-                const pin = String(cfg.phone?.unlockPin ?? '');
+                const pin = phonePin();
                 wakeInfo = pin ? await phoneEnsureUnlocked({ pin }) : await phoneWake();
               }
               const shot = await phoneScreenshot();
@@ -7395,7 +7400,7 @@ const agentTokenOk = (key, token) => {
             if (req.method === 'POST' && action === 'bili') {
               if (!need('biliSearch', '刷 B站')) return;
               const body = await readBody();
-              sendJson(await phoneBili({ task: String(body.task ?? 'feed'), query: String(body.query ?? ''), swipes: Number(body.swipes) || 3 }));
+              sendJson(await phoneBili({ task: String(body.task ?? 'feed'), query: String(body.query ?? ''), swipes: Number(body.swipes) || 3, pin: phonePin() }));
               return;
             }
             sendJson({ ok: false, error: '未知操作' }, 404);
