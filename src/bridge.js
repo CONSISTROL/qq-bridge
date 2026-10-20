@@ -7340,6 +7340,29 @@ const agentTokenOk = (key, token) => {
           }
           return;
         }
+        // ── 发 QQ 动态（SnowLuma 的 send_qzone_msg，支持中文、不用手机）──────
+        if (url.pathname === '/api/socialV2/post-moment' || url.pathname === '/api/socialV2/delete-moment') {
+          if (!v2ToolEnabled('postMoment')) { sendJson({ ok: false, error: '能力未启用：发动态（控制台 → 插件 → 媒体）' }, 403); return; }
+          const body = await readBody();
+          try {
+            if (url.pathname === '/api/socialV2/post-moment') {
+              const content = String(body.content ?? '').trim();
+              if (!content) { sendJson({ ok: false, error: 'content 不能为空' }, 400); return; }
+              const r = await bot.raw('send_qzone_msg', { content });
+              const tid = r?.tid ?? '';
+              log(`[moment] 已发动态 tid=${tid || '?'}（${content.length} 字）`);
+              sendJson({ ok: !!tid, tid, content, time: r?.time ?? null });
+              return;
+            }
+            const tid = String(body.tid ?? '').trim();
+            if (!tid) { sendJson({ ok: false, error: 'tid 不能为空' }, 400); return; }
+            await bot.raw('delete_qzone_msg', { tid });
+            log(`[moment] 已删除动态 tid=${tid}`);
+            sendJson({ ok: true, tid, deleted: true });
+            return;
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+          return;
+        }
         // ── 手机控制（插件 phone 的能力；走 ssh phone → su -c）────────────
         if (url.pathname === '/api/phone' || url.pathname.startsWith('/api/phone/')) {
           const action = url.pathname === '/api/phone' ? '' : url.pathname.slice('/api/phone/'.length);

@@ -31,6 +31,8 @@ export const PLUGINS = [
       { id: 'sticker', label: '表情包', flags: ['sendSticker', 'listStickers', 'getStickerImage', 'collectSticker', 'pickSticker', 'stickerNote', 'getSelfImage', 'getForwardMsg'] },
       { id: 'voice', label: '语音', flags: ['voicePack'] },
       { id: 'video', label: '视频与音乐', flags: ['getMessageVideo', 'video', 'videoFrames'] },
+      // 发 QQ 动态走 SnowLuma 的 send_qzone_msg（不需要手机，支持中文）；默认关，防它自己乱发
+      { id: 'moment', label: '发动态（说说，会真的发到 Qzone）', flags: ['postMoment'], default: false },
       { id: 'stickerQQNote', label: '改 QQ 表情备注（动账号）', flags: ['setStickerRemark'], default: false },
       { id: 'card', label: '链接卡片（网关版本门禁，通常不渲染）', flags: ['sendCard'], default: false }
     ]
@@ -86,7 +88,6 @@ export const PLUGINS = [
       { id: 'screen', label: '看屏幕（状态 / 截图）', flags: ['phoneStatus', 'phoneScreen', 'phoneScreenshot'], base: true },
       { id: 'control', label: '操作手机（点击 / 滑动 / 按键）', flags: ['phoneTap', 'phoneSwipe', 'phoneKey'], base: true },
       { id: 'bili', label: '刷 B站（它自己会在手机上逛、看、回来跟你讲）', flags: ['biliSearch', 'biliSubtitles', 'biliFrames', 'biliLive', 'biliAudio'] },
-      { id: 'moment', label: '发 QQ 动态（它自己写文案，你可以在控制台先看）', flags: ['postMoment'], default: false },
       { id: 'shell', label: '在手机上执行命令（高危）', flags: ['phoneExec'], default: false }
     ]
   }

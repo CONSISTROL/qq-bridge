@@ -1263,28 +1263,40 @@ defineTool(
 // ── 发 QQ 动态 ────────────────────────────────────────────────────────────
 defineTool(
   'qq_post_moment',
-  '在手机上的 QQ 里发一条动态（说说）：打开 QQ → 动态 → 发表 → 输入文案 → 发送。'
-    + '默认 **dryRun**：只走到「文案已输入」就停，返回截图给你看，不会真发；确认没问题后传 send=true 才真正发表。'
-    + '中文文案需要手机装了 ADBKeyboard 输入法（input text 只支持 ASCII），没装会明确报错。'
-    + '这是「发 QQ 动态」能力，默认关闭，需要控制台「插件 → 手机控制」里开启。',
+  '发一条 QQ 动态（说说）到自己的空间。走网关的 send_qzone_msg，支持中文，发出去就是公开动态。'
+    + '默认 **dryRun**：不传 send=true 时只返回"将要发布的内容"给你确认，不会真的发。'
+    + '记住：这是对外公开的内容，不确定就先给群友看一遍文案。'
+    + '删除用 qq_delete_moment（需要 tid，发的时候会返回）。',
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
-    text: z.string().describe('动态文案'),
-    send: z.boolean().optional().describe('true=真的发出去；不传则只输入不发送')
+    content: z.string().describe('动态文案（支持中文，建议短一点）'),
+    send: z.boolean().optional().describe('true=真的发出去；不传则只预览')
   },
-  async ({ key, token, text, send }) => {
+  async ({ key, token, content, send }) => {
+    if (send !== true) {
+      return { content: [{ type: 'text', text: `（预览，未发布）将要发这条动态：\n${content}` }] };
+    }
     try {
-      const d = await agentApi('/api/phone/moment', {
-        method: 'POST',
-        body: JSON.stringify({ text, send: send === true }),
-        headers: { 'x-agent-token': token },
-        timeoutMs: 180000
+      const d = await agentApi('/api/socialV2/post-moment', {
+        method: 'POST', body: JSON.stringify({ content }), headers: { 'x-agent-token': token }, timeoutMs: 60000
       });
-      const blocks = [{ type: 'text', text: d.stage === 'sent' ? `已发表（前台：${d.foreground || '未知'}）` : `已输入文案但**未发送**（dryRun）：${d.note || ''}` }];
-      for (const s of (d.shots || []).slice(-2)) if (s.data) blocks.push({ type: 'image', data: s.data, mimeType: 'image/png' });
-      return { content: blocks };
+      return { content: [{ type: 'text', text: d.ok ? `已发动态（tid=${d.tid}）。要删就说一声，我用 qq_delete_moment 删。` : '发动态失败' }] };
     } catch (error) { return { content: [{ type: 'text', text: `发动态失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_delete_moment',
+  '删一条自己发的 QQ 动态（需要发的时候返回的 tid）。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), tid: z.string().describe('动态 tid') },
+  async ({ key, token, tid }) => {
+    try {
+      const d = await agentApi('/api/socialV2/delete-moment', {
+        method: 'POST', body: JSON.stringify({ tid }), headers: { 'x-agent-token': token }, timeoutMs: 60000
+      });
+      return { content: [{ type: 'text', text: d.ok ? `已删除动态 ${tid}` : '删除失败' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `删除失败：${error?.message ?? error}` }], isError: true }; }
   }
 );
 
