@@ -7491,7 +7491,13 @@ const agentTokenOk = (key, token) => {
               return;
             }
             const body = await readBody();
-            if (action === 'add') { sendJson(addProfile({ stateDir: STATE_DIR, text: body.text, scope: body.scope || 'all', tags: body.tags, from: body.from || 'ai' })); return; }
+            if (action === 'add') {
+              const r = addProfile({ stateDir: STATE_DIR, text: body.text, scope: body.scope || 'all', tags: body.tags, from: body.from || 'ai' });
+              // 同一份事实也写进统一记忆库（memdb 是召回的真源），否则新记的东西永远召不回来
+              if (r.ok) { try { upsertItem({ stateDir: STATE_DIR, item: { id: `fact:${r.item.id}`, kind: 'fact', scope: r.item.scope, text: r.item.text, tags: r.item.tags, at: r.item.at } }); } catch { /* 忽略 */ } }
+              sendJson(r);
+              return;
+            }
             if (action === 'remove') { sendJson(removeProfile({ stateDir: STATE_DIR, id: body.id })); return; }
             sendJson({ ok: false, error: '未知操作' }, 404);
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
@@ -16306,6 +16312,11 @@ const agentTokenOk = (key, token) => {
           + '\n用到哪个就自然用，别把清单整段念出来。\n\n';
       }
     } catch { /* 忽略 */ }
+    // 告诉它怎么用这套记忆（否则它只会"看到"，不会"存/查"）
+    profileLine += '【记忆怎么用】① 值得长期记住的事（主人偏好/约定、群友的梗与忌讳、群里确认过的事实）→ 用 qq_profile_save 存一条，'
+      + '存完自动进记忆库，以后按相关度召回；② 想不起以前聊过什么 → qq_recall（日记+原文锚点）或 qq_search_history（完整归档）；'
+      + '③ 「XX 是什么/怎么弄」这类知识 → 先 qq_knowledge_query，没有再用工具查，答完用 qq_knowledge_submit 存一条；'
+      + '④ 别把整段记忆念给群友听，自然用就行。\n\n';
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
@@ -16492,6 +16503,11 @@ const agentTokenOk = (key, token) => {
           + '\n用到哪个就自然用，别把清单整段念出来。\n\n';
       }
     } catch { /* 忽略 */ }
+    // 告诉它怎么用这套记忆（否则它只会"看到"，不会"存/查"）
+    profileLine += '【记忆怎么用】① 值得长期记住的事（主人偏好/约定、群友的梗与忌讳、群里确认过的事实）→ 用 qq_profile_save 存一条，'
+      + '存完自动进记忆库，以后按相关度召回；② 想不起以前聊过什么 → qq_recall（日记+原文锚点）或 qq_search_history（完整归档）；'
+      + '③ 「XX 是什么/怎么弄」这类知识 → 先 qq_knowledge_query，没有再用工具查，答完用 qq_knowledge_submit 存一条；'
+      + '④ 别把整段记忆念给群友听，自然用就行。\n\n';
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
