@@ -1377,7 +1377,7 @@ defineTool(
   }
 );
 
-// ── 档案（取代日记）：跨会话共享的事实记忆 ──────────────────────────────
+// ── 档案（取代档案）：跨会话共享的事实记忆 ──────────────────────────────
 defineTool(
   'qq_profile_save',
   '把一条**事实**记进档案：关于主人（偏好/习惯/约定）、关于这个群/这个人（梗、忌讳、关系、待办）。'
@@ -1695,8 +1695,8 @@ defineTool(
   }
 );
 
-// ── 记忆：查原文 / 写日记 / 列日记 / 召回 ───────────────────────────────────
-// 三级记忆：① 上下文（DSH 会话）② 日记（每天一篇，qq_diary_save）③ 全量归档（qq_search_history）。
+// ── 记忆：查原文 / 写档案 / 列档案 / 召回 ───────────────────────────────────
+// 三级记忆：① 上下文（DSH 会话）② 档案（每天一篇，qq_diary_save）③ 全量归档（qq_search_history）。
 // 问「过去的事」时先 recall 再取原文，别凭印象编。
 async function memoryApi(payload, token) {
   return agentApi('/api/socialV2/memory', {
@@ -1710,20 +1710,20 @@ async function memoryApi(payload, token) {
 defineTool(
   'qq_recall',
   '回忆接口：当有人问「之前说过…」「上次那个…」「你还记得吗」时**先用它**。'
-    + '它先查日记（哪几天聊过、结论是什么），再给原文锚点（时间+说话人+原文片段）。'
+    + '它先查档案（哪几天聊过、结论是什么），再给原文锚点（时间+说话人+原文片段）。'
     + '要引用细节再用 qq_search_history 取原文核对；查不到就说记不清，别编。',
   {
     key: z.string().describe('会话 key'),
     query: z.string().describe('要回忆的关键词/话题（用实词，别用「之前」「那个」这种空词）'),
     token: z.string().describe('会话令牌'),
-    limit: z.number().optional().describe('日记/原文各取几条（默认 5/8）')
+    limit: z.number().optional().describe('档案/原文各取几条（默认 5/8）')
   },
   async ({ key, query, token, limit }) => {
     try {
       const data = await memoryApi({ op: 'recall', key, query, limit }, token);
       const diary = (data.diaryHits || []).map((d) => `· ${d.day}：${String(d.summary || '').slice(0, 300)}`).join('\n');
       const anchors = (data.anchors || []).map((a) => `· ${new Date(Number(a.t)).toLocaleString('zh-CN')} [${a.from}] ${String(a.text || '').slice(0, 160)}`).join('\n');
-      return { content: [{ type: 'text', text: `【日记命中】\n${diary || '（没有）'}\n\n【原文锚点】\n${anchors || '（没有）'}\n\n${data.note || ''}` }] };
+      return { content: [{ type: 'text', text: `【档案命中】\n${diary || '（没有）'}\n\n【原文锚点】\n${anchors || '（没有）'}\n\n${data.note || ''}` }] };
     } catch (error) {
       return { content: [{ type: 'text', text: `回忆失败：${error?.message ?? error}` }], isError: true };
     }
@@ -1753,46 +1753,7 @@ defineTool(
   }
 );
 
-defineTool(
-  'qq_diary_save',
-  '写一篇日记（第二级记忆）：把某一天的聊天总结成「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」。'
-    + '只写结论与线索，不写流水账；不确定的细节别写死（留原文归档去核）。每天一篇，默认写昨天。',
-  {
-    key: z.string().describe('会话 key'),
-    summary: z.string().describe('日记正文（中文，几百字以内）'),
-    day: z.string().optional().describe('哪一天（YYYY-MM-DD，默认昨天）'),
-    topics: z.array(z.string()).optional().describe('当天的话题标签'),
-    openThreads: z.array(z.string()).optional().describe('没聊完/待跟进的事'),
-    token: z.string().describe('会话令牌')
-  },
-  async ({ key, summary, day, topics, openThreads, token }) => {
-    try {
-      const data = await memoryApi({ op: 'diary-save', key, summary, day, topics, openThreads }, token);
-      return { content: [{ type: 'text', text: `日记已保存：${data.day}` }] };
-    } catch (error) {
-      return { content: [{ type: 'text', text: `写日记失败：${error?.message ?? error}` }], isError: true };
-    }
-  }
-);
 
-defineTool(
-  'qq_diary_list',
-  '看最近几篇日记（第二级记忆）：回看自己写过什么、哪天聊过什么。',
-  {
-    key: z.string().describe('会话 key'),
-    token: z.string().describe('会话令牌'),
-    limit: z.number().optional().describe('最多几篇（默认 30）')
-  },
-  async ({ key, token, limit }) => {
-    try {
-      const data = await memoryApi({ op: 'diary-list', key, limit }, token);
-      const lines = (data.items || []).map((d) => `· ${d.day}：${String(d.summary || '').slice(0, 240)}`).join('\n');
-      return { content: [{ type: 'text', text: lines || '（还没有日记）' }] };
-    } catch (error) {
-      return { content: [{ type: 'text', text: `读日记失败：${error?.message ?? error}` }], isError: true };
-    }
-  }
-);
 
 // ── 发语音条（文本 → TTS → RVC 变声 → QQ record） ──────────────────────────
 if (cfg.socialV2?.tools?.sendVoice !== false) {

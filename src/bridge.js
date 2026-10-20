@@ -744,7 +744,7 @@ function loadConfig() {
           libraryMaxBytes: 3 * 1024 * 1024
         }
       },
-      // 三层记忆（第二级日记 + 第三级全量归档）；第一级是 DSH 会话上下文，不用配。
+      // 三层记忆（第二级档案 + 第三级全量归档）；第一级是 DSH 会话上下文，不用配。
       memory: {
         archive: { enabled: true, keepDays: 90, maxFileBytes: 64 * 1024 * 1024 },
         diary: { enabled: true, hour: 4, maxTurnsPerDay: 1 }
@@ -5307,7 +5307,7 @@ async function main() {
       log('⚠️ DSH 不可用（重启中？），QQ 消息将入队等待');
     }
   };
-  // 第二级记忆：每天一次，让机器人按第三级归档给自己写日记。
+  // 第二级记忆：每天一次，让机器人按第三级归档把值得记的事整理进档案（旧实现叫「日记」，已废弃）。
   // 触发条件：到了配置的小时（默认 4 点）、这一天还没写过、归档里确实有内容。
   // 插件定时任务（P4）：每隔一分钟扫一遍已启用插件的 jobs，到点请求 URL，
   // 命中 match 正则就让 AI 在指定会话里说一句（用 notifyAiSession，保持"AI 决定怎么说"）。
@@ -5358,11 +5358,11 @@ async function main() {
           if (readDiary({ stateDir: STATE_DIR, key, day: yesterday })) { st.lastDiaryDay = yesterday; continue; }
           st.lastDiaryDay = yesterday;
           saveSocialV2State();
-          void notifyAiSession(key, `【日记】把昨天（${yesterday}）的聊天写成一篇日记：先用 qq_search_history 看一眼当天都聊了什么，再用 qq_diary_save 保存（day=${yesterday}）。只写「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」，别写流水账，也别把话说死——细节留给原文归档。`).catch((error) => log(`[memory] 日记提醒发送失败 ${key}：${error?.message ?? error}`));
-          log(`[memory] 已提醒 ${key} 写日记（${yesterday}）`);
+          void notifyAiSession(key, `【档案】把昨天（${yesterday}）的聊天里值得长期记住的事记进档案：先用 qq_search_history 看一眼当天都聊了什么，再用 qq_diary_save 保存（day=${yesterday}）。只写「话题 / 结论决定 / 对群友的新印象 / 没聊完的事」，别写流水账，也别把话说死——细节留给原文归档。`).catch((error) => log(`[memory] 日记提醒发送失败 ${key}：${error?.message ?? error}`));
+          log(`[memory] 已提醒 ${key} 整理档案（${yesterday}）`);
         }
       } catch (error) {
-        log('[memory] 日记调度失败：' + (error?.message ?? error));
+        log('[memory] 档案调度失败：' + (error?.message ?? error));
       }
     }, 10 * 60 * 1000);
     timer.unref?.();
