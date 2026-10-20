@@ -181,3 +181,10 @@ export function decayMemories({ stateDir, halfLifeDays = 30, now = Date.now() } 
   }
   return { ok: true, decayed, dropped };
 }
+
+/** 关闭当前数据库句柄（测试隔离用：每个临时 state 目录用完要放锁）。 */
+export function closeMemoryDb() {
+  if (!db) return;
+  try { db.close(); } catch { /* 已经关了 */ }
+  db = null;
+}

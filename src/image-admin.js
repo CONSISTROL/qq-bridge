@@ -20,6 +20,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { atomicWriteJson } from './json-store.js';
 
 /** 受管的图片后缀。目录扫描、删除、回收站还原都按它过滤。 */
 export const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
@@ -185,13 +186,6 @@ function readJsonFile(file) {
   } catch {
     return null;
   }
-}
-
-function atomicWriteJson(file, obj) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
 }
 
 function stampString(date = new Date()) {

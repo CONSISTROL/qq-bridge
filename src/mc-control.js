@@ -355,3 +355,114 @@ export async function getFullStatus() {
     },
   };
 }
+
+// ————————————————— 服务器白名单 —————————————————
+//
+// 走 RCON（127.0.0.1:25575，密码在 server.properties）执行原版 whitelist 命令。
+// 远端没有现成的 RCON 客户端可依赖，这里把最小客户端用 Python 内联脚本发过去；
+// 脚本通过 base64 传输，避免引号/换行在不同 shell 下被吃掉。
+//
+// 安全边界：**不接受任意命令**。动作是固定枚举，玩家名必须匹配 Minecraft 用户名格式，
+// 因为 RCON 是裸命令通道，命令一旦拼进去就没有第二道校验。
+
+const MC_SERVER_DIR = process.env.MC_SERVER_DIR || '/home/wx/mc/server';
+
+const RCON_PY = String.raw`
+import socket, struct, sys
+props = sys.argv[1]
+port = 25575
+password = ""
+try:
+    with open(props, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() == "rcon.port":
+                port = int(v.strip())
+            elif k.strip() == "rcon.password":
+                password = v.strip()
+except OSError:
+    pass
+if not password:
+    print("RCON_PASSWORD_EMPTY")
+    sys.exit(2)
+
+def pack(req_id, ptype, body):
+    payload = struct.pack("<ii", req_id, ptype) + body.encode("utf-8") + b"\x00\x00"
+    return struct.pack("<i", len(payload)) + payload
+
+def recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise EOFError("connection closed")
+        buf += chunk
+    return buf
+
+def read_packet(sock):
+    (length,) = struct.unpack("<i", recv_exact(sock, 4))
+    return recv_exact(sock, length)
+
+try:
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    sock.settimeout(5)
+    sock.sendall(pack(1, 3, password))
+    auth = read_packet(sock)
+    if struct.unpack("<i", auth[:4])[0] == -1:
+        print("RCON_AUTH_FAIL")
+        sys.exit(3)
+    sock.sendall(pack(2, 2, " ".join(sys.argv[2:])))
+    out = read_packet(sock)
+    print(out[8:].decode("utf-8", "replace").strip())
+except OSError as e:
+    print("RCON_CONNECT_FAIL: " + str(e))
+    sys.exit(4)
+`;
+
+async function rconCommand(...args) {
+  const b64 = Buffer.from(RCON_PY, 'utf8').toString('base64');
+  const argText = args.map(shq).join(' ');
+  const r = await sshScript(`echo ${shq(b64)} | base64 -d | python3 - ${shq(`${MC_SERVER_DIR}/server.properties`)} ${argText}`, 20000);
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, output: r.stdout };
+}
+
+const WHITELIST_NAME_RE = /^[A-Za-z0-9_]{1,16}$/;
+const WHITELIST_ACTIONS = new Set(['add', 'remove', 'on', 'off', 'list', 'reload']);
+
+/** 读取白名单：开关状态 + 名单（RCON `whitelist list`）。 */
+export async function getWhitelist() {
+  const [list, props] = await Promise.all([
+    rconCommand('whitelist', 'list'),
+    sshScript(`grep -E '^white-list=' ${shq(`${MC_SERVER_DIR}/server.properties`)} 2>/dev/null || true`, 10000),
+  ]);
+  if (!list.ok) return { ok: false, error: list.error };
+  const line = String(list.output || '').trim();
+  const m = /:\s*(.+)$/.exec(line);
+  const names = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+  const enabled = /=\s*true\s*$/i.test(String(props.stdout || ''));
+  return { ok: true, enabled, names, output: line };
+}
+
+/**
+ * 白名单动作：add / remove / on / off / list / reload。
+ * add/remove 必须提供合法玩家名；其余动作忽略 name。
+ */
+export async function whitelistAction(action, name = '') {
+  const a = String(action || '').trim().toLowerCase();
+  if (!WHITELIST_ACTIONS.has(a)) return { ok: false, error: `未知动作：${a || '(空)'}（可用 add/remove/on/off/list/reload）` };
+  if (a === 'list') return getWhitelist();
+  if (a === 'add' || a === 'remove') {
+    const player = String(name || '').trim();
+    if (!WHITELIST_NAME_RE.test(player)) {
+      return { ok: false, error: '玩家名必须是 1~16 位字母/数字/下划线（Minecraft 用户名格式）' };
+    }
+    const r = await rconCommand(`whitelist`, a, player);
+    return r.ok ? { ok: true, action: a, name: player, output: r.output } : r;
+  }
+  const r = await rconCommand(`whitelist`, a);
+  return r.ok ? { ok: true, action: a, output: r.output } : r;
+}

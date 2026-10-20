@@ -1503,7 +1503,11 @@ await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：空标题空
 });
 
 await test('图片送达异常提示会劝住「对同一张硬重试」', async (h) => {
-  const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
+  // 控制台路由已拆到 src/console/*.js：源码断言要把这些模块一起算进来。
+  const bridge = [
+    fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8'),
+    ...fs.readdirSync(path.join(ROOT, 'src', 'console')).map((f) => fs.readFileSync(path.join(ROOT, 'src', 'console', f), 'utf8'))
+  ].join('\n');
   assert.ok(/图片没有真正送达/.test(bridge) && /别再对同一张反复重试/.test(bridge), '502 错误文案写明原因与对策');
   assert.ok(/imageMessageDelivered/.test(bridge) && /message_seq/.test(bridge) && /confirmImageDelivered/.test(bridge), '送达判据来自 get_msg 的 message_seq / CDN 地址');
   const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');

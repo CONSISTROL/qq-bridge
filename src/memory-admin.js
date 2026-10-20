@@ -26,6 +26,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonSafe, atomicWriteJson as atomicWrite } from './json-store.js';
 
 export const MEMORY_KIND = Object.freeze({
   TOPIC: 'lightTopic',
@@ -99,24 +100,6 @@ function measure(lines) {
   const list = (Array.isArray(lines) ? lines : []).filter((x) => x != null);
   const chars = list.reduce((sum, x) => sum + String(x).length, 0);
   return { items: list.length, chars, tokens: estimateTokens(list.join('\n')) };
-}
-
-function readJsonSafe(file, fallback) {
-  try {
-    let text = fs.readFileSync(file, 'utf8');
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    const parsed = JSON.parse(text);
-    return parsed ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function atomicWrite(file, obj) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
 }
 
 function dirSize(dir) {

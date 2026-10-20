@@ -17,7 +17,10 @@ function ok(cond, label, detail = '') {
   if (cond) { pass += 1; console.log(`  ✅ ${label}`); } else { fail += 1; console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ''}`); }
 }
 
-const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
+const bridge = [
+  fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8'),
+  ...fs.readdirSync(path.join(ROOT, 'src', 'console')).sort().map((f) => fs.readFileSync(path.join(ROOT, 'src', 'console', f), 'utf8'))
+].join('\n');
 const startBat = fs.readFileSync(path.join(ROOT, 'start.bat'), 'utf8');
 
 console.log('## 守护模式判定');

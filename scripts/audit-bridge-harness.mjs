@@ -39,6 +39,20 @@ import * as cardParse from '../src/card-parse.js';
 import * as imageRating from '../src/image-rating.js';
 import * as pixivSearch from '../src/pixiv-search.js';
 import * as presetStamp from '../src/preset-stamp.js';
+// 配置加载与 JSON 读写已从 bridge.js 抽成模块；bridge 的 import 会被剥掉，
+// 这里必须把它们的导出注入 VM，否则 main() 一启动就 ReferenceError。
+import * as configModule from '../src/config.js';
+import * as jsonStore from '../src/json-store.js';
+// 统一记忆库的 SQLite 句柄：临时目录清理前必须关掉（Windows 上不关会 EPERM）。
+import { closeMemoryDb } from '../src/memdb.js';
+// 控制台路由已拆到 src/console/*.js；bridge 里只剩工厂调用，import 会被剥掉，
+// 所以这里把工厂注入 VM（它们返回的 handler 由 main() 内部创建）。
+import * as consoleMcRoutes from '../src/console/mc-routes.js';
+import * as consoleCoreRoutes from '../src/console/core-routes.js';
+import * as consoleSlangKnowledgeRoutes from '../src/console/slang-knowledge-routes.js';
+import * as consoleSocialRoutes from '../src/console/social-routes.js';
+import * as consoleMediaRoutes from '../src/console/media-routes.js';
+import * as consoleAgentRoutes from '../src/console/agent-routes.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 // 图片压缩兜底（超限图片本地缩放后再投喂）：bridge.js 直接 import sharp，
 // 这里也要注入，否则 VM 里是 ReferenceError，压缩路径测不到。
@@ -153,6 +167,32 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     }
   }
   let source = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+  // 自动发现 bridge.js 依赖的所有本地模块并注入 VM。
+  // 以前这里手工维护一长串 import：bridge 新增一个模块而桩忘了加，main() 一启动就
+  // ReferenceError，整个审计跑不到任何用例。现在以 bridge 的 import 为准自动加载。
+  // 注意要按 **bridge 里的本地名** 注入（例如 `archiveStats as archiveStatsOf`），
+  // 不能只 spread 模块的导出名。
+  const autoModules = {};
+  const importRe = /^import\s+([\s\S]*?)\s+from\s+'([^']+)';/gm;
+  for (const match of source.matchAll(importRe)) {
+    const clause = match[1];
+    const spec = match[2];
+    if (!spec.startsWith('.')) continue; // node:/npm 包由桩显式提供（fs、sharp、SDK…）
+    const mod = await import(pathToFileURL(path.join(root, 'src', spec.slice(2))).href);
+    const defaultMatch = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause.trim());
+    if (defaultMatch) autoModules[defaultMatch[1]] = mod.default;
+    const nsMatch = /\*\s+as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+    if (nsMatch) autoModules[nsMatch[1]] = mod;
+    const namedMatch = /\{([\s\S]*?)\}/.exec(clause);
+    if (namedMatch) {
+      for (const part of namedMatch[1].split(',')) {
+        const piece = part.trim();
+        if (!piece) continue;
+        const [imported, local] = piece.split(/\s+as\s+/).map((s) => s.trim());
+        autoModules[local ?? imported] = mod[imported];
+      }
+    }
+  }
   source = source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
   source = source.replaceAll('import.meta.url', JSON.stringify(pathToFileURL(path.join(temp, 'src/bridge.js')).href));
   source = source.slice(0, source.indexOf("process.on('SIGINT'"));
@@ -238,12 +278,14 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     backfillMissedMessages, retireSession, agentTokenOk, anyAgentTokenOk, transcribeMediaAudio,
     // 出站口播清洗：AI 文本发送的唯一收口就是 sendMessagesV2，这里验证它真的会削。
     sendMessagesV2,
+    // 原样重发闸门：记录「我们发过什么」与「这一批要不要拦」两个内部动作。
+    checkTextDupGuard, recordAiTextSend,
     // 假 QQ 的调用记录（发出去的消息文本在 calls.sent 里）。
     calls: __auditCalls,
     // 暂存唤醒意图的补发判据（必须精确匹配自己那条 seq，否则陈旧意图会反复补投）。
     pendingWakeStillRelevantV2,
     // 聊天视频：段解析、ffmpeg 信息解析、抽帧入口（抽帧本体要真 ffmpeg，测试只钉解析与降级）。
-    extractMediaFromSegments, parseVideoInfo, extractVideoFrames, resolveFfmpegPath,
+    extractMediaFromSegments, parseVideoInfo, resolveFfmpegPath,
     // 批总量预算：撞上限时先把这张压小塞进去，而不是整张丢掉（合并转发只看到前几张的根因之一）。
     fitBatchBudget,
     // 动图与透明通道：透明图压成 JPEG 会变黑底（线上「拳头糊成一颗球」），
@@ -263,6 +305,8 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     };
   }
   const context = vm.createContext({
+    // autoModules 放最前面：后面显式提供的桩（FakeBot / EmbeddingClient / fs 等）优先。
+    ...autoModules,
     fs, path, http, crypto, fileURLToPath, URL, Buffer, AbortSignal, console: { log() {}, error() {} },
     // env 必须是空对象而不是传真实的 process.env：bridge.js 支持 QQ_BRIDGE_CONFIG /
     // QQ_BRIDGE_STATE_DIR 做隔离测试，泄漏真实环境变量会让审计读到生产配置/状态目录。
@@ -293,8 +337,9 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     SnowLumaWebSocketClient: FakeBot, text: (s) => s, sharp,
     // 审计里不许真起子进程（ffmpeg 等）；需要它的用例自己用 globals 覆盖。
     spawn: () => { throw new Error('spawn should not be called in audit'); },
+    spawnSync: () => ({ error: new Error('spawnSync should not be called in audit'), status: -1 }),
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...fileExtract, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp, ...memoryAdmin, ...imageAdmin, ...sentImages, ...contentFilter, ...topicExplore, ...selfProfile,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...slangIndex, ...stickerPicker, ...memberRemarks, ...fileExtract, ...knowledgeStore, ...imageAllow, ...cardParse, ...imageRating, ...pixivSearch, ...presetStamp, ...memoryAdmin, ...imageAdmin, ...sentImages, ...contentFilter, ...topicExplore, ...selfProfile, ...configModule, ...jsonStore, ...consoleMcRoutes, ...consoleCoreRoutes, ...consoleSlangKnowledgeRoutes, ...consoleSocialRoutes, ...consoleMediaRoutes, ...consoleAgentRoutes,
     // 假 QQ 的调用记录：用例要断言「实际发出去的文本」（口播清洗发生在发送收口里）。
     __auditCalls: calls,
     ...globals,
@@ -323,6 +368,10 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
   return { ...bridge, calls, temp, keepLoopAlive, async close() {
     if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
     for (const timer of timers) clearTimeout(timer);
-    fs.rmSync(temp, { recursive: true, force: true });
+    // 统一记忆库是 SQLite：句柄不关，Windows 上临时目录删不掉（EPERM）。
+    // 关闭后 db 会置空，下一个用例可以按自己的 stateDir 重新打开。
+    try { closeMemoryDb(); } catch { /* 忽略 */ }
+    // Windows 上刚关闭的 HTTP 连接/文件句柄可能还会短暂占用临时目录（EPERM），重试几次。
+    fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   } };
 }

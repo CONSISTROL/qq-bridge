@@ -13,6 +13,8 @@
     "stop": "bash stop.sh",
     "restart": "bash restart.sh",
     "status": "bash status.sh",
+    "check": "node scripts/check.mjs",
+    "check:dead": "node scripts/check.mjs --dead",
     "test:audit": "node scripts/test-audit.mjs",
     "self-test": "node src/self-test.js",
     "test-md": "node scripts/test-md-to-plain.mjs",

@@ -42,5 +42,15 @@ const liveBody = src.slice(src.indexOf('export async function controlLive'));
 ok(/dns-result-order=ipv4first/.test(liveBody.slice(0, 900)), 'controlLive 带 --dns-result-order=ipv4first');
 ok(/60043|人脸/.test(liveBody), 'controlLive 能识别 B站人脸认证（60043）');
 
+// ⑤ 白名单：实现必须存在，且非法输入在进入 RCON 之前就被拒绝
+for (const fn of ['getWhitelist', 'whitelistAction']) {
+  ok(new RegExp(`export async function ${fn}\\b`).test(src), `导出 ${fn}`);
+}
+const { whitelistAction } = await import('../src/mc-control.js');
+const badName = await whitelistAction('add', 'x; rm -rf /');
+ok(badName.ok === false && /玩家名/.test(badName.error), '非法玩家名不会进入 RCON（命令注入防线）');
+const badAction = await whitelistAction('stop', 'Notch');
+ok(badAction.ok === false && /未知动作/.test(badAction.error), '未知动作被拒绝（只接受固定枚举）');
+
 console.log(failures ? `\n❌ ${failures} 项失败` : '\n全部通过');
 process.exit(failures ? 1 : 0);

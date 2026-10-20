@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { readJsonSafe as readJsonFile, atomicWriteJson } from './json-store.js';
 
 const INDEX_NAME = 'index.json';
 const MAX_INDEX_BYTES = 8 * 1024 * 1024;
@@ -53,21 +54,8 @@ function sha256(buffer) {
 }
 
 function readJsonSafe(file) {
-  try {
-    let text = fs.readFileSync(file, 'utf8');
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function atomicWriteJson(file, obj) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  const parsed = readJsonFile(file, null);
+  return parsed && typeof parsed === 'object' ? parsed : null;
 }
 
 /** 给控制台看的一行出处：谁让它发的、什么类型。 */

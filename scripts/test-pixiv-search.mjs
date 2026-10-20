@@ -262,7 +262,11 @@ try { parseProxy('socks5://127.0.0.1:7897'); } catch (error) { proxyThrew = Stri
 ok(/只支持 http:\/\/ 代理/.test(proxyThrew), 'socks 明确拒绝而不是悄悄降级', proxyThrew);
 
 console.log('## 接线存在性');
-const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
+const bridge = [
+  fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8'),
+  fs.readFileSync(path.join(ROOT, 'src', 'config.js'), 'utf8'),
+  ...fs.readdirSync(path.join(ROOT, 'src', 'console')).sort().map((f) => fs.readFileSync(path.join(ROOT, 'src', 'console', f), 'utf8'))
+].join('\n');
 const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'social2.js'), 'utf8');
 ok(/searchPixivByTag/.test(bridge) && /pixivDailyRanking/.test(bridge), 'bridge 引用了 pixiv 搜索模块');

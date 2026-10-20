@@ -10,20 +10,11 @@ import fs from 'node:fs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { readJsonSafe } from './json-store.js';
 
 const MC_ROOT = process.env.MC_ROOT || '/home/wx/mc';
 const BOT_DIR = path.join(MC_ROOT, 'bot');
 const SERVER_DIR = path.join(MC_ROOT, 'server');
-
-function readJsonSafe(file, fallback) {
-  try {
-    let text = fs.readFileSync(file, 'utf8');
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    return JSON.parse(text);
-  } catch {
-    return fallback;
-  }
-}
 
 function readTextSafe(file, fallback = '') {
   try { return fs.readFileSync(file, 'utf8'); } catch { return fallback; }
