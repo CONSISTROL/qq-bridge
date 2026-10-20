@@ -13263,10 +13263,16 @@ const agentTokenOk = (key, token) => {
     // 动图只喂第一帧会被当成静图描述，所以提前说明「工具会按顺序返回多帧」。
     const maybeAnim = mediaList.some((m) => m?.label === '[动画表情]' || /\.gif(\?|$)/i.test(String(m?.file || m?.url || '')));
     const animNote = maybeAnim ? '**其中可能有动图：查看工具会按顺序返回多帧，别只看第一帧就下结论。**' : '';
+    // 单张图的提醒：先看完再判断「跟我有关吗」，有关就**回一张图**（比只回文字更像群里的人）。
+    const imageNudge = mediaList.length === 1
+      ? '\n【这张图画的是什么？跟我有关吗？】先看图再决定：如果有我（截图里是我、在说我、拿我玩梗、问的就是这张图），'
+        + '**有关就回一张图**（用 qq_pick_sticker 挑一张合适的表情，或 qq_search_images 找一张），回图比只打字更像群里的人；'
+        + '无关就只回一句或者不回。'
+      : '';
     if (currentMode === 'reserved2') {
-      return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
+      return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}${imageNudge}。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
     }
-    return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}。`;
+    return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}${imageNudge}。`;
   }
 
   function findMessageMedia(key, ref) {
