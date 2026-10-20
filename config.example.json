@@ -213,6 +213,10 @@
       "forceActive": [
         "group:1050666134",
         "group:217423624"
+      ],
+      "dayActiveHours": [
+        8,
+        24
       ]
     },
     "send": {

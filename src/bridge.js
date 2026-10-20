@@ -5418,7 +5418,38 @@ const agentTokenOk = (key, token) => {
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
-    // 常驻活跃：启动时把 forceActive 里的群强制拉回活跃（否则它上次潜水设置会一直生效）
+    // 白天始终监听：dayActiveHours 窗口内，白名单会话强制 active；窗口外允许它自己潜水（夜里别被叫醒）。
+  function applyWakePolicy(reason = 'startup') {
+    try {
+      const w = cfg.socialV2?.wake ?? {};
+      const win = Array.isArray(w.dayActiveHours) ? w.dayActiveHours : [8, 24];
+      const forceList = Array.isArray(w.forceActive) ? w.forceActive : [];
+      const h = new Date().getHours();
+      const inDay = win.length === 2 && h >= Number(win[0]) && h < Number(win[1]);
+      let changed = 0;
+      for (const key of [...socialV2.conversations.keys()]) {
+        if (!isSessionAllowedInCurrentMode(key)) continue;
+        const st = getSocialV2State(key);
+        if (!st.wakeConfig) continue;
+        const shouldActive = forceList.includes(key) || inDay;
+        if (shouldActive && st.wakeConfig.mode !== 'active') {
+          st.wakeConfig.mode = 'active';
+          st.wakeConfig.infinite = true;
+          st.wakeConfig.sleepUntil = null;
+          st.wakeConfig.triggers = { ...(st.wakeConfig.triggers || {}), anyMessage: true };
+          st.wakeConfig.confirmedBy = 'wake-policy'; // 标记是我们设的，夜里才敢收回
+          changed += 1;
+        } else if (!shouldActive && st.wakeConfig.mode === 'active' && st.wakeConfig.confirmedBy === 'wake-policy') {
+          // 夜里只在"是我们自己设的活跃"时才收回，不覆盖它手动的选择
+          st.wakeConfig.mode = 'diving';
+          changed += 1;
+        }
+      }
+      if (changed) { saveSocialV2State(); log(`[wake] 唤醒策略(${reason})：白天=${inDay ? '是' : '否'}，调整 ${changed} 个会话`); }
+    } catch { /* 忽略 */ }
+  }
+
+  // 常驻活跃：启动时把 forceActive 里的群强制拉回活跃（否则它上次潜水设置会一直生效）
   try {
     const fa = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
     for (const key of fa) {
@@ -18160,6 +18191,8 @@ const agentTokenOk = (key, token) => {
   startDshWatch();
   startDiaryScheduler();
   startPluginJobs();
+  applyWakePolicy('startup');
+  setInterval(() => applyWakePolicy('tick'), 10 * 60 * 1000).unref?.();
   // 一次性迁移：旧 socialV2.tools（扁平 47 个开关）→ socialV2.plugins（插件→能力）。
   try {
     if (!cfg.socialV2) cfg.socialV2 = {};
