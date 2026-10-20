@@ -87,6 +87,11 @@ export async function phoneShell(cmd, { timeoutMs = 60000 } = {}) {
 
 /** 刷 B站（高层）：打开 App → 可选的搜索 → 刷几屏 → 截图 + 前台标题。 */
 export async function phoneBili({ task = 'feed', query = '', swipes = 3 } = {}) {
+  // 先亮屏 + 上滑解锁：锁屏状态下 App 起来了也看不到，等于白刷。
+  const wake = await phoneWake();
+  if (!wake.unlocked) {
+    return { ok: false, error: wake.note, wake };
+  }
   const pkgs = ['tv.danmaku.bili', 'com.bilibili.app', 'tv.danmaku.bilibili'];
   const exists = await sh('pm list packages | grep -i bili | head -3');
   const pkg = (pkgs.find((p) => exists.out.includes(p))) || (exists.out.match(/package:(\S+)/)?.[1] ?? '');
@@ -112,6 +117,51 @@ export async function phoneBili({ task = 'feed', query = '', swipes = 3 } = {}) 
     launchOk: r.ok,
     foreground: /mCurrentFocus=([^}\n]+)/.exec(fg.out)?.[1]?.trim() || '',
     screenshot: shot.ok ? { data: shot.data, mimeType: shot.mimeType, bytes: shot.bytes } : null,
-    note: launch
+    note: launch,
+    wake
+  };
+}
+
+/**
+ * 亮屏 + 上滑解锁（无密码/图案时）。有密码就只能停在锁屏，如实返回。
+ * 返回 { ok, awake, unlocked, note }——不假装成功。
+ */
+export async function phoneWake() {
+  const wakefulness = async () => (await sh('dumpsys power | grep -m1 -E "mWakefulness="')).out.trim();
+  // 锁屏判定用 dumpsys window policy 的 showing= 字段（MIUI 上比 mKeyguardShowing 可靠）
+  const keyguardShowing = async () => /showing=true/.test((await sh('dumpsys window policy | grep -m3 -E "showing=|deviceHasKeyguard"')).out);
+  let state = await wakefulness();
+  let woke = false;
+  if (!/Awake/.test(state)) {
+    await sh('input keyevent 224', { timeoutMs: 12000 });      // WAKEUP
+    await new Promise((r) => setTimeout(r, 1500));
+    state = await wakefulness();
+    if (!/Awake/.test(state)) {                                 // 有些机型 224 无效，按电源键
+      await sh('input keyevent 26', { timeoutMs: 12000 });
+      await new Promise((r) => setTimeout(r, 1800));
+      state = await wakefulness();
+    }
+    woke = /Awake/.test(state);
+  }
+  let locked = await keyguardShowing();
+  if (locked) {
+    // 上滑（有密码/图案时只会停在输入界面，不会误操作别的）
+    await sh('input swipe 610 2200 610 700 300', { timeoutMs: 12000 });
+    await new Promise((r) => setTimeout(r, 1600));
+    locked = await keyguardShowing();
+  }
+  if (locked) {                                                 // 部分机型还要 MENU 一下才退锁屏
+    await sh('input keyevent 82', { timeoutMs: 10000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    locked = await keyguardShowing();
+  }
+  const fg = (await sh('dumpsys window | grep -m1 -E "mCurrentFocus"')).out.trim();
+  return {
+    ok: true,
+    awake: /Awake/.test(state),
+    unlocked: !locked,
+    woke,
+    foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '',
+    note: locked ? '仍在锁屏：手机有密码/图案，只能你手动解锁（我做到「亮屏+上滑」为止）' : '已解锁'
   };
 }

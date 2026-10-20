@@ -1276,12 +1276,16 @@ defineTool(
 
 defineTool(
   'qq_phone_look',
-  '截一张手机屏幕的图（你能直接看到）。截不到会如实报错（比如屏幕没亮）。',
-  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
-  async ({ key, token }) => {
+  '截一张手机屏幕的图（你能直接看到）。可选 wake=true：先亮屏+上滑（手机有密码/图案时仍会停在锁屏，'
+    + '返回值会说明，别假装解锁了）。截不到会如实报错。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), wake: z.boolean().optional().describe('先亮屏+上滑解锁（无密码时有效）') },
+  async ({ key, token, wake }) => {
     try {
-      const d = await agentApi('/api/phone/screenshot', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 60000 });
-      return { content: [{ type: 'image', data: d.data, mimeType: d.mimeType || 'image/png' }] };
+      const d = await agentApi(`/api/phone/screenshot${wake ? '?wake=1' : ''}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 90000 });
+      const blocks = [];
+      if (d.wake && d.wake.note) blocks.push({ type: 'text', text: d.wake.note });
+      blocks.push({ type: 'image', data: d.data, mimeType: d.mimeType || 'image/png' });
+      return { content: blocks };
     } catch (error) { return { content: [{ type: 'text', text: `截屏失败：${error?.message ?? error}` }], isError: true }; }
   }
 );
