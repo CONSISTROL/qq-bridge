@@ -30,11 +30,22 @@ export function openMemoryDb({ stateDir }) {
       status TEXT DEFAULT '',
       at INTEGER DEFAULT 0,
       updated INTEGER DEFAULT 0,
-      extra TEXT DEFAULT ''
+      extra TEXT DEFAULT '',
+      -- LSTM 式门控字段：importance=输入门（值不值得记），strength=遗忘门（强度，会衰减），
+      -- lastUsed/useCount=输出门（被用过多少次，用得越多越难忘）
+      importance REAL DEFAULT 0.5,
+      strength REAL DEFAULT 1.0,
+      lastUsed INTEGER DEFAULT 0,
+      useCount INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind);
     CREATE INDEX IF NOT EXISTS idx_items_scope ON items(scope);
   `);
+  // 老库补列（幂等）
+  const cols = db.prepare("PRAGMA table_info(items)").all().map((c) => c.name);
+  for (const [name, ddl] of [['importance', 'REAL DEFAULT 0.5'], ['strength', 'REAL DEFAULT 1.0'], ['lastUsed', 'INTEGER DEFAULT 0'], ['useCount', 'INTEGER DEFAULT 0']]) {
+    if (!cols.includes(name)) db.exec(`ALTER TABLE items ADD COLUMN ${name} ${ddl}`);
+  }
   return db;
 }
 
@@ -112,4 +123,61 @@ export function migrateFromJson({ stateDir, log = () => {} } = {}) {
   }
   log(`[memdb] 迁移完成：共 ${n} 条（${Object.entries(countItems({ stateDir })).map(([k, v]) => k + '=' + v).join(' ') }）`);
   return { ok: true, count: n, byKind: countItems({ stateDir }) };
+}
+
+/**
+ * LSTM 式「输出门」：按相关性 × 重要性 × 强度（衰减后）打分，只取 top-K 注入提示词。
+ * 不再把档案全量塞进去——记忆越多，越需要"只唤起相关的"。
+ */
+export function recallForPrompt({ stateDir, key = '', query = '', limit = 10 } = {}) {
+  const d = openMemoryDb({ stateDir });
+  const rows = d.prepare(`SELECT * FROM items WHERE kind IN ('fact','knowledge','remark','slang','impression','topic')`).all();
+  const q = String(query || '').toLowerCase();
+  const now = Date.now();
+  const scored = rows.map((r) => {
+    const text = `${r.text} ${r.answer || ''}`.toLowerCase();
+    // 词面相关：查询词命中多少（粗糙但够用；需要更准再上向量）
+    let rel = 0;
+    if (q) {
+      const parts = q.split(/[\s,，。.!?、]+/).filter((w) => w.length >= 2);
+      const hit = parts.filter((w) => text.includes(w)).length;
+      rel = parts.length ? hit / parts.length : 0;
+    }
+    const imp = Number(r.importance ?? 0.5);
+    const str = Number(r.strength ?? 1);
+    // 会话相关：属于当前会话的加一点权重
+    const scopeBoost = r.scope === 'all' ? 1 : (r.scope === key ? 1.15 : 0.9);
+    // 相关性为主；没有 query 时用 重要度×强度 排序
+    const score = (q ? (0.6 * rel + 0.25 * imp + 0.15 * str) : (0.6 * imp + 0.4 * str)) * scopeBoost;
+    return { ...r, _score: score };
+  }).filter((r) => (q ? r._score > 0.05 : true)).sort((a, b) => b._score - a._score).slice(0, limit);
+  // 命中即"用过"：加 useCount、刷新 lastUsed（输出门反馈）
+  const mark = d.prepare('UPDATE items SET useCount = useCount + 1, lastUsed = ? WHERE id = ?');
+  for (const r of scored) mark.run(now, r.id);
+  return scored.map((r) => ({ id: r.id, kind: r.kind, scope: r.scope, text: r.text, answer: r.answer || '', score: Number(r._score.toFixed(3)) }));
+}
+
+/**
+ * LSTM 式「遗忘门」：按强度做指数衰减，弱的先掉；重要性高/被用过的衰减更慢。
+ * strength 低于 0.15 且不是 fact/remark（人/群稳定事实）→ 直接删；其余保留但越来越难被唤起。
+ */
+export function decayMemories({ stateDir, halfLifeDays = 30, now = Date.now() } = {}) {
+  const d = openMemoryDb({ stateDir });
+  const rows = d.prepare('SELECT id, kind, strength, importance, lastUsed, at FROM items').all();
+  let decayed = 0, dropped = 0;
+  const upd = d.prepare('UPDATE items SET strength = ? WHERE id = ?');
+  const del = d.prepare('DELETE FROM items WHERE id = ?');
+  for (const r of rows) {
+    const last = Number(r.lastUsed) || Number(r.at) || now;
+    const days = Math.max(0, (now - last) / 86400000);
+    if (days < 1) continue;
+    const imp = Number(r.importance ?? 0.5);
+    // 半衰期随重要性延长：imp=1 → 2×halfLife；imp=0 → 0.5×
+    const tau = halfLifeDays * (0.5 + imp * 1.5);
+    const factor = Math.pow(0.5, days / tau);
+    const next = Math.max(0, Number(r.strength ?? 1) * factor);
+    if (next < 0.15 && !['fact', 'remark'].includes(r.kind)) { del.run(r.id); dropped += 1; }
+    else { upd.run(next, r.id); decayed += 1; }
+  }
+  return { ok: true, decayed, dropped };
 }
