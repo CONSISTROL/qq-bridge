@@ -2,7 +2,7 @@
 // setup-dsh.mjs — 在目标设备上安装 qq-bridge 的 DSH 端配置
 //
 // 功能：
-//   1. 安装两套 agent preset：qq-chat、qq-chat-v2
+//   1. 安装 agent preset：qq-chat-v2（旧的两套已合并，qq-chat 不再需要）
 //      - DSH 0.2+：在 profile 的 cordis.patch.yml 里声明成 @deepseek-ai/dsh-agent-preset
 //        插件行（0.2 的 preset registry 不再扫描 ~/.dsh/.agent-presets/ 目录）
 //      - DSH 0.1.x：仍按老办法复制到 ~/.dsh/.agent-presets/<id>/
@@ -69,7 +69,7 @@ const MANAGED_PLUGIN_IDS = ['qq-mode'];
 
 // 由桥接托管的 agent preset：仓库 dsh/agent-presets/<id>/ 是唯一真源，
 // profile patch 里的行 id 固定为 preset-<id>，脚本对它们拥有所有权。
-const PRESET_IDS = Object.freeze(['qq-chat', 'qq-chat-v2']);
+const PRESET_IDS = Object.freeze(['qq-chat-v2']);
 const MANAGED_PRESET_IDS = Object.freeze(PRESET_IDS.map((id) => `preset-${id}`));
 const DSH_AGENT_PRESET_PACKAGE = '@deepseek-ai/dsh-agent-preset';
 const PRESET_STAGE_DIR = 'qq-bridge-presets';
@@ -257,7 +257,7 @@ function mcpEntries() {
   // 手机远端（mcp-phone）是**机器专属**能力：需要一台跑着 Termux sshd 的手机，
   // 并在服务器上配好 `ssh phone` 反向隧道。默认不挂载，避免在别的机器上引入必然失败的 MCP。
   // 开启方式：config.json 里加 { "phone": { "enabled": true } }。
-  // 注意：QQ 群聊 preset（qq-chat / qq-chat-v2）挂着 qq-tool-restrict 白名单，
+  // 注意：QQ 群聊 preset（qq-chat-v2）挂着 qq-tool-restrict 白名单，
   // mcp__phone__* 不在白名单内，因此**群友触达不到手机**；只有没有该限制的
   // preset（如 standard）才会看到这些工具。
   if (readBridgeConfig()?.phone?.enabled === true) {
@@ -486,7 +486,6 @@ const presetFormat = detectPresetFormat();
 const cordisPatch = prepareCordisPatch(presetFormat);
 // 老式目录复制始终保留：DSH 0.1.x 靠它加载 preset，0.2+ 靠它给桥接的 preset 组成戳
 // （src/preset-stamp.js 以 .agent-presets/<id>/ 的文件哈希判断会话是否要重建）当基准。
-copyPreset('qq-chat');
 copyPreset('qq-chat-v2');
 patchCordis(cordisPatch);
 const pluginLink = ensurePluginLink();

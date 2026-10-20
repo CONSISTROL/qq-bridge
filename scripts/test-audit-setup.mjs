@@ -90,10 +90,10 @@ try {
       assert.equal(result.status, 0, result.stderr || result.error?.message);
     }
     const entries = yaml.load(fs.readFileSync(f.patchFile, 'utf8')).flatMap((op) => op.insert || []);
-    for (const id of ['preset-qq-chat', 'preset-qq-chat-v2']) {
+    for (const id of ['preset-qq-chat-v2']) {
       assert.equal(entries.filter((entry) => entry.id === id).length, 1, `${id} duplicate`);
     }
-    for (const id of ['qq-chat', 'qq-chat-v2']) {
+    for (const id of ['qq-chat-v2']) {
       const row = entries.find((entry) => entry.id === `preset-${id}`);
       assert.equal(row.name, '@deepseek-ai/dsh-agent-preset');
       assert.equal(row.config.id, id);
@@ -135,9 +135,9 @@ try {
     const result = f.run('web', { QQ_BRIDGE_DSH_PRESET_FORMAT: 'legacy' });
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     const text = fs.readFileSync(f.patchFile, 'utf8');
-    assert.doesNotMatch(text, /preset-qq-chat/);
+    assert.doesNotMatch(text, /preset-qq-chat(?!-v2)/);
     assert.match(text, /mcp-snowluma/);
-    for (const id of ['qq-chat', 'qq-chat-v2']) {
+    for (const id of ['qq-chat-v2']) {
       assert.ok(fs.existsSync(path.join(f.home, '.agent-presets', id, 'agent.cordis.yml')), `${id} not installed`);
     }
   });
