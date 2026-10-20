@@ -25,7 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
-import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked } from './phone-ctl.js';
+import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -7395,6 +7395,14 @@ const agentTokenOk = (key, token) => {
               if (!need('phoneExec', '在手机上执行命令')) return;
               const body = await readBody();
               sendJson(await phoneShell(String(body.cmd ?? '')));
+              return;
+            }
+            if (req.method === 'POST' && action === 'moment') {
+              if (!need('postMoment', '发 QQ 动态')) return;
+              const body = await readBody();
+              // 默认 dryRun：只走到「输入完文案」不点发送；要真发必须显式传 send=true
+              const r = await phonePostMoment({ text: String(body.text ?? ''), pin: phonePin(), send: body.send === true });
+              sendJson(r, r.ok ? 200 : 400);
               return;
             }
             if (req.method === 'POST' && action === 'bili') {

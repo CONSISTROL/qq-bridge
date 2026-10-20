@@ -86,6 +86,7 @@ export const PLUGINS = [
       { id: 'screen', label: '看屏幕（状态 / 截图）', flags: ['phoneStatus', 'phoneScreen', 'phoneScreenshot'], base: true },
       { id: 'control', label: '操作手机（点击 / 滑动 / 按键）', flags: ['phoneTap', 'phoneSwipe', 'phoneKey'], base: true },
       { id: 'bili', label: '刷 B站（它自己会在手机上逛、看、回来跟你讲）', flags: ['biliSearch', 'biliSubtitles', 'biliFrames', 'biliLive', 'biliAudio'] },
+      { id: 'moment', label: '发 QQ 动态（它自己写文案，你可以在控制台先看）', flags: ['postMoment'], default: false },
       { id: 'shell', label: '在手机上执行命令（高危）', flags: ['phoneExec'], default: false }
     ]
   }

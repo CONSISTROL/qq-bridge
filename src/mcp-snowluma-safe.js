@@ -1260,6 +1260,34 @@ defineTool(
   }
 );
 
+// ── 发 QQ 动态 ────────────────────────────────────────────────────────────
+defineTool(
+  'qq_post_moment',
+  '在手机上的 QQ 里发一条动态（说说）：打开 QQ → 动态 → 发表 → 输入文案 → 发送。'
+    + '默认 **dryRun**：只走到「文案已输入」就停，返回截图给你看，不会真发；确认没问题后传 send=true 才真正发表。'
+    + '中文文案需要手机装了 ADBKeyboard 输入法（input text 只支持 ASCII），没装会明确报错。'
+    + '这是「发 QQ 动态」能力，默认关闭，需要控制台「插件 → 手机控制」里开启。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    text: z.string().describe('动态文案'),
+    send: z.boolean().optional().describe('true=真的发出去；不传则只输入不发送')
+  },
+  async ({ key, token, text, send }) => {
+    try {
+      const d = await agentApi('/api/phone/moment', {
+        method: 'POST',
+        body: JSON.stringify({ text, send: send === true }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 180000
+      });
+      const blocks = [{ type: 'text', text: d.stage === 'sent' ? `已发表（前台：${d.foreground || '未知'}）` : `已输入文案但**未发送**（dryRun）：${d.note || ''}` }];
+      for (const s of (d.shots || []).slice(-2)) if (s.data) blocks.push({ type: 'image', data: s.data, mimeType: 'image/png' });
+      return { content: blocks };
+    } catch (error) { return { content: [{ type: 'text', text: `发动态失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 手机控制（插件「手机控制」；看屏幕/操作手机是基础能力，刷 B站要单独开）──────
 defineTool(
   'qq_phone_status',

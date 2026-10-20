@@ -221,6 +221,38 @@ export async function phoneUnprepare() {
   return { ok: true, note: '已恢复锁屏与常亮设置' };
 }
 
+
+/** 用 uiautomator dump 找界面元素：返回 [{text, desc, cls, x, y}]（居中坐标）。 */
+export async function phoneUI() {
+  const r = await sh('uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1; cat /data/local/tmp/ui.xml', { timeoutMs: 30000, maxBuffer: 8 << 20 });
+  const xml = r.out || '';
+  const out = [];
+  const re = /<node[^>]*>/g;
+  let m;
+  while ((m = re.exec(xml))) {
+    const tag = m[0];
+    const get = (k) => (new RegExp(`${k}="([^"]*)"`).exec(tag) || [])[1] || '';
+    const text = get('text'), desc = get('content-desc'), cls = get('class');
+    const b = get('bounds');
+    if (!text && !desc) continue;
+    const nums = b.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+    if (!nums) continue;
+    const [x1, y1, x2, y2] = nums.slice(1).map(Number);
+    out.push({ text, desc, cls, x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) });
+  }
+  return out;
+}
+
+/** 在界面上按文字/描述找一个元素（包含匹配，优先可点击的）。 */
+export async function phoneFindText(needle) {
+  const ui = await phoneUI();
+  const keys = [].concat(needle);
+  for (const k of keys) {
+    const hit = ui.find((e) => e.text.includes(k) || e.desc.includes(k));
+    if (hit) return hit;
+  }
+  return null;
+}
 /**
  * 用数字密码解锁（需要 config.phone.unlockPin）。
  * 做法：亮屏 → input text <pin> → 回车 → 校验 lockscreen 是否消失。
@@ -267,4 +299,63 @@ export async function phoneEnsureUnlocked({ pin = '' } = {}) {
   if (w.unlocked) return w;
   if (String(pin || '').trim()) return { ...(await phoneUnlock({ pin })), woke: w.woke };
   return w;
+}
+
+/**
+ * 发 QQ 动态（说说）。走手机 UI 自动化：QQ → 动态 → 发表 → 输入文字 → 发送。
+ *
+ * 限制（如实说明）：
+ *  · `input text` 只支持 ASCII，中文发不进去。装 ADBKeyboard（一个输入法 APK）后，
+ *    可以用 `am broadcast -a ADB_INPUT_B64 --es msg <base64>` 输入中文；没装就只能发英文/数字/emoji。
+ *  · 坐标是按 1220x2712 的比例算的，换机型要调。
+ *  · 会真的发出去——所以调用方要自己确认过文案。
+ */
+export async function phonePostMoment({ text = '', pin = '', send = true } = {}) {
+  const body = String(text || '').trim();
+  if (!body) return { ok: false, error: 'text 不能为空' };
+  const nonAscii = /[^\x00-\x7F]/.test(body);
+  const adbKb = (await sh('pm list packages | grep -i adbkeyboard')).out.trim() !== '';
+  if (nonAscii && !adbKb) {
+    return { ok: false, error: '文案含中文，但手机没装 ADBKeyboard 输入法（input text 只支持 ASCII）。装好并启用后重试，或改成英文。' };
+  }
+  let wake = await phoneWake();
+  if (!wake.unlocked && pin) { const u = await phoneUnlock({ pin }); if (u.unlocked) wake = { ...wake, unlocked: true }; }
+  if (!wake.unlocked) return { ok: false, error: wake.note || '手机仍锁屏' };
+  const tapUI = async (el) => { if (!el) return false; await sh(`input tap ${el.x} ${el.y}`, { timeoutMs: 12000 }); return true; };
+  const steps = [];
+  const shot = async (label) => { const s = await phoneScreenshot(); return s.ok ? { label, data: s.data, bytes: s.bytes } : null; };
+  const shots = [];
+  // ① 打开 QQ
+  const act = (await sh('cmd package resolve-activity --brief com.tencent.mobileqq | tail -1')).out.trim();
+  if (act) await sh(`am start -n ${act}`, { timeoutMs: 25000 });
+  await new Promise((r) => setTimeout(r, 3500));
+  // ② 点底部「动态」（按文字找，找不到才按比例兜底）
+  const size = (await sh('wm size')).out.match(/(\d+)x(\d+)/);
+  const W = size ? Number(size[1]) : 1220, H = size ? Number(size[2]) : 2712;
+  const dynTab = await phoneFindText('动态');
+  if (dynTab) { await tapUI(dynTab); steps.push('点动态tab'); } else { await sh(`input tap ${Math.round(W * 0.87)} ${Math.round(H * 0.965)}`); steps.push('点动态tab(坐标)'); }
+  await new Promise((r) => setTimeout(r, 3000));
+  shots.push(await shot('动态页'));
+  // ③ 找「发表 / 说说 / 拍照」入口
+  let pub = await phoneFindText(['发表', '说说', '发动态', '这一刻的想法']);
+  if (pub) { await tapUI(pub); steps.push('点发表:' + (pub.text || pub.desc)); }
+  await new Promise((r) => setTimeout(r, 2500));
+  shots.push(await shot('编辑页'));
+  // ④ 找输入框（说点什么…）
+  const box = await phoneFindText(['说点什么', '这一刻的想法', '分享', '输入']);
+  if (box) { await tapUI(box); steps.push('点输入框'); await new Promise((r) => setTimeout(r, 800)); }
+  if (adbKb) {
+    await sh(`am broadcast -a ADB_INPUT_B64 --es msg ${JSON.stringify(Buffer.from(body, 'utf8').toString('base64'))}`, { timeoutMs: 15000 });
+  } else {
+    await sh(`input text ${JSON.stringify(body.replace(/ /g, '%s'))}`, { timeoutMs: 20000 });
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  shots.push(await shot('已输入'));
+  if (!send) return { ok: true, stage: 'typed', note: '已输入但未发送（send=false）', steps, shots };
+  const sendBtn = await phoneFindText(['发送', '发表']);
+  if (!sendBtn) return { ok: false, error: '没找到「发送/发表」按钮', steps, shots };
+  await tapUI(sendBtn);
+  await new Promise((r) => setTimeout(r, 3000));
+  shots.push(await shot('发送后'));
+  return { ok: true, stage: 'sent', steps, shots };
 }
