@@ -16,6 +16,7 @@ import * as memory from './views/memory.js';
 import * as album from './views/album.js';
 import * as voicepack from './views/voicepack.js';
 import * as persona from './views/persona.js';
+import * as autonomy from './views/autonomy.js';
 import * as security from './views/security.js';
 import * as ops from './views/ops.js';
 import * as tools from './views/tools.js';
@@ -23,7 +24,7 @@ import * as plugins from './views/plugins.js';
 import * as capabilities from './views/capabilities.js';
 import * as mc from './views/mc.js';
 
-const VIEWS = [overview, social2, slang, knowledge, memory, album, voicepack, persona, security, ops, tools, capabilities, plugins, mc];
+const VIEWS = [overview, social2, slang, knowledge, memory, album, voicepack, persona, autonomy, security, ops, tools, capabilities, plugins, mc];
 const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 
