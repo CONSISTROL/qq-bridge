@@ -14,7 +14,9 @@ set -u
 
 cd "$(dirname "$0")" || exit 1
 ROOT="$(pwd)"
-NODE_BIN="${NODE_BIN:-node}"
+# 必须用 Node ≥ 21：SnowLuma SDK 依赖全局 WebSocket，Node 18 没有 → 启动即崩
+# （线上真事：PATH 里 node 变成 /usr/bin/node v18，桥接一直启动失败刷屏）
+NODE_BIN="${NODE_BIN:-$(command -v /opt/node22/bin/node 2>/dev/null || command -v node)}"
 export QQ_BRIDGE_GUARDED=1
 mkdir -p state
 
