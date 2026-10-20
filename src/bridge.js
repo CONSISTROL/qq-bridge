@@ -5418,7 +5418,21 @@ const agentTokenOk = (key, token) => {
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
-    // 插件→能力：新的开关结构在 config.socialV2.plugins；没有就回退到旧的扁平 tools 表。
+    // 常驻活跃：启动时把 forceActive 里的群强制拉回活跃（否则它上次潜水设置会一直生效）
+  try {
+    const fa = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
+    for (const key of fa) {
+      const st = getSocialV2State(key);
+      if (!st.wakeConfig) continue;
+      st.wakeConfig.mode = 'active';
+      st.wakeConfig.infinite = true;
+      st.wakeConfig.sleepUntil = null;
+      st.wakeConfig.triggers = { ...(st.wakeConfig.triggers || {}), anyMessage: true };
+      log(`[wake] ${key} 按 forceActive 强制活跃`);
+    }
+    saveSocialV2State();
+  } catch { /* 忽略 */ }
+  // 插件→能力：新的开关结构在 config.socialV2.plugins；没有就回退到旧的扁平 tools 表。
     // 手机解锁密码：直接从磁盘读（进程内 cfg 可能被归一化过，读不到 phone 段）
     const phonePin = () => {
       try { const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8').replace(/^\uFEFF/, '')); return String(raw?.phone?.unlockPin ?? ''); }
@@ -7685,6 +7699,15 @@ const agentTokenOk = (key, token) => {
             }, 400);
             return;
           }
+          // 常驻活跃：这些群不允许它自己潜水（否则一条消息都唤不醒，线上反复出现）
+          const forceActive = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
+          if (forceActive.includes(key)) {
+            next.mode = 'active';
+            next.infinite = true;
+            next.sleepUntil = null;
+            next.triggers = { ...(next.triggers || {}), anyMessage: true };
+          }
+
           st.wakeConfig = next;
           st.wakeConfig.lastWakeAt = st.wakeConfig.lastWakeAt || 0;
           st.wakeConfig.wakeCount = st.wakeConfig.wakeCount || 0;

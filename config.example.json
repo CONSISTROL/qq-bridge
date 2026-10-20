@@ -209,7 +209,11 @@
       "maxWakePerMinute": 1,
       "maxWakePerHour": 12,
       "noActionLimit": 3,
-      "maxWakeConfigReminders": 2
+      "maxWakeConfigReminders": 2,
+      "forceActive": [
+        "group:1050666134",
+        "group:217423624"
+      ]
     },
     "send": {
       "burstEnabled": true,
