@@ -1300,6 +1300,22 @@ defineTool(
   }
 );
 
+// ── B站 热门（冒泡找话题）────────────────────────────────────────────────
+defineTool(
+  'qq_bili_hot',
+  '看 B站 现在什么在火（热门榜）：返回标题、UP 主、播放量、链接。'
+    + '主动冒泡/找话题时**先看这个**，从里面挑一个你真有话说的（结合群里的气氛），'
+    + '别自己空想题材；也可以挑一个和群里刚聊的相关视频当引子。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), limit: z.number().optional().describe('取几条（默认 12，最多 20）') },
+  async ({ key, token, limit }) => {
+    try {
+      const d = await agentApi(`/api/socialV2/bili-hot?limit=${Number(limit) || 12}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 40000 });
+      const lines = (d.items || []).map((v, i) => `${i + 1}. ${v.title}（${v.owner}，${Math.round((v.view || 0) / 10000)}万播放）${v.url}`).join('\n');
+      return { content: [{ type: 'text', text: lines || '（拿不到热门榜）' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `查 B站热门失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 自主性（L2）：自己的目标 / 预算 ─────────────────────────────────────────
 defineTool(
   'qq_autonomy_status',

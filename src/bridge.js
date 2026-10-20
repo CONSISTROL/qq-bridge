@@ -175,6 +175,7 @@ const SELF_AVATAR_DIR = path.join(STATE_DIR, 'self-avatar');
 const KNOWLEDGE_FILE = path.join(STATE_DIR, 'knowledge.json');
 const KNOWLEDGE_VECTOR_FILE = path.join(STATE_DIR, 'knowledge-vectors.json');
 const STICKER_FILE = path.join(STATE_DIR, 'stickers.json');
+let biliHotCache = { at: 0, items: [], limit: 0 };
 const MEMBER_REMARKS_FILE = path.join(STATE_DIR, 'member-remarks.json');
 const FEEDBACK_FILE = path.join(STATE_DIR, 'feedback.json');
 const TOOL_LOG_FILE = path.join(STATE_DIR, 'tool-calls.jsonl');
@@ -7339,6 +7340,32 @@ const agentTokenOk = (key, token) => {
             st.unseenNudgeAt = Date.now();
             scheduleWakeV2(key, 'unseenBacklog');
           }
+          return;
+        }
+        // ── B站 热门（冒泡找话题用）──────────────────────────────────
+        if (url.pathname === '/api/socialV2/bili-hot') {
+          const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 12));
+          const now = Date.now();
+          if (biliHotCache.items.length && now - biliHotCache.at < 10 * 60 * 1000 && biliHotCache.limit >= limit) {
+            sendJson({ ok: true, cached: true, items: biliHotCache.items.slice(0, limit) });
+            return;
+          }
+          try {
+            const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36';
+            const r = await fetch(`https://api.bilibili.com/x/web-interface/popular?ps=${Math.max(limit, 20)}&pn=1`, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com' }, signal: AbortSignal.timeout(20000) });
+            const j = await r.json();
+            const items = ((j?.data?.list) || []).slice(0, Math.max(limit, 20)).map((v) => ({
+              bvid: String(v?.bvid || ''),
+              title: String(v?.title || '').slice(0, 120),
+              owner: String(v?.owner?.name || '').slice(0, 40),
+              view: Number(v?.stat?.view) || 0,
+              danmaku: Number(v?.stat?.danmaku) || 0,
+              url: v?.bvid ? `https://www.bilibili.com/video/${v.bvid}` : '',
+              desc: String(v?.desc || '').slice(0, 200)
+            })).filter((x) => x.bvid && x.title);
+            biliHotCache = { at: now, items, limit };
+            sendJson({ ok: true, cached: false, items: items.slice(0, limit) });
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
           return;
         }
         // ── 自主性（L2）：自己的目标 / 每日自由行动预算 / 行动日志 ──────────
@@ -16047,6 +16074,7 @@ const agentTokenOk = (key, token) => {
       out += '【自主时间（L2）】群冷了，你可以只说话，也可以自己挑一件事做：\n'
         + `· 今日自由行动预算：剩余 ${b.left} / ${b.limit} 次（说话不算，发动态/刷B站/学东西这类算）\n`
         + (gs.length ? `· 你自己的待办：${gs.map((g) => g.text).join(' / ')}\n` : '')
+        + '· **题材来源**：要开口前先 `qq_bili_hot` 看 B站 现在什么在火，从里面挑一个你真有话说的（别空想）；\n'
         + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
         + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
         + '规则：做之前先用 qq_autonomy_status 看预算，做完用 qq_autonomy_spend 记一次；预算没了就只能聊天。'
