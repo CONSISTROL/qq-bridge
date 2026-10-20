@@ -9,10 +9,10 @@ import { execFile } from 'node:child_process';
 const HOST = 'phone';
 const MAX_OUT = 200_000;
 
-function sh(cmd, { timeoutMs = 30000, su = true } = {}) {
+function sh(cmd, { timeoutMs = 30000, su = true, maxBuffer = MAX_OUT } = {}) {
   const remote = su ? `su -c ${JSON.stringify(cmd)}` : cmd;
   return new Promise((resolve) => {
-    execFile('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', HOST, remote], { timeout: timeoutMs, maxBuffer: MAX_OUT }, (error, stdout, stderr) => {
+    execFile('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', HOST, remote], { timeout: timeoutMs, maxBuffer }, (error, stdout, stderr) => {
       resolve({ ok: !error, out: String(stdout ?? ''), err: String(stderr ?? '').slice(0, 2000), code: error?.code ?? 0 });
     });
   });
@@ -47,7 +47,7 @@ export async function phoneScreenshot({ timeoutMs = 45000 } = {}) {
   const path = `/data/local/tmp/qqb-${Date.now()}.png`;
   const cap = await sh(`screencap -p ${path}`, { timeoutMs });
   if (!cap.ok) return { ok: false, error: `截图失败：${cap.err || cap.out || 'screencap 失败'}` };
-  const cat = await sh(`base64 ${path}; rm -f ${path}`, { timeoutMs });
+  const cat = await sh(`base64 ${path}; rm -f ${path}`, { timeoutMs, maxBuffer: 24 * 1024 * 1024 });
   const b64 = cat.out.replace(/\s+/g, '');
   if (!b64) return { ok: false, error: '截图是空的（可能没开屏或没权限）' };
   return { ok: true, data: b64, mimeType: 'image/png', bytes: Math.round((b64.length * 3) / 4) };
@@ -199,4 +199,34 @@ export async function phoneUnprepare() {
   await sh('settings put secure lockscreen.disabled 0', { timeoutMs: 15000 });
   await sh('svc power stayon false', { timeoutMs: 15000 });
   return { ok: true, note: '已恢复锁屏与常亮设置' };
+}
+
+/**
+ * 用数字密码解锁（需要 config.phone.unlockPin）。
+ * 做法：亮屏 → input text <pin> → 回车 → 校验 lockscreen 是否消失。
+ * 安全：密码只从 config.json 读，不写日志、不回传给 AI（返回里只说成功/失败）。
+ */
+export async function phoneUnlock({ pin = '' } = {}) {
+  const code = String(pin || '').replace(/\s+/g, '');
+  if (!/^\d{4,8}$/.test(code)) return { ok: false, error: '没有可用的数字密码（config.phone.unlockPin），或格式不对' };
+  await phoneWake();
+  const locked = async () => /showing=true/.test((await sh('dumpsys window policy | grep -m1 -E "showing="')).out);
+  if (!(await locked())) return { ok: true, alreadyUnlocked: true, note: '本来就是解锁状态' };
+  // 先点一下密码框区域，确保输入焦点在锁屏上，再输入
+  await sh('input tap 610 1400', { timeoutMs: 10000 });
+  await new Promise((r) => setTimeout(r, 700));
+  const typed = await sh(`input text ${JSON.stringify(code)}`, { timeoutMs: 15000 });
+  if (!typed.ok) return { ok: false, error: `输入密码失败：${(typed.err || typed.out).slice(0, 120)}` };
+  await sh('input keyevent 66', { timeoutMs: 10000 }); // ENTER
+  await new Promise((r) => setTimeout(r, 1800));
+  const stillLocked = await locked();
+  return { ok: !stillLocked, unlocked: !stillLocked, note: stillLocked ? '密码不对或没解掉（仍是锁屏）' : '已解锁' };
+}
+
+/** 便捷：有配置的密码就自动解，没有就只亮屏。 */
+export async function phoneEnsureUnlocked({ pin = '' } = {}) {
+  const w = await phoneWake();
+  if (w.unlocked) return w;
+  if (String(pin || '').trim()) return { ...(await phoneUnlock({ pin })), woke: w.woke };
+  return w;
 }

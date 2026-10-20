@@ -25,7 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
-import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare } from './phone-ctl.js';
+import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -7350,7 +7350,9 @@ const agentTokenOk = (key, token) => {
             }
             if (req.method === 'POST' && action === 'prepare') {
               if (!need('phoneKey', '操作手机')) return;
-              sendJson(await phonePrepare());
+              const prep = await phonePrepare();
+              if (!prep.wake?.unlocked && String(cfg.phone?.unlockPin ?? '')) Object.assign(prep, await phoneEnsureUnlocked({ pin: String(cfg.phone.unlockPin) }));
+              sendJson(prep);
               return;
             }
             if (req.method === 'POST' && action === 'unprepare') {
@@ -7360,14 +7362,18 @@ const agentTokenOk = (key, token) => {
             }
             if (req.method === 'POST' && action === 'wake') {
               if (!need('phoneKey', '操作手机')) return;
-              sendJson(await phoneWake());
+              const pin = String(cfg.phone?.unlockPin ?? '');
+              sendJson(pin ? await phoneEnsureUnlocked({ pin }) : await phoneWake());
               return;
             }
             if (req.method === 'GET' && action === 'screenshot') {
               if (!need('phoneScreenshot', '看屏幕')) return;
               // ?wake=1：先亮屏（手机有密码时仍会停在锁屏，返回里如实说）
               let wakeInfo = null;
-              if (String(url.searchParams.get('wake') ?? '') === '1') wakeInfo = await phoneWake();
+              if (String(url.searchParams.get('wake') ?? '') === '1') {
+                const pin = String(cfg.phone?.unlockPin ?? '');
+                wakeInfo = pin ? await phoneEnsureUnlocked({ pin }) : await phoneWake();
+              }
               const shot = await phoneScreenshot();
               if (!shot.ok) { sendJson({ ok: false, error: shot.error }, 502); return; }
               sendJson({ ok: true, data: shot.data, mimeType: shot.mimeType, bytes: shot.bytes, wake: wakeInfo });
