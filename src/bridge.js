@@ -25,6 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
+import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
 import { phoneStatus, phoneShopping, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
@@ -5593,6 +5594,16 @@ const agentTokenOk = (key, token) => {
       const suppliedTokens = [url.searchParams.get('token'), req.headers['x-console-token'], cookieToken]
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter(Boolean);
+      // 公开页面：AI 生成的 Web 应用（/apps/<slug>）不需要令牌——它们的用途就是"发个链接让大家都能看"。
+      // 安全性靠：slug 不可猜 + 页面是静态 HTML（不放桥接内部数据），并且只读。
+      if (url.pathname === '/apps' || url.pathname.startsWith('/apps/')) {
+        const slug0 = decodeURIComponent(url.pathname.slice('/apps'.length).replace(/^\//, '')).split('/')[0] || '';
+        const html0 = slug0 ? readApp({ stateDir: STATE_DIR, slug: slug0 }) : null;
+        if (!html0) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('页面不存在'); return; }
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'X-Frame-Options': 'SAMEORIGIN', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache' });
+        res.end(html0);
+        return;
+      }
       if (consoleToken && !suppliedTokens.includes(consoleToken)) {
         // 带着失效/过期的 Cookie 反复重试没有意义，顺手清掉，让浏览器回到「输入令牌」的干净状态
         if (cookieToken) res.setHeader('Set-Cookie', consoleCookieHeader('', 0));
@@ -7381,6 +7392,33 @@ const agentTokenOk = (key, token) => {
             biliHotCache = { at: now, items, limit };
             sendJson({ ok: true, cached: false, items: items.slice(0, limit) });
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
+          return;
+        }
+        // ── Web 应用：AI 给管理员请求做的小页面，对外挂在 /apps/<slug> ──────
+        if (url.pathname === '/apps' || url.pathname.startsWith('/apps/')) {
+          const slug = decodeURIComponent(url.pathname.slice('/apps'.length).replace(/^\//, '')).split('/')[0] || '';
+          if (req.method === 'GET') {
+            const html = slug ? readApp({ stateDir: STATE_DIR, slug }) : null;
+            if (!html) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('页面不存在'); return; }
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'X-Frame-Options': 'SAMEORIGIN', 'Referrer-Policy': 'no-referrer' });
+            res.end(html);
+            return;
+          }
+        }
+        if (url.pathname === '/api/webapps' || url.pathname.startsWith('/api/webapps/')) {
+          const action = url.pathname === '/api/webapps' ? '' : url.pathname.slice('/api/webapps/'.length);
+          try {
+            if (req.method === 'GET') { sendJson({ ok: true, apps: listApps({ stateDir: STATE_DIR }) }); return; }
+            const body = await readBody();
+            if (action === 'save') {
+              const r = saveApp({ stateDir: STATE_DIR, slug: body.slug, title: body.title, description: body.description, html: body.html });
+              log(`[webapp] ${r.ok ? '保存' : '保存失败'} ${body.slug}`);
+              sendJson(r.ok ? { ok: true, slug: r.slug, publicUrl: `https://anihub.xin/qq/apps/${r.slug}` } : { ok: false, error: r.error }, r.ok ? 200 : 400);
+              return;
+            }
+            if (action === 'remove') { sendJson(removeApp({ stateDir: STATE_DIR, slug: body.slug })); return; }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
         // ── 购物平台注册表（动态插件可自助扩充）──────────────────────

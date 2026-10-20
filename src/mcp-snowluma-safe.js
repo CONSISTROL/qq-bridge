@@ -1319,6 +1319,42 @@ defineTool(
   }
 );
 
+// ── Web 应用：给管理员请求做的小页面（对外公开链接）─────────────────────────
+defineTool(
+  'qq_webapp_save',
+  '把一个小网页做出来并发布：给 slug / 标题 / 说明 / HTML，桥接会挂在 /apps/<slug>，'
+    + '公网地址是 https://anihub.xin/qq/apps/<slug>（**不需要令牌**，谁拿到链接都能看）。'
+    + '适合"帮我做个查询页/看板/清单/表单"。限制：纯静态页（HTML/CSS/JS 都能写，但拿不到桥接内部数据）、≤200KB。'
+    + '同一个 slug 再保存一次就是更新。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    slug: z.string().describe('页面 id（小写字母/数字/短横线，如 lol-schedule）'),
+    title: z.string().describe('标题'),
+    html: z.string().describe('完整 HTML 源码'),
+    description: z.string().optional().describe('一句话说明')
+  },
+  async ({ key, token, slug, title, html, description }) => {
+    try {
+      const d = await agentApi('/api/webapps/save', { method: 'POST', body: JSON.stringify({ slug, title, html, description }), headers: { 'x-agent-token': token }, timeoutMs: 60000 });
+      return { content: [{ type: 'text', text: d.ok ? `已发布：${d.publicUrl}` : `发布失败：${d.error || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `发布失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_webapp_list',
+  '列出已经发布的小网页（slug / 标题 / 大小 / 时间）。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi('/api/webapps', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      const lines = (d.apps || []).map((a) => `· ${a.slug} — ${a.title}（${Math.round((a.bytes || 0) / 1024)}KB）https://anihub.xin/qq/apps/${a.slug}`).join('\n');
+      return { content: [{ type: 'text', text: lines || '（还没有发布过页面）' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `查询失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 购物平台注册表：动态插件自助扩充 ──────────────────────────────────────
 defineTool(
   'qq_shop_platform_add',
