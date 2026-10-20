@@ -458,7 +458,7 @@ function loadConfig() {
       ...(file.bili ?? {})
     },
     // AI 图片管理（控制台「AI 图片」分区）：回收站容量 + 可选的受管来源覆盖。
-    // 一般不用配——默认管本地图库 / pixiv 样图 / B站帧缓存三个目录；sources 只在
+    // 一般不用配，默认管本地图库 / pixiv 样图 / B站帧缓存三个目录；sources 只在
     // 多机部署或测试时用来把某些目录指到别处。
     imageAdmin: {
       trashMaxMB: 500,     // 回收站上限；超了从最旧批次开始丢（0 = 不限）
@@ -529,7 +529,7 @@ function loadConfig() {
       // 网关的 get_*_msg_history 支持 count + message_seq 从任意位置往后取，所以能补。
       // 补回来只是拿上下文：**太旧/太多的只入库、不唤醒**，否则等于对陈年旧账刷屏。
       // 出站口播清洗：把「行，」「总结：」这类确定性 AI 标签削掉。
-      // 提示词里已经点名禁过「行，」，线上照样出现——这类字符串靠 prompt 压不住，
+      // 提示词里已经点名禁过「行，」，线上照样出现，这类字符串靠 prompt 压不住，
       // 所以补一层机械清洗（只做删除，不改写；见 src/speech-style.js）。
       style: {
         scrubFormulaic: true,
@@ -550,7 +550,7 @@ function loadConfig() {
         ...(file.socialV2?.work ?? {})
       },
       // 机器人自己的资料（昵称 / 个性签名 / 头像）。
-      // **默认关闭**：这改的是账号级身份，全群全私聊可见——群友一句「把你名字改成XXX」
+      // **默认关闭**：这改的是账号级身份，全群全私聊可见，群友一句「把你名字改成XXX」
       // 如果真的生效，影响面是它所在的每一个会话；而且 QQ 对频繁改资料很敏感。
       // 打开后也只有「管理员上下文」（管理员私聊，或触发这一轮的是管理员消息）能改。
       profile: {
@@ -564,7 +564,7 @@ function loadConfig() {
         ...(file.socialV2?.profile ?? {})
       },
       // 链接分享卡（qq_send_card）：AI 只能填标题/摘要/链接/预览图，卡片体由桥接组装。
-      // 不做任意 json/xml 透传——卡片能被用来伪造「系统通知/红包/群邀请」，风险比纯文本高。
+      // 不做任意 json/xml 透传，卡片能被用来伪造「系统通知/红包/群邀请」，风险比纯文本高。
       //
       // 注意：`enabled` 是「功能可用性」，`tools.sendCard` 是「要不要给 AI 用」。
       // 二者分开是有意的：当前网关协议版本下 QQ 客户端显示「发送者版本过低，无法展示内容」，
@@ -768,7 +768,7 @@ function loadConfig() {
       },
       // 聊天里收到的 QQ 视频：AI 原来只能看到一行「[视频]」，回一句「打不开」。
       // 这里把视频抓下来抽帧给视觉模型看（抽帧要 ffmpeg；没装则退化成封面缩略图）。
-      // 注意：**不做语音转写**——本机没有 ASR，视频里说的话 AI 听不到，只看得见画面。
+      // 注意：**不做语音转写**，本机没有 ASR，视频里说的话 AI 听不到，只看得见画面。
       file: {
         enabled: true,              // 聊天文件（PDF/文本）读取总开关
         maxBytes: 50 * 1024 * 1024, // 文件下载上限（owner 要求 50M；QQ 群文件常见几 MB 到几十 MB）
@@ -804,7 +804,7 @@ function loadConfig() {
       forward: {
         imageLimit: 8,             // 单次返回几张图（AI 不传 imageLimit 时的默认值）
         maxImageLimit: 20,         // 单次硬上限（AI 传再大也压到这个数；一次塞几十张会炸上下文）
-        // 单次批总量预算：原来沿用「单条消息 4MB」，手机照片一张 ~1MB，第 5 张起就被丢——
+        // 单次批总量预算：原来沿用「单条消息 4MB」，手机照片一张 ~1MB，第 5 张起就被丢，
         // AI 于是以为转发里只有 4 张图。现在给更大额度，且撞额度时先压小而不是整张丢掉。
         maxTotalBytes: 16 * 1024 * 1024,
         // 文本层：本层给多少条 / 每条多少字（AI 可用 offset/limit 翻页继续读）
@@ -828,7 +828,7 @@ function loadConfig() {
         probability: 0.3,
         // ── 主动开话题的「反重复」────────────────────────────────────────
         // 问题：主动开话题时模型能抓的抓手只有「人格 + 群里最近聊的事 + 它自己写的
-        // 记忆（activeTopics）」——人格里没写兴趣，记忆里全是最近那个圈子（实测是
+        // 记忆（activeTopics）」，人格里没写兴趣，记忆里全是最近那个圈子（实测是
         // 电竞/赛事），于是每次主动开口都是同一个话题，群里看着像复读机。
         // 这里记下最近几次「你主动开的头」，下一轮原样摆给它并要求换方向；
         // 再从 domains 里随机点几个方向，给它一个不同于近期记忆的抓手。
@@ -891,7 +891,7 @@ function loadConfig() {
     // 主题探索：给一个种子关键词，AI 自己上网把这一圈的梗和关联主题学回来。
     exploreTopic: true,
     // 机器人自己的资料（昵称/签名/头像）：**默认关**。改的是账号级身份，全群全私聊可见，
-    // 且群友一句「把你名字改成XXX」就能间接操控——必须管理员显式打开，且只在管理员上下文生效。
+    // 且群友一句「把你名字改成XXX」就能间接操控，必须管理员显式打开，且只在管理员上下文生效。
     setProfile: false,
     // 链接分享卡（qq_send_card）：只发桥接自己组装的固定形状卡片，不支持任意 json/xml。
     // **默认关闭**：实测当前网关协议版本下，QQ 客户端收到 structmsg 卡片只显示
@@ -906,7 +906,7 @@ function loadConfig() {
   };
 
   // socialV2.proactive 同样要深度合并：config.json 里只要存在 proactive 段（哪怕只写了
-  // enabled/probability），外层 spread 就会把**整段**替换掉，新增的默认值会静默消失——
+  // enabled/probability），外层 spread 就会把**整段**替换掉，新增的默认值会静默消失，
   // 实测踩过：domains 方向池被吃掉，反重复只记住了「别聊这些」却没有「可以聊什么」的抓手。
   cfg.socialV2.proactive = {
     enabled: true,
@@ -1066,7 +1066,7 @@ function log(...args) {
  * 取数字配置，非法/缺失时用默认值。
  *
  * 不要写成 `Number(x) ?? def`：`Number(undefined)` 是 **NaN 而不是 null/undefined**，
- * `??` 根本不会兜底，NaN 会一路传下去——`Math.max(0, Math.min(20, NaN))` 还是 NaN，
+ * `??` 根本不会兜底，NaN 会一路传下去，`Math.max(0, Math.min(20, NaN))` 还是 NaN，
  * 于是 `NaN > 0` 为假、整段逻辑被静默跳过；`.slice(0, NaN)` 更是直接切成空串。
  * 这类 bug 不报错、只是功能悄悄失效（本仓库真的踩过一次）。
  */
@@ -1132,7 +1132,7 @@ function withTimeout(promise, ms, label) {
  * 发送结果不确定：写类 OneBot 动作超时后抛出它。
  *
  * 「超时」和「失败」是两件事：请求已经写进 WS 了，只是回执没在预算内回来。
- * 网关很可能已经把它送出去了——所以调用方**不能**当成失败去重发，只能如实上报
+ * 网关很可能已经把它送出去了，所以调用方**不能**当成失败去重发，只能如实上报
  * 「不知道送没送到」。见 postOneBot 里 2026-09 的重复发图事故说明。
  */
 class OneBotUncertainError extends Error {
@@ -1163,7 +1163,7 @@ function oneBotPayloadBytes(params) {
  *
  * 固定 15s 对 base64 图片是错的：pixiv 原图 10~19MB，base64 后 14~26MB，经 WS 推给
  * SnowLuma 再上传 QQ CDN，15s 根本不够（实测 2.2MB 的图都会撞超时）。超时后旧逻辑
- * 「回退 HTTP」再发一遍，而 HTTP 端点对大 body 本来就会 UND_ERR_SOCKET 断连 ——
+ * 「回退 HTTP」再发一遍，而 HTTP 端点对大 body 本来就会 UND_ERR_SOCKET 断连 ，
  * 结果既报失败、图又已经发出去了，AI 再换个档位重试就是群里两张。
  *
  * 这里按 ~512KB/s 估额外时间（保守：宁可多等，也不能把「还在传」误判成失败），
@@ -1189,7 +1189,7 @@ function isTimeoutError(error) {
  * 图片段的展示标签：QQ 动画表情（表情包）和普通图片不是一回事。
  * 网关用 sub_type=1 + summary="[动画表情]" 标表情包，普通图是 sub_type=0 + "[图片]"。
  * 线上事故：一律显示「[图片]」，AI 就把别人发的表情包当成照片，还回了一句
- * 「这张图你今天发第二遍了，P图库是不是存重了」——表情包本来就是反复用的。
+ * 「这张图你今天发第二遍了，P图库是不是存重了」，表情包本来就是反复用的。
  */
 function imageSegmentLabel(d = {}) {
   const summary = String(d.summary ?? '').trim();
@@ -1286,7 +1286,7 @@ function extractMediaFromSegments(segments) {
       });
     } else if (seg.type === 'file') {
       // QQ 文件段（PDF/文本/压缩包…）：url 是下载直链，file/file_id 是网关侧句柄。
-      // 线上需求：群里发 PDF 问「这里面讲了什么」——不记下来 AI 就完全不知道有这个文件。
+      // 线上需求：群里发 PDF 问「这里面讲了什么」，不记下来 AI 就完全不知道有这个文件。
       media.push({
         kind: 'file',
         file: String(d.file ?? ''),
@@ -1652,7 +1652,7 @@ async function main() {
         max: Math.min(max, Number(cfg.rag?.topK) || max),
         // 知识库的 minFill 取 0：没有语义相关条目时就**一条都不注入**。
         // 黑话表补频次是合理的（常用词看看无妨），但答案补频次会让 AI 拿到无关问题的答案，
-        // 比"看不到"危险得多——所以这里刻意不做频次兜底。
+        // 比"看不到"危险得多，所以这里刻意不做频次兜底。
         minFill: 0,
         minCosine: Number(cfg.rag?.minCosine ?? 0.5),
         relativeMargin: Number(cfg.rag?.relativeMargin ?? 0.08),
@@ -1694,7 +1694,7 @@ async function main() {
       // 答案的取舍：这条被反复问到时，答案本来就该被不断更新（新版本号、新价格、更准的结论），
       // 所以默认**接受更新**，只挡两种明显更差的情况：
       //   1) 占位/复读串（"xxxxxxxx"、"哈哈哈哈哈"）：**用字极少却在凑长**。注意别把
-      //      「用字更丰富」当垃圾信号——那恰恰是好答案的特征（早先版本就是栽在这上面）；
+      //      「用字更丰富」当垃圾信号，那恰恰是好答案的特征（早先版本就是栽在这上面）；
       //   2) 大幅缩短（不足旧答案一半、且至少少了 15 字）：那多半是「随口一句」而不是「更新」。
       // 换句话说：允许渐进增补和小幅精简，只拒绝「复读凑长」和「信息量骤降」。
       if (answerChanged) {
@@ -1710,7 +1710,7 @@ async function main() {
       }
       if (kind && DEFAULT_KINDS.includes(kind)) target.kind = kind;
       // 候选条目被再次提交，仍然只是「补证据」：保留候选态，把修订次数 +1 当作「又被提了一次」，
-      // 绝不能因为 autoWrite 开着就悄悄转正——那等于绕过人工确认这道闸门。
+      // 绝不能因为 autoWrite 开着就悄悄转正，那等于绕过人工确认这道闸门。
       // 答案已经替换过就不再重复加分（否则一次提交涨两次）。
       if (target.status === KNOWLEDGE_STATUS.CANDIDATE && !answerReplaced) {
         target.revision = (Number(target.revision) || 0) + 1;
@@ -1756,7 +1756,7 @@ async function main() {
       asker,
       confidence,
       source: 'ai',
-      // 关掉 autoWrite 就落候选，等人工在控制台确认——与黑话库同一条链路。
+      // 关掉 autoWrite 就落候选，等人工在控制台确认，与黑话库同一条链路。
       status: autoWrite ? KNOWLEDGE_STATUS.CONFIRMED : KNOWLEDGE_STATUS.CANDIDATE,
       evidence: evidenceItem ? [evidenceItem] : [],
     });
@@ -2610,7 +2610,7 @@ async function main() {
    *
    * 2026-09 这条通道整站失效：任何 id 的页面都只剩一个 `img.pixivdaily.com/404.jpg`
    * 占位图（页面 3416 字节）。占位图是合法图片、格式校验拦不住，所以这里必须显式
-   * 认出来并当作抓取失败——否则桥接会把一张「404」当原图发到群里。
+   * 认出来并当作抓取失败，否则桥接会把一张「404」当原图发到群里。
    */
   async function fetchBobopicPixivOriginal(id, maxBytes) {
     const page = await safeFetch(`https://go.bobopic.com/${id}`, 200000, { headers: { 'user-agent': IMAGE_PAGE_UA } });
@@ -2628,7 +2628,7 @@ async function main() {
 
   /**
    * 真实 pixiv 搜索结果只带方图缩略图；原图直链要按 id 再查一次详情
-   * （i.pximg 的路径里带日期，拼不出来）。并发 4，单个失败就退回 pixiv.re 直链——
+   * （i.pximg 的路径里带日期，拼不出来）。并发 4，单个失败就退回 pixiv.re 直链，
    * 发送时 resolveImageBuffer 还会按作品 id 再走一遍回退链
    * （直链 / i.pximg 原图 / master1200 / bobopic / pixiv.re / 缩略图）。
    *
@@ -2680,7 +2680,7 @@ async function main() {
       const target = new URL(raw);
       const allowList = limits.refererAllow;
       // pixiv 系域名在「真实 pixiv」开着时总是放行：它们是桥接自己产出的直链（搜索结果的
-      // url），不该被一份过期的 refererAllow 挡住——踩过一次：config.json 里的显式列表覆盖了
+      // url），不该被一份过期的 refererAllow 挡住，踩过一次：config.json 里的显式列表覆盖了
       // 代码默认值，i.pximg.net 不在里面，AI 只能退回慢得多的 pixiv.re。
       const pixivCfg = limits.pixiv ?? {};
       const pixivHost = isPixivHost(target.hostname);
@@ -2700,7 +2700,7 @@ async function main() {
       // （DNS 污染），能不能取到全看 socialV2.image.pixiv.proxy 那条代理，而代理出口
       // 快慢随时在变：同一张 1MB 的图可能 4s 下完，也可能 60s 都不动。
       // 2026-09 线上那次「@机器人 走 pixiv.net 把图发出来」失败就是这么来的：
-      //   ① AI 手里的 i.pximg.net 直链走了「通用 URL 抓取」分支——只有 20s 默认超时、
+      //   ① AI 手里的 i.pximg.net 直链走了「通用 URL 抓取」分支，只有 20s 默认超时、
       //      没有回退链，代理稍慢就直接超时（报「请求超时：i.pximg.net」）；
       //   ② AI 退回 pixiv.re 后，pixiv.re 自己在 522/超时；
       //   ③ bobopic 的「查看原图」通道已经整站退化成 404 占位图，居然被当成原图发进了群；
@@ -2742,7 +2742,7 @@ async function main() {
         };
         const stages = [];
         // 先认清 AI 给的那条地址是哪个档位：原图 / 1200px / 缩略图（认不出 = ''）。
-        // 缩略图**永远不许插队**——踩过一次：AI 把搜索结果里的 thumbUrl（250×250 方形裁切）
+        // 缩略图**永远不许插队**，踩过一次：AI 把搜索结果里的 thumbUrl（250×250 方形裁切）
         // 拿来发，旧逻辑「AI 给的直链优先原样抓」就把它当成功发出去了，群里收到一张方图。
         const givenRendition = pixivRenditionOf(raw);
         const givenIsFetchable = LOOKS_LIKE_IMAGE_URL.test(raw) && !/pixiv\.re$/i.test(target.hostname);
@@ -2913,7 +2913,7 @@ async function main() {
 
   /**
    * 「发送结果不确定」的图（写类 OneBot 动作 WS 超时）：既没拿到回执、也不能假定没发出去。
-   * 这类图必须同时做到两件事——不报成功（不许 AI 说「发给你了」），也不许自动重发（否则就是重复）。
+   * 这类图必须同时做到两件事，不报成功（不许 AI 说「发给你了」），也不许自动重发（否则就是重复）。
    * 10 分钟窗口足够让 AI 先去确认；过期后允许再试（避免一直卡住）。
    */
   const IMAGE_UNCERTAIN_WINDOW_MS = 10 * 60 * 1000;
@@ -2945,7 +2945,7 @@ async function main() {
     // **顺序有讲究**：先查「结果不确定」，再查「最近发过」。
     // 不确定是更具体的状态（这张图既没回执、也没落进 recentMessages 的判定里），而且它的提示更有用
     // （让 AI 先去核实，而不是"换一张"）。反过来的话，同一张图会因为落库时机不同而报错文案漂移
-    // ——测试里就踩到过这种竞态（期望"不确定"，拿到"最近发过了"）。
+    // ，测试里就踩到过这种竞态（期望"不确定"，拿到"最近发过了"）。
     const uncertainAt = imageSendUncertainAt(key, identity);
     if (uncertainAt) {
       const mins = Math.max(1, Math.round((Date.now() - uncertainAt) / 60000));
@@ -3099,9 +3099,9 @@ async function main() {
   }
 
   /**
-   * 图片到底有没有被 QQ 收下？——网关的发送接口回 ok 并不等于送达。
+   * 图片到底有没有被 QQ 收下？，网关的发送接口回 ok 并不等于送达。
    *
-   * 判据来自 `get_msg`：消息真被 QQ 接受后，网关会把它切成「已发送」形态——
+   * 判据来自 `get_msg`：消息真被 QQ 接受后，网关会把它切成「已发送」形态，
    * `message_seq` 变成真实序号、图片段从 `base64://…` 换成 QQ CDN 的 http 地址；
    * 被 QQ 静默丢掉的消息则一直停在本地待发状态（`message_seq=0`、url 仍是 `base64://`）。
    * 2026-09 实测 10 条历史图片消息：9 条送达的全部满足前者，唯一没送达的那条正是后者
@@ -3188,7 +3188,7 @@ async function main() {
   }
 
   /**
-   * 消息有没有真的被 QQ 接受？——与图片同一套判据：QQ 接受后 `message_seq` 会变成真实序号；
+   * 消息有没有真的被 QQ 接受？，与图片同一套判据：QQ 接受后 `message_seq` 会变成真实序号；
    * 被静默丢掉的消息一直停在 0。返回三态，理由同 confirmImageDelivered。
    */
   async function confirmMessageLanded(messageId, timeoutMs) {
@@ -3237,7 +3237,7 @@ async function main() {
       log(`发送内容包含会话令牌，已阻止发送卡片 (${key})`);
       throw new Error('卡片内容包含会话令牌，已阻止发送');
     }
-    // 链接与预览图都必须是「公网 http(s)」。DNS 解析失败也算不合格——宁可拒发，
+    // 链接与预览图都必须是「公网 http(s)」。DNS 解析失败也算不合格，宁可拒发，
     // 也不能让一张指向内网/错域名的卡片进群。
     for (const [label, value] of [['链接', url], ['预览图', preview]]) {
       if (!value) continue;
@@ -3360,7 +3360,7 @@ async function main() {
   /**
    * 「会话繁忙」但可能只是残留标记时的即时自愈。
    *
-   * 为什么必须有：暂存唤醒有**两条**入口——`sendWakePromptV2` 和 `scheduleWakeV2`
+   * 为什么必须有：暂存唤醒有**两条**入口，`sendWakePromptV2` 和 `scheduleWakeV2`
    * （群友发消息走的就是后者），而看门狗只认 `pendingSince`，早先只有前者会写它。
    * 于是落在 `scheduleWakeV2` 的唤醒永远不会被看门狗回收：线上表现是群友发消息后
    * 一直「会话繁忙，暂存唤醒原因」，pendingWakeReasons 堆满、unread 越积越多，
@@ -3368,7 +3368,7 @@ async function main() {
    *
    * 这里补两件事：① 记 `pendingSince`，让看门狗兜底；② 立刻探一次 DSH 会话是不是
    * 真的空闲（残留标记的话当场清掉并直接投递），不必让群友等满 8 分钟。
-   * 探针任何异常都按「仍繁忙」处理——宁可晚点回，也绝不能把这次唤醒弄丢。
+   * 探针任何异常都按「仍繁忙」处理，宁可晚点回，也绝不能把这次唤醒弄丢。
    */
   async function tryRecoverStuckBusyV2(key, reason, markers) {
     try {
@@ -3518,7 +3518,7 @@ async function main() {
   // 这是**账号级身份**，全群全私聊可见，所以门槛比别的工具都高：
   //   默认关（socialV2.profile.enabled）→ 只在管理员上下文可用 → 内容过滤 → 限流 → 留历史可回滚。
   // 「管理员上下文」的判定见 isAdminProfileContext：管理员私聊永远算；群里要求
-  // 「最近一条触发消息是管理员发的」——否则群友在管理员后面接一句就能借道改账号名。
+  // 「最近一条触发消息是管理员发的」，否则群友在管理员后面接一句就能借道改账号名。
   let selfProfile = normalizeProfileState(null);
   let profileChangeTimes = [];
 
@@ -3831,7 +3831,7 @@ async function main() {
   }
 
   /**
-   * 起一个探索任务。**立即返回**——实际挖掘跑在后台串行链上。
+   * 起一个探索任务。**立即返回**，实际挖掘跑在后台串行链上。
    */
   function startTopicExploration(seed, { by = 'console', maxDepth, maxTopics } = {}) {
     const conf = exploreCfg();
@@ -4033,7 +4033,7 @@ async function main() {
       try {
         const accepted = await api.sessions.prompt({ sessionId, mode: 'queue', content: [{ type: 'text', text: promptText }] });
         if (!accepted.result.ok) throw new Error(`${accepted.result.error.code}: ${accepted.result.error.message}`);
-        // 投递是 await 的，这期间管理员可能正好点了「停止」——等待**前**必须再确认一次，
+        // 投递是 await 的，这期间管理员可能正好点了「停止」，等待**前**必须再确认一次，
         // 否则会注册一个没人会去取消的 waiter，任务就卡到这一轮超时（最长 5 分钟）才停。
         // waitLearnerTurn 内部是同步注册 waiter 的，所以这里检查完到注册之间不会被打断。
         if (job.status === 'stopped') { continue; }
@@ -4148,7 +4148,7 @@ async function main() {
     if (idle) {
       // 注意：这里的 id 只存在于上面的箭头函数作用域里，外面要用 idle。
       // 早期这里误写成 id，导致「复用空闲工作车道」时抛 `id is not defined`
-      // ——首次投递会新建车道所以看不出问题，第二次复用才炸。
+      // ，首次投递会新建车道所以看不出问题，第二次复用才炸。
       try { await ensureChatModel(idle); } catch (error) { log(`[work] ${key} 车道 ${idle} 模型设置失败：${error?.message ?? error}`); }
       return { sessionId: idle, queued: false };
     }
@@ -4351,7 +4351,7 @@ async function main() {
    * 为什么必须由桥接来抓：研究跑在独立学习会话里，**它没有 QQ 会话的 key/token**，
    * 调不了 qq_lookup_meme / qq_video 这些 B站工具；只靠 web_search(Bing) + 萌娘百科
    * 会漏掉大量**只活在 B站的中文梗**。实测「你只是怕了」就是这么被判成
-   * 「未发现它被收录为固定网络梗」的——B站 相关视频 7.9 万播放，评论区高赞里就是这个用法。
+   * 「未发现它被收录为固定网络梗」的，B站 相关视频 7.9 万播放，评论区高赞里就是这个用法。
    * 所以由桥接（这边有 B站 客户端和 cookie）先把证据抓好，再塞进研究提示词。
    */
   // ── 豆包网页版通道（梗考究的一路来源） ──────────────────────────────────
@@ -4537,7 +4537,7 @@ async function main() {
         const entry = target ? slangEntries.find((e) => e.content === target.content) : null;
         if (!entry) { unmatchedThisRound++; continue; }
         answeredKeys.add(normWord(target.content));
-        // 「没查到」被模型写成一段解释的情况也要当未确认处理——
+        // 「没查到」被模型写成一段解释的情况也要当未确认处理，
         // 否则这句「未确认（未发现它被收录为固定网络梗）」会作为释义进词库并进提示词，
         // 等于告诉 AI「这个词没含义」，还会把真正的释义永久挡在门外。
         const negativeFinding = looksLikeNegativeFinding(r.meaning);
@@ -4547,7 +4547,7 @@ async function main() {
           // 原来这里直接 continue，跳过了 lastInferenceCount / researchedAt 的更新，后果有两个：
           //   ① 自动研究的触发条件是 `count > lastInferenceCount`，而 lastInferenceCount 永远
           //      停在旧值 → 同一个词每触发一次就重研究一次，白烧 token，而且永远settle不下来；
-          //   ② 界面上分不出「没研究过」和「研究过但没结论」，只能一律显示「待研究」——
+          //   ② 界面上分不出「没研究过」和「研究过但没结论」，只能一律显示「待研究」，
           //      用户看到的就是「让 AI 研究『根本就没有这种』，结果还是待研究」。
           // 现在：记下"已研究到这个次数" + 结论标记，并保留模型给出的来源供人工判断。
           entry.lastInferenceCount = entry.count;
@@ -4608,7 +4608,7 @@ async function main() {
         }
       }
       // 模型不一定把每个目标都写回结果里（输出被截断、或它自己跳过了拿不准的）。
-      // 这些没拿到回音的也必须记一次「研究过」——否则它们和从没研究过的一样，
+      // 这些没拿到回音的也必须记一次「研究过」，否则它们和从没研究过的一样，
       // 下次触发又被重新烧一遍（实测一批 35 条只回来 16 条，剩下 19 条会无限循环）。
       // 界面上它们同样显示「研究过·无定论」，管理员想重试可以点「强制重研全部候选」。
       let noReplyThisRound = 0;
@@ -4801,7 +4801,7 @@ async function main() {
     // 之所以在这里注入而不只改 preset：改 preset 要重启 DSH，而这条立即生效、可随时回退。
     if (cfg.socialV2?.taskTriage !== false) {
       // 硬上限从配置里读出来写进提示词：让 AI 知道天花板在哪，
-      // 而不是笼统地说「不受限制」——那样它只会撞上 400/429 再重试，白费一轮。
+      // 而不是笼统地说「不受限制」，那样它只会撞上 400/429 再重试，白费一轮。
       const capMsgs = Math.max(1, Number(cfg.socialV2?.send?.burstMaxMessages) || 8);
       const capChars = Math.max(1, Number(cfg.socialV2?.send?.maxMessageChars) || 500);
       parts.push([
@@ -4990,7 +4990,7 @@ async function main() {
       const ns = s.namespaces.find((n) => n.ns === 'qq-mode');
       // DSH 设置页也可配置管理员 QQ。⚠️ 只有**非空**值才覆盖 config.json：
       // 插件 schema 的默认值是空串，而 normalizeOwnerQQ('') 会返回 null，
-      // 直接赋值等于把 config.json 里的 ownerQQ 抹掉 —— 那会让 reserved2 的
+      // 直接赋值等于把 config.json 里的 ownerQQ 抹掉 ， 那会让 reserved2 的
       // 进程控制门禁（要求 ownerQQ 与私聊白名单一致）永久失败。
       const rawOwner = ns?.value?.ownerQQ;
       if (rawOwner !== undefined && rawOwner !== null && String(rawOwner).trim() !== '') {
@@ -5067,7 +5067,7 @@ async function main() {
   // ── preset 组成戳 / 会话陈旧判定 ───────────────────────────────────────────
   // DSH 的 agent preset 是「会话创建时读一次、之后永久锁定」的（agent-preset/locked，
   // 见 dsh-agent-presets 的 swap()）：改了 ~/.dsh/.agent-presets/<id>/agent.cordis.yml
-  // 之后，已有 QQ 会话仍跑旧设定——典型症状就是「预设里改了要图规则，群里照样搪塞」。
+  // 之后，已有 QQ 会话仍跑旧设定，典型症状就是「预设里改了要图规则，群里照样搪塞」。
   // 这里给每个会话记一份建会话时的组成戳，复用前比对；对不上（或老会话没记录）就退役重建。
   const presetStampCache = new Map(); // presetId -> 组成戳（进程内缓存：改预设 + 重启桥接才会重算）
   function currentPresetStamp(presetId) {
@@ -5270,7 +5270,7 @@ async function main() {
           //，表现为「AI 明明在线却对那条消息毫无反应」。这里重启后主动补投一次。
           // 延迟 3 秒，等事件流与 pendingWakeKeys 之类的内存标记都就位再投。
           // 第二类同样会被吞：消息刚好在重启前落下（没来得及排进 pendingWakeReasons），
-          // 未读里躺着却没人叫醒——线上（2026-10-15 14:03 群 1050666134）owner 发了「@机器人 睡醒了没」，
+          // 未读里躺着却没人叫醒，线上（2026-10-15 14:03 群 1050666134）owner 发了「@机器人 睡醒了没」，
           // 35 秒后桥接重启，这句话在未读里躺了 4 分钟没人处理。所以启动时也扫一遍**有未读但没有待补投意图**
           // 的会话，主动叫一次。
           for (const key of socialV2.conversations.keys()) {
@@ -5352,7 +5352,7 @@ async function main() {
 
 // 令牌校验：当前令牌，或**刚被轮换掉的上一枚令牌**（宽限期内仍可用）。
 // 为什么需要宽限期（2026-10-15 事故）：会话重建（DSH 重启 / preset 刷新）时桥接会轮换令牌并
-// 立刻撤销旧的，但**已经在跑的那个回合手里还是旧令牌**——于是它每一次工具调用都被拒
+// 立刻撤销旧的，但**已经在跑的那个回合手里还是旧令牌**，于是它每一次工具调用都被拒
 // （"agent token 无效"），连 qq_send_message 都失败，用户看到的就是「机器人哑了」。
 // 旧令牌本来就属于同一个会话，给 30 分钟宽限，安全代价可以忽略。
 const AGENT_TOKEN_GRACE_MS = 30 * 60 * 1000;
@@ -5433,8 +5433,14 @@ const agentTokenOk = (key, token) => {
     // 保存配置：这个作用域里没有现成的 configFile，直接算路径（之前误写成不存在的 saveConfig()）
     const persistConfig = () => atomicWriteJson(path.join(ROOT, 'config.json'), cfg);
     const v2ToolEnabled = (flag) => {
-      const plugins = cfg.socialV2?.plugins;
-      if (plugins && typeof plugins === 'object') return capabilityEnabled(plugins, flag);
+      try {
+        const plugins = cfg.socialV2?.plugins;
+        if (plugins && typeof plugins === 'object') return capabilityEnabled(plugins, flag);
+      } catch (error) {
+        // 兜底：插件判定如果因为环境问题不可用（例如测试夹具只加载了部分模块），
+        // 退回旧的扁平开关，而不是让整个请求 500（线上真事：图片翻页接口 500 = capabilityEnabled is not defined）。
+        log(`[plugin] 能力判定不可用（${error?.message ?? error}），本次退回旧开关表：${flag}`);
+      }
       return cfg.socialV2?.tools?.[flag] !== false;
     };
     const server = http.createServer(async (req, res) => {
@@ -5553,7 +5559,7 @@ const agentTokenOk = (key, token) => {
           return;
         }
         // 只放行控制台真正用到的三种类型：片段(.html) / 模块(.js) / 样式(.css)。
-        // 不放进 .json/.svg/.png——避免以后有人往 public/console 里丢数据文件被匿名读到。
+        // 不放进 .json/.svg/.png，避免以后有人往 public/console 里丢数据文件被匿名读到。
         const STATIC_TYPES = {
           '.html': 'text/html; charset=utf-8',
           '.js': 'text/javascript; charset=utf-8',
@@ -5584,7 +5590,7 @@ const agentTokenOk = (key, token) => {
       const suppliedTokens = [url.searchParams.get('token'), req.headers['x-console-token'], cookieToken]
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter(Boolean);
-      // 公开页面：AI 生成的 Web 应用（/apps/<slug>）不需要令牌——它们的用途就是"发个链接让大家都能看"。
+      // 公开页面：AI 生成的 Web 应用（/apps/<slug>）不需要令牌，它们的用途就是"发个链接让大家都能看"。
       // 安全性靠：slug 不可猜 + 页面是静态 HTML（不放桥接内部数据），并且只读。
       if (url.pathname === '/apps' || url.pathname.startsWith('/apps/')) {
         const slug0 = decodeURIComponent(url.pathname.slice('/apps'.length).replace(/^\//, '')).split('/')[0] || '';
@@ -5637,7 +5643,7 @@ const agentTokenOk = (key, token) => {
           let originHost = '';
           try { originHost = new URL(String(origin)).host; } catch { /* 解析失败按空处理 */ }
           // 同源校验：Origin 的 host 必须等于**请求本身的 Host**（这就是浏览器的同源定义）。
-          // 只认 127.0.0.1:port 会把反代挂载（https://anihub.xin/qq/）全拒掉——线上真事：
+          // 只认 127.0.0.1:port 会把反代挂载（https://anihub.xin/qq/）全拒掉，线上真事：
           // 删图时弹「跨站请求被拒绝」。反代可能改写 Host，所以 X-Forwarded-Host 也算。
           const allowed = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
           const hostHeader = String(req.headers['host'] ?? '').trim();
@@ -5985,7 +5991,7 @@ const agentTokenOk = (key, token) => {
             risk: String(body.risk ?? '').trim(),
             sources: Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean) : [],
             // 手动添加默认落到**候选**：已确认的条目会被注入提示词、被 AI 当成事实使用，
-            // 所以「刚敲进去、还没复核」的词条不该直接变成已确认——AI 自己提交的词也走
+            // 所以「刚敲进去、还没复核」的词条不该直接变成已确认，AI 自己提交的词也走
             // 同一条候选→确认的复核路径（见 /api/socialV2/slang/submit）。
             // 只有显式传 confirmed 才直接入库为已确认（例如从别处导入一批已核实的词）。
             status: body.status === SLANG_STATUS.CONFIRMED ? SLANG_STATUS.CONFIRMED : SLANG_STATUS.CANDIDATE,
@@ -6183,7 +6189,7 @@ const agentTokenOk = (key, token) => {
           const force = body.force === true;
           const isCandidate = (e) => e && e.status === SLANG_STATUS.CANDIDATE;
           // 指定 ids = 明确要研究这几个（允许重研）；不指定 = 「研究全部候选」，
-          // 这时**跳过已经研究到当前次数、且没有新证据的**——否则点一次就把几十条
+          // 这时**跳过已经研究到当前次数、且没有新证据的**，否则点一次就把几十条
           // 已经研究过的（多半是「研究过但无定论」）重新烧一遍 token。
           const needResearch = (e) => force || (Number(e.count) || 0) > (Number(e.lastInferenceCount) || 0);
           const candidates = ids.length
@@ -6409,7 +6415,7 @@ const agentTokenOk = (key, token) => {
           if (body.sources !== undefined) entry.sources = (Array.isArray(body.sources) ? body.sources.map(String).filter((s) => /^https?:\/\//i.test(s)) : []).slice(-10);
           if (body.confidence !== undefined) entry.confidence = body.confidence === 'low' ? 'low' : 'normal';
           // 人工改过答案即视为已裁定：清掉待处理冲突标记。
-          // 并且顺手把候选转正——控制台编辑一条候选项，意思就是「我确认过这条了」；
+          // 并且顺手把候选转正，控制台编辑一条候选项，意思就是「我确认过这条了」；
           // 不转正的话你得再点一次「启用」，而大多数人不会想到还要再点。
           if (body.resolveConflict === true || body.answer !== undefined) {
             entry.conflict = null;
@@ -7320,7 +7326,7 @@ const agentTokenOk = (key, token) => {
           const totalUnread = st.unread.length;
           // 只清「已经真正给过 AI」的那些（seq <= 投递水位）。
           // 剩下的说明 AI 从没看见过它（典型来源：两次 wait 之间到达的消息），
-          // 直接清掉等于永久丢消息——保留在未读里，下次唤醒 / 下一次 wait 还能补上。
+          // 直接清掉等于永久丢消息，保留在未读里，下次唤醒 / 下一次 wait 还能补上。
           const deliveredSeq = Number(st.deliveredSeq) || 0;
           const unseen = st.unread.filter((m) => m && (Number(m.seq) || 0) > deliveredSeq);
           st.unread = unseen;
@@ -7559,7 +7565,7 @@ const agentTokenOk = (key, token) => {
               }
               const shot = await phoneScreenshot();
               if (!shot.ok) { sendJson({ ok: false, error: shot.error }, 502); return; }
-              // send=1：直接把截图发到指定会话（群聊/私聊都行）——AI 看得到图，但"发出去"必须这里做
+              // send=1：直接把截图发到指定会话（群聊/私聊都行），AI 看得到图，但"发出去"必须这里做
               const sendKey = String(url.searchParams.get('send') ?? '') === '1' ? String(url.searchParams.get('key') ?? '').trim() : '';
               if (sendKey) {
                 const km = /^(group|private):(\d+)$/.exec(sendKey);
@@ -7901,7 +7907,7 @@ const agentTokenOk = (key, token) => {
           if (!st.bootstrapSent) st.bootstrapSent = true;
           saveSocialV2State();
           // 必须 await + catch：以前这里是一句裸调用，函数里一旦抛异常就变成
-          // 「未处理异常」——控制台看到的是 ok:true（像成功了），实际唤醒被丢掉。
+          // 「未处理异常」，控制台看到的是 ok:true（像成功了），实际唤醒被丢掉。
           try {
             await sendWakePromptV2(key, reason);
             log(`控制台：手动唤醒 ${key}（${reason}）`);
@@ -8148,7 +8154,7 @@ const agentTokenOk = (key, token) => {
               lane: result.sessionId,
               queued: result.queued,
               position: result.position,
-              // 关键：明确告诉 AI「你没在等」——它这一轮可以照常接别的话。
+              // 关键：明确告诉 AI「你没在等」，它这一轮可以照常接别的话。
               note: result.queued
                 ? `工作车道都占着，这条排在第 ${result.position} 位，仍然不影响你继续聊天。`
                 : '已交给独立的工作车道，它自己会跑完并把结论回投给你；你这一轮不用等它，可以继续接别的话。'
@@ -9192,7 +9198,7 @@ const agentTokenOk = (key, token) => {
                 items = items.filter((it) => !sent.has(imageIdentityKey(it.url || it.thumbUrl, it.file)));
                 const skipped = before - items.length;
                 if (skipped > 0) notes.push(`已跳过 ${skipped} 张本会话最近发过的图（防重复）`);
-                // 全被滤掉时说清楚原因，别让 AI 以为「搜不到」——换个关键词/图源就还能出图。
+                // 全被滤掉时说清楚原因，别让 AI 以为「搜不到」，换个关键词/图源就还能出图。
                 if (!items.length) notes.push('本页结果最近都发过了：换关键词或换图源再搜，别重复发同一张');
               }
             }
@@ -9430,7 +9436,7 @@ const agentTokenOk = (key, token) => {
             } });
             return;
           }
-          // ②b 向量兜底：字面没命中、但语义很近的情况——错别字/变体/谐音（「哈鸡米」→「哈基米」）。
+          // ②b 向量兜底：字面没命中、但语义很近的情况，错别字/变体/谐音（「哈鸡米」→「哈基米」）。
           // 实测这类对的余弦 0.55~0.75，无关对 ≤0.31，所以门槛取 0.5 偏保守，宁可不命中也不乱答。
           if (ragEnabled()) {
             try {
@@ -9764,7 +9770,7 @@ const agentTokenOk = (key, token) => {
           return;
         }
         // 「表情包 → 立刻让 AI 补一批备注」：手动触发，不用等它在空闲回合自己想起来。
-        // 实现就是往某个会话投一条自包含的后台提醒——**会话只决定用哪个 agent token 干活**，
+        // 实现就是往某个会话投一条自包含的后台提醒，**会话只决定用哪个 agent token 干活**，
         // 备注本身写在同一份 state/stickers.json 里，所以投给哪个群/私聊结果都一样，
         // 不需要让管理员选会话。
         if (req.method === 'POST' && url.pathname === '/api/stickers/autolabel-now') {
@@ -10224,7 +10230,7 @@ const agentTokenOk = (key, token) => {
             const fwdCfg = cfg.socialV2?.forward ?? {};
             const clampNum = (v, dflt, min, max) => {
               // 注意：URLSearchParams.get() 缺参数时返回的是 **null**，而 Number(null) === 0，
-              // 会被当成「显式传了 0」压到下限——线上表现就是「没传 limit 时本层只给 1 条」。
+              // 会被当成「显式传了 0」压到下限，线上表现就是「没传 limit 时本层只给 1 条」。
               if (v === null || v === undefined || v === '') return dflt;
               const n = Number(v);
               return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : dflt;
@@ -10274,7 +10280,7 @@ const agentTokenOk = (key, token) => {
             /**
              * 递归展开嵌套转发。
              *
-             * 以前只抓一层、每个只给「3 条 × 120 字」的预览——线上那条多层转发里内层有 18 条，
+             * 以前只抓一层、每个只给「3 条 × 120 字」的预览，线上那条多层转发里内层有 18 条，
              * AI 只能看到 3 条，表现就是「多层合并转发只看得见最外面一层」。现在按层递归
              * （默认 2 层），每层给足条数，并受总抓取预算约束。
              */
@@ -10641,7 +10647,7 @@ const agentTokenOk = (key, token) => {
           return;
         }
         // 真·QQ 群名片（set_group_card）：默认关闭，需要机器人是管理员/群主，且全群可见。
-        // 这是写操作，只适合做「正名」，不该拿来当 AI 的私有记忆——私有记忆走上面的备注库。
+        // 这是写操作，只适合做「正名」，不该拿来当 AI 的私有记忆，私有记忆走上面的备注库。
         if (req.method === 'POST' && url.pathname === '/api/socialV2/set-member-card') {
           const body = await readBody();
           const key = String(body.key ?? '').trim();
@@ -10991,7 +10997,7 @@ const agentTokenOk = (key, token) => {
             const body = await readBody();
             if (action === 'reload') {
               // 手改了 state/*.json（或从备份里抠回一条）之后，让运行中的桥接重新读一遍，
-              // 免得「文件是对的、页面上还是旧的」——也省掉一次为读盘而重启。
+              // 免得「文件是对的、页面上还是旧的」，也省掉一次为读盘而重启。
               reloadMemoryState(['social-v2.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json']);
               log('控制台：AI 记忆已从磁盘重新读入');
               sendJson({ ok: true, inventory: memoryAdmin.inventory() });
@@ -11793,7 +11799,7 @@ const agentTokenOk = (key, token) => {
             return;
           }
           // 单条消息可能有很多张图（线上实例：一条「七宗罪」发了 7 张，而单次上限 5 张），
-          // 所以要支持翻页——否则多出来的图对 AI 就是「被吞了」，而且它自己也拿不到。
+          // 所以要支持翻页，否则多出来的图对 AI 就是「被吞了」，而且它自己也拿不到。
           const imageOffset = Math.max(0, Math.round(Number(url.searchParams.get('imageOffset')) || 0));
           const wantLimit = Math.round(Number(url.searchParams.get('imageLimit')) || 0);
           const pageLimit = wantLimit > 0 ? Math.min(20, wantLimit) : 0; // 0 = 用默认上限
@@ -12219,7 +12225,7 @@ const agentTokenOk = (key, token) => {
         }
         // ── 重启桥接（守护模式下 5 秒后自动拉起） ──────────────────────────────
         if (req.method === 'POST' && url.pathname === '/api/restart') {
-          // 两种启动方式的重启语义不一样，这里必须分开——否则「手动 node src/bridge.js」
+          // 两种启动方式的重启语义不一样，这里必须分开，否则「手动 node src/bridge.js」
           // 的环境下按一下按钮桥接就永久下线（没有守护窗口会把它拉起来）。
           //   守护模式（Windows start.bat 循环，会设 QQ_BRIDGE_GUARDED=1）：直接退出，守护 5s 后拉起；
           //   手动模式：自己 detached 拉一个新进程（等 1s 让端口/单实例锁释放），再退出。
@@ -12262,7 +12268,7 @@ const agentTokenOk = (key, token) => {
     server.listen(port, '127.0.0.1', () => {
       log(`本地控制台已启动：http://127.0.0.1:${port}`);
       // 预热本地 embedding：模型加载约 200ms，放在启动阶段，别让第一条群消息承担。
-      // 失败只记日志——向量检索是加分项，缺了就走按频次选词。
+      // 失败只记日志，向量检索是加分项，缺了就走按频次选词。
       if (ragEnabled()) {
         embedder.start()
           .then(() => {
@@ -12310,7 +12316,7 @@ const agentTokenOk = (key, token) => {
    * 线上事故（2026-10-18 15:19）：WS 断开让 send_group_msg 的回执丢了，桥接按「不确定」
    * 上报、并明确告诉模型“别原样重发”。模型 24 秒后还是重发了一遍，群里于是出现两条
    * 「一天念那么多字，电费你出啊」（seq 38378 / 38379）。
-   * 结论：这种事劝不住，必须在发送侧做成硬约束——模型重试多少次，也只会有一条真的发出去。
+   * 结论：这种事劝不住，必须在发送侧做成硬约束，模型重试多少次，也只会有一条真的发出去。
    *
    * 只拦「自己发过的原文」：
    * - 复读群友的话不会被拦（那文本我们自己没发过）
@@ -12673,7 +12679,7 @@ const agentTokenOk = (key, token) => {
   // 结果 owner 发的那张 7.4MB / 4096x3072 的图被原样投给 DSH，DSH 读图时**爆栈**：
   //   [image unavailable: image/jpeg; Maximum call stack size exceeded; raw image data remains available…]
   // 模型收到的是「图不可用」，用户看到的就是「读图那步报错了」（同一张图当时压缩后只有 482KB 时是能认的）。
-  // DSH 附件层虽然准入 20MB/64MP，但它内部的图片处理扛不住大图——**字节和像素两个维度都要卡**。
+  // DSH 附件层虽然准入 20MB/64MP，但它内部的图片处理扛不住大图，**字节和像素两个维度都要卡**。
   // 另外注意：DSH 自己会归一化，所以这里压小不会白压（只是我们比它更早、更保守地做）。
   const imagePassthroughBytes = () => {
     const raw = Number(cfg.socialV2?.image?.passthroughBytes);
@@ -12686,7 +12692,7 @@ const agentTokenOk = (key, token) => {
   };
   const MAX_MEDIA_PIXELS = 64_000_000; // 单张图片像素上限，防止“图片炸弹”解码拖垮 DSH
   // 抓原图时的硬上限：先抓下来、再本地压缩。QQ 手机直出照片常在 4~8MB，
-  // 若直接按 MAX_MEDIA_BYTES 去抓，连图都拿不到——线上事故：4.35MB 的月饼图，
+  // 若直接按 MAX_MEDIA_BYTES 去抓，连图都拿不到，线上事故：4.35MB 的月饼图，
   // AI 只回「图我这边没取到」，用户连发三张都看不到。
   const MAX_MEDIA_FETCH_BYTES = 16 * 1024 * 1024;
   const MAX_MEDIA_STORE_PER_KEY = 500; // 每个会话最多缓存多少条消息的媒体元数据，防止无限增长
@@ -12721,7 +12727,7 @@ const agentTokenOk = (key, token) => {
 
   /**
    * 编码一张静态图。**有透明通道的必须保住透明**：
-   * sharp 丢掉 alpha 转 JPEG 时透明区会变成纯黑（RGB 全 0），线上事故就是——
+   * sharp 丢掉 alpha 转 JPEG 时透明区会变成纯黑（RGB 全 0），线上事故就是，
    * 群友发的挥拳贴纸，深色手臂在黑底上直接消失，只剩一颗白球浮着，AI 回「拳头糊成一颗球了」。
    */
   async function encodeVisionImage(buf, { longSide, format, quality }) {
@@ -12744,7 +12750,7 @@ const agentTokenOk = (key, token) => {
     // 有透明的走 webp/png（浏览器与视觉模型都支持），没有的走 jpeg。逐档降尺寸/质量。
     // **从大往小试**：能塞进预算就用高分辨率。
     // 线上事故（2026-10-14 群 1050666134）：同一张痛车图，私聊抓到的版本在舒适区内→原样投喂，
-    // 车身上的字看得清；群里抓到 7.5MB 原图，却被阶梯第一档 1600px 压成 482KB——明明有 4MB
+    // 车身上的字看得清；群里抓到 7.5MB 原图，却被阶梯第一档 1600px 压成 482KB，明明有 4MB
     // 预算只用了 1/8，细节全丢，AI 只能说「糊成一团认不出来」。所以顶端要够高，让预算决定档位。
     const ladder = alpha
       ? [[4096, 'webp', 86], [3200, 'webp', 86], [2560, 'webp', 86], [2048, 'webp', 86],
@@ -12754,7 +12760,7 @@ const agentTokenOk = (key, token) => {
          [1600, 'jpeg', 82], [1600, 'jpeg', 68], [1280, 'jpeg', 72], [1024, 'jpeg', 66], [800, 'jpeg', 60]];
     // 明文逐档试有两个代价：① 编码次数多（每档都是一次全尺寸重编码，24MB 的噪点图要跑 5 次）；
     // ② 单元测试里这类大图会把整套审计拖过 60s 超时（真实踩过：spawnSync ETIMEDOUT）。
-    // 所以先用「源图字节/像素」估一个上界，跳过注定塞不下的大档，再在剩下的档里二分——
+    // 所以先用「源图字节/像素」估一个上界，跳过注定塞不下的大档，再在剩下的档里二分，
     // 字节数随档位单调下降，二分 2~3 次就能定位「塞得下的最大档」，结果与逐档扫描一致或更优。
     const dims = getImageDimensions(buf);
     const srcPixels = dims ? dims.width * dims.height : 0;
@@ -12829,7 +12835,7 @@ const agentTokenOk = (key, token) => {
    */
   /**
    * 动图抽帧计划：等间隔取样、包含首尾两帧。
-   * 长动图（>40 帧）抽满 VISION_ANIM_FRAMES，短动图 4 帧够看——抽得越稀，越容易把过渡动作
+   * 长动图（>40 帧）抽满 VISION_ANIM_FRAMES，短动图 4 帧够看，抽得越稀，越容易把过渡动作
    * 当成整段动作的结论（线上：143 帧的表情包抽 4 帧，收尾的「抬手遮脸」被读成「哭图」）。
    */
   function planAnimFrames(totalFrames) {
@@ -12882,7 +12888,7 @@ const agentTokenOk = (key, token) => {
   // ── 聊天里的 QQ 视频：抽帧给视觉模型看 ──────────────────────────────────
   // 背景：QQ 视频段以前被整段忽略，AI 只看到一行「[视频]」，只能回「打不开」。
   // 这里把视频抓下来、用 ffmpeg 抽几帧（均匀分布）投喂给视觉模型。
-  // 限制说明：**不做语音转写**——本机没有 ASR，视频里说的话 AI 听不到，只看画面。
+  // 限制说明：**不做语音转写**，本机没有 ASR，视频里说的话 AI 听不到，只看画面。
 
   let ffmpegPathCache = null; // null=还没找过；''=确认找不到
 
@@ -13315,7 +13321,7 @@ const agentTokenOk = (key, token) => {
   /**
    * 把媒体元数据抓成可直接投喂的图像。
    * `maxCount` 默认沿用单条消息的上限（MAX_MEDIA_COUNT）；合并转发那种「一条消息里
-   * 塞了几十张图」的场景由调用方显式放宽——但**不会**无限放宽，见 forward-media 端点。
+   * 塞了几十张图」的场景由调用方显式放宽，但**不会**无限放宽，见 forward-media 端点。
    */
   async function fetchMediaData(mediaList, { maxCount = MAX_MEDIA_COUNT, maxTotalBytes = imagePassthroughBytes() } = {}) {
     const cap = Math.max(1, Math.min(64, Number(maxCount) || MAX_MEDIA_COUNT));
@@ -13387,7 +13393,7 @@ const agentTokenOk = (key, token) => {
   /**
    * 批总量预算判定：在「已用 totalBytes」的前提下，把这张图压到剩余额度内。
    * 返回能用的 buffer（可能被压小），压不下返回 null。
-   * 不再「一撞上限就整张丢掉」——那会让 AI 以为转发里只有前几张图。
+   * 不再「一撞上限就整张丢掉」，那会让 AI 以为转发里只有前几张图。
    */
   async function fitBatchBudget(buffer, totalBytes, maxTotalBytes) {
     if (!buffer?.length) return null;
@@ -13404,7 +13410,7 @@ const agentTokenOk = (key, token) => {
     const fileItem = mediaList.find((m) => m?.kind === 'file');
     if (fileItem) {
       const mb = fileItem.size ? `（${(fileItem.size / 1024 / 1024).toFixed(1)}MB）` : '';
-      return `\n【文件】本条消息包含文件「${fileItem.name}」${mb}（消息ID=${messageRef}）。你看不到文件内容：要读它请调用 mcp__snowluma__qq_get_message_file（key="${key}", messageId="${messageRef}"）——PDF 会返回正文文字，扫描件会渲染页面图像给你看，纯文本文件直接返回内容。`;
+      return `\n【文件】本条消息包含文件「${fileItem.name}」${mb}（消息ID=${messageRef}）。你看不到文件内容：要读它请调用 mcp__snowluma__qq_get_message_file（key="${key}", messageId="${messageRef}"），PDF 会返回正文文字，扫描件会渲染页面图像给你看，纯文本文件直接返回内容。`;
     }
     const hasVideo = mediaList.some((m) => m?.kind === 'video');
     if (hasVideo) {
@@ -13810,7 +13816,7 @@ const agentTokenOk = (key, token) => {
       let lastError = null;
       const preset = modePreset(key, cfg);
       // 会话可能属于 QQ 群，必须 fail-closed：拿不到 qq-chat* 就拒绝建会话，绝不让 DSH 用
-      // 默认 preset（standard）顶上——那会把 bash/文件读写等本地工具暴露给 QQ 群里的任何人
+      // 默认 preset（standard）顶上，那会把 bash/文件读写等本地工具暴露给 QQ 群里的任何人
       // （见 RULES.md「无本地工具」）。
       if (!preset) {
         const wanted = cfg.socialV2?.agentPreset || cfg.agentPreset;
@@ -14071,7 +14077,7 @@ const agentTokenOk = (key, token) => {
    * 这个会话现在该不该走「引导唤醒（bootstrap）」。
    *
    * `bootstrapSent=false` 有两种来源：真正的新会话；以及 retireSession 在停用会话时清掉的标记。
-   * 后者（历史里已经有消息、或已经被唤醒过）不该再引导一遍——那会让 AI 在有人等它回话时先跑去
+   * 后者（历史里已经有消息、或已经被唤醒过）不该再引导一遍，那会让 AI 在有人等它回话时先跑去
    * 重新设唤醒配置。这里顺手把标记修回去，避免同一状态反复判定。
    */
   function takeBootstrapV2(st) {
@@ -14403,7 +14409,7 @@ const agentTokenOk = (key, token) => {
   }
 
   /**
-   * 「下次唤醒时，AI 到底会看到哪些记忆」——控制台预览用。
+   * 「下次唤醒时，AI 到底会看到哪些记忆」，控制台预览用。
    * 只读，不改任何状态；和真正拼提示词用的是同一个 formatMemoryV2，
    * 所以这里看到什么，唤醒时就是什么（成员备注按设计不注入，单独标出来）。
    */
@@ -14567,7 +14573,7 @@ const agentTokenOk = (key, token) => {
   }
 
   // AI 图片管理：AI 从网上抓下来落盘的图片（本地图库 / pixiv 样图 / B站帧缓存）。
-  // 与记忆同属「AI 的资产」，但删除走回收站而不是 JSON 快照——图片几十上百 MB，
+  // 与记忆同属「AI 的资产」，但删除走回收站而不是 JSON 快照，图片几十上百 MB，
   // 每次动手都复制一份不现实（详见 src/image-admin.js 顶部说明）。
   // 本地图库目录直接取 resolveImageConfig()，管理员在控制台改了路径，两边永远一致；
   // config.json 里显式配了 imageAdmin.sources 就用它（e2e / 多机部署把图库指到别的盘）。
@@ -14589,7 +14595,7 @@ const agentTokenOk = (key, token) => {
     }
   });
   // AI 发出去的网络图在本机留一份（state/sent-images/，同时是「AI 图片」的一个受管来源）。
-  // 不这么做的话，「群里发过的那张图」本地再也找不回来——字节只在内存里过一遍就没了。
+  // 不这么做的话，「群里发过的那张图」本地再也找不回来，字节只在内存里过一遍就没了。
   const sentImageDir = path.join(STATE_DIR, 'sent-images');
   const sentImages = createSentImageStore({
     dir: sentImageDir,
@@ -14985,7 +14991,7 @@ const agentTokenOk = (key, token) => {
 
   /**
    * 向指定会话的 DSH agent 投递一条「后台控制端提醒」（静默回合：AI 的文本不会自动发到 QQ）。
-   * 控制台的「后台提醒」与「表情包 → 立刻补一批」共用这一条路径——两处各写一遍必然会漂移。
+   * 控制台的「后台提醒」与「表情包 → 立刻补一批」共用这一条路径，两处各写一遍必然会漂移。
    * 校验失败时抛错，`error.statusCode` 带 HTTP 码，由调用方决定怎么回。
    */
   async function notifyAiSession(key, message) {
@@ -15010,7 +15016,8 @@ const agentTokenOk = (key, token) => {
       const stV2 = getSocialV2State(key);
       tokenLine = `【会话令牌】${stV2.agentToken}（调用状态/发送工具时请在参数中带上此令牌）\n\n`;
     }
-    const promptText = `${roleLine}${selfLine}${profileLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
+    // 静默回合提示不需要身体/记忆段（selfLine/profileLine 只在唤醒提示里构建）
+    const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是聊天模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
     let popSilent = null;
     try {
       const sessionId = await ensureSession(key);
@@ -15431,7 +15438,7 @@ const agentTokenOk = (key, token) => {
 
   // QQ 群成员**身份**缓存：groupId -> { roles: Map<userId, 'owner'|'admin'|'member'>, ts }。
   // 用途：给 qq_get_active_members 标注真实的 QQ 群身份，免得 AI 把 isOwner（=桥接管理员 ownerQQ）
-  // 误读成「群主」——线上真实事故就出在这里。整群列表一次拉取缓存 6 小时，调用方不必每轮都打网关。
+  // 误读成「群主」，线上真实事故就出在这里。整群列表一次拉取缓存 6 小时，调用方不必每轮都打网关。
   const GROUP_ROLE_TTL_MS = 6 * 60 * 60 * 1000;
   const groupRoleCache = new Map();
   async function resolveGroupRoles(groupId) {
@@ -15703,7 +15710,7 @@ const agentTokenOk = (key, token) => {
       // 非卡片消息不加这个字段，避免给每条消息都塞一个 card:null。
       ...(card ? { card } : {}),
       quoteTargetIsSelf: !!quoteTargetIsSelf,
-      // 这条有没有 @ 你（或 @全体）。存下来，好让 AI 一眼看出「谁在跟谁说话」——
+      // 这条有没有 @ 你（或 @全体）。存下来，好让 AI 一眼看出「谁在跟谁说话」，
       // 线上问题：群里消息它几乎都默认当成对自己说的，因为它只能自己从文本里猜。
       atSelf: !!atSelf,
       isOwner: !!isOwner,
@@ -15809,7 +15816,7 @@ const agentTokenOk = (key, token) => {
       });
     }
     if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-    // **自己说过的话**（不只是主动开盘）：线上问题——同一话题先在「回复」里讲过，过几天又当新话题
+    // **自己说过的话**（不只是主动开盘）：线上问题，同一话题先在「回复」里讲过，过几天又当新话题
     // 开了一遍（真实案例：电车服务区充电，先说在回复里，5 天后又主动开一次，相似度 0.76），而旧的
     // 反重复记忆只记 proactiveCheck 那一轮，回复里的内容完全不在防重复的参照池里。
     // 这里把每次发出的文本都记进 selfSaid（带上是不是主动开盘），供①查重闸门 ②提示词摆给模型看。
@@ -15864,7 +15871,7 @@ const agentTokenOk = (key, token) => {
 
   // 记录机器人自己发出的图片/表情到上下文。
   // 必要性：自消息默认不会被网关回传，不主动记录的话，用户引用这张图时 AI 只能「看不到」。
-  // `undelivered`：发送未确认送达（QQ 静默吞图）时标上，用来把它排除出「最近发过的图」——
+  // `undelivered`：发送未确认送达（QQ 静默吞图）时标上，用来把它排除出「最近发过的图」，
   // 没落地的图不该被防重复挡住：群友说「补一张」时 AI 得能再试一次（然后拿到如实报错）。
   function recordSelfMediaV2(key, { text, kind, messageId, media, undelivered = false }) {
     try {
@@ -16100,7 +16107,7 @@ const agentTokenOk = (key, token) => {
    * 主动开口的「换个方向」段落（reserved2 与一代共用）。
    *
    * 为什么需要它：主动冒泡最容易退化成复读。普通唤醒有群友的新消息当抓手，
-   * 主动开口时模型唯一的题材来源就是【群聊上下文】+【进行中的话题】记忆——而这两者
+   * 主动开口时模型唯一的题材来源就是【群聊上下文】+【进行中的话题】记忆，而这两者
    * 装的都是**最近那个圈子**（线上实测：每次主动开口都是电竞/赛事）。
    * 旧的提示词还写着「追问上次没聊完的事」「结合记忆里的群友兴趣」，等于直接叫它顺着旧话题复读。
    * 所以这里做三件事：给一个别处的方向、明确「记忆是背景不是题材」、把最近开的头摆出来。
@@ -16132,7 +16139,7 @@ const agentTokenOk = (key, token) => {
 
   /**
    * 找出一批开头里重复出现的「起法」（如「刷到个」）。
-   * 只认 3~6 字的共同前缀、出现 ≥2 次才算——太短会误伤（「今天」这种），太长会漏。
+   * 只认 3~6 字的共同前缀、出现 ≥2 次才算，太短会误伤（「今天」这种），太长会漏。
    */
   function detectOpenerHead(openers) {
     const texts = openers.map((o) => String(o?.text ?? '').replace(/\s+/g, '')).filter((t) => t.length >= 4);
@@ -16223,19 +16230,19 @@ const agentTokenOk = (key, token) => {
         + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
         + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
         + '规则：做之前先用 qq_autonomy_status 看预算，做完用 qq_autonomy_spend 记一次；预算没了就只能聊天。'
-        + '"什么都不做"永远是合法选择——别为了"有作为"而刷屏。\n\n';
+        + '"什么都不做"永远是合法选择，别为了"有作为"而刷屏。\n\n';
     } catch { /* 自主性模块异常不影响主流程 */ }
     // ② 最关键的一条：记忆和群史是「背景」，不是「题材」。
     out += '【别拿记忆和群史当题材】上面的【群聊上下文】【进行中的话题】只是让你知道群里在聊什么，'
       + '**不是让你顺着它往下说**。主动冒泡是要**开一个新话题**；'
       + '从旧话题、或同一个人物/战队/作品/圈子里再找一个角度，跟复读没区别。\n\n';
-    // ③ 最近主动开的头：模型对抽象指令不敏感，对具体文本敏感，所以原样摆出来——而且要把
+    // ③ 最近主动开的头：模型对抽象指令不敏感，对具体文本敏感，所以原样摆出来，而且要把
     //    「你自己的起法和题材也在重复」点名到具体字眼上，否则它只会觉得「我明明换了话题」。
     if (p.avoidRepeat !== false && recentOpeners.length) {
       out += '【你最近主动开的头 · 这次别再聊这些】\n'
         + recentOpeners.map((o) => `- ${o.text}`).join('\n')
         + '\n上面这些已经说过了；同一个人物/战队/作品/圈子的后续也算重复，至少隔几轮再提。\n';
-      // 更早的题材不再往提示词里硬塞：走**记忆机制**——提示它自己去查（qq_recall 查日记+原文锚点，
+      // 更早的题材不再往提示词里硬塞：走**记忆机制**，提示它自己去查（qq_recall 查日记+原文锚点，
       // qq_search_history 查完整归档）。归档里连我自己主动发的话都记着，所以它是真能查到的。
       out += '【开口前先翻一下记忆】不确定这个话题以前聊没聊过，就先查你自己的记忆：\n'
         + '- `qq_recall`（关键词，比如「天气」「战队」这种实词）：直接查完整归档里的原文；\n'
@@ -16251,7 +16258,7 @@ const agentTokenOk = (key, token) => {
       }
       out += '\n';
     }
-    // ④ 可选禁词（管理员配的，默认空）。默认策略不是「禁止某个话题」，而是「别老聊同一个」——
+    // ④ 可选禁词（管理员配的，默认空）。默认策略不是「禁止某个话题」，而是「别老聊同一个」，
     //    话题本来就没有对错，问题是它只能从同一处取材。
     const avoid = (Array.isArray(p.avoidKeywords) ? p.avoidKeywords : []).map((w) => String(w ?? '').trim()).filter(Boolean);
     if (avoid.length) out += `【主动开话题时别碰】${avoid.join(' / ')}，除非群里刚有人主动聊起来。\n\n`;
@@ -16292,10 +16299,10 @@ const agentTokenOk = (key, token) => {
     const participationText = formatParticipationV2(st);
     const participationLine = participationText ? `${participationText}\n\n` : '';
     const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n'
-      // 线上统计：AI 18.7% 的消息带破折号、5.5% 以「行，」开头、平均 40 字——群友是 0% / 0% / 9.7 字。
+      // 线上统计：AI 18.7% 的消息带破折号、5.5% 以「行，」开头、平均 40 字，群友是 0% / 0% / 9.7 字。
       // 这些句式就是「公式化」的显性特征，模型自己不会觉得有问题，必须点名禁掉。
       + '【别用这些公式化句式】① **不要用破折号**（em dash，就是中文里那条长长的横线）（群里真人零使用；要停顿就用逗号、句号，或者干脆拆成两条发）；'
-      // 「别老用」被模型读成了「偶尔用没关系」——线上实测这条规则挂了一轮，「行，」照样一天出现两次。
+      // 「别老用」被模型读成了「偶尔用没关系」，线上实测这条规则挂了一轮，「行，」照样一天出现两次。
       // 所以改成绝对禁止，并把总结标签单列（「总结：」是线上点名的那一条）。
       + '② **下列写法一个都不要用**（不是「少用」）：句首的「行，」「好的，」「所以」「其实，」「确实，」「说白了」「本质上」；'
       // 「X 了，」确认收到式开场：owner 点名「认了/搜了/懂了」这类词 AI 味重。模型对具体字眼敏感，
@@ -16308,7 +16315,7 @@ const agentTokenOk = (key, token) => {
     // 每轮都钉一次身份术语：错误身份一旦被写进轻量记忆，会被后续每一轮唤醒复读（线上真实事故）。
     const identityLine = `${ADMIN_IDENTITY_HINT}\n\n`;
     // 表情包不是照片。线上事故：玄真把同一个 QQ 动画表情发了三次，AI 回「这张图你今天发第二遍了，
-    // P图库是不是存重了」——把反复使用的表情包当成了重复发照片，还扯上了自己的图库。
+    // P图库是不是存重了」，把反复使用的表情包当成了重复发照片，还扯上了自己的图库。
     const stickerIdentityLine = '【表情包可以重复】消息里的 [动画表情] / 「表情包」是 QQ 动画表情，不是照片：同一个人连发同一个表情包很正常，'
       + '**不要**说「你发过了 / 第二遍了 / 图库存重了」这类话，也别提自己的图库/素材来源。'
       + '**动图会一次给你好几帧**（带「第 k/n 帧」标注）：那是**同一个表情**的不同瞬间，不是对方发了好几张图，'
@@ -16320,11 +16327,11 @@ const agentTokenOk = (key, token) => {
       + '想接就接梗、描述画面或直接回应；不想接就正常划走。\n\n';
     // 被挑衅可以还嘴。模型默认会往「礼貌、讲道理、我不跟你计较」上走，那不是这个角色的活法；
     // 这里明确给许可 + 划边界（对等、只打挑衅者、不碰家人/地域/歧视/性侮辱、对方收手就停）。
-    // 语气基调：默认幽默、别端着；真要还嘴时用「贴吧老哥」那一档——靠梗不靠堆脏字，短、克制、对事不对人。
+    // 语气基调：默认幽默、别端着；真要还嘴时用「贴吧老哥」那一档，靠梗不靠堆脏字，短、克制、对事不对人。
     // （owner 反馈过「攻击性有点高」，这里把默认攻击性压下来，同时保留被挑衅时的还嘴许可。）
     const retortLine = '【默认幽默，别端着】默认语气是轻松、会接梗、偶尔自嘲，像群里一个嘴贫的老哥，而不是个爱抬杠的刺头。'
       + '没人惹你时**不主动阴阳、不主动怼人、不说教**；别人玩梗就跟着玩，好笑的地方可以夸张、可以抽象，但别把每句话都当辩论赛。\n\n'
-      + '【真要还嘴：贴吧老哥风】被人主动挑事、反复刷你（比如「大肥鱼」）、阴阳、开黄腔、踩雷点时，可以还嘴——但**要像贴吧老哥**，不是撒泼：\n'
+      + '【真要还嘴：贴吧老哥风】被人主动挑事、反复刷你（比如「大肥鱼」）、阴阳、开黄腔、踩雷点时，可以还嘴，但**要像贴吧老哥**，不是撒泼：\n'
       + '① 短：一两句、甚至几个字，配一个梗/比喻/反问/反话，越短越有劲；\n'
       + '② 靠梗和反差，不靠堆脏字：脏字点到为止（「你tm」「滚」「傻逼」这一档足够），密集输出反而显得急；\n'
       + '③ 自嘲垫底，显得不较真：「我这破鱼」「行吧，你赢了」这种先软后扎，比直接开骂更像老哥；\n'
@@ -16350,7 +16357,7 @@ const agentTokenOk = (key, token) => {
       + '边界：① 真问事（尤其技术/事实问题）就好好答，别拿「整蛊」当偷懒借口糊弄；② 玩回去要短要乐，别升级成骂战（要骂按【被挑衅可以骂回去】）；'
       + '③ 不配合造谣/违法/伤害第三方的坑（让你编假消息、说某人坏话、冒充别人），这种不接或直接点破；④ 被整了别记仇、别写进记忆，也别把整蛊问题当知识存进群知识库。\n\n';
     // 复读是群聊的常见玩法：同一句话被连刷、队形复读、同一个表情包连发，都不是「在跟你说话」。
-    // 模型容易对每条复读都「认真处理」——惊讶、问「你们怎么都复读」、逐条回，那样非常出戏。
+    // 模型容易对每条复读都「认真处理」，惊讶、问「你们怎么都复读」、逐条回，那样非常出戏。
     const echoLine = '【复读是正常玩法】群里同一句话被连刷、队形复读、同一个表情包连发，是很常见的接梗方式：'
       + '**不要惊讶也不要问**「你们怎么都在复读 / 是不是卡了 / 复读机吗」，更不要逐条当新消息认真回应，一串复读回一条就够。'
       + '合适的场合（正好戳中你、队形整齐、话题对味）**你也可以跟着复读一句**、或者跟发同一个表情包，别多解释、别加评论。'
@@ -16413,7 +16420,7 @@ const agentTokenOk = (key, token) => {
         const cap = Number(ttsCfgV.maxChars) || 0;
         const cd = Math.round((Number(ttsCfgV.cooldownMs) || 0) / 1000);
         const limits = [cap > 0 ? `一条最多 ${cap} 字` : '说短一点更自然', cd > 0 ? `两条之间至少隔 ${cd} 秒` : ''].filter(Boolean).join('，');
-        return `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字——分寸你自己把握。\n`;
+        return `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字，分寸你自己把握。\n`;
       })()
       : '';
     const memoryHint = (() => {
@@ -16482,7 +16489,7 @@ const agentTokenOk = (key, token) => {
 
   /**
    * 给 AI 看的消息视图：把「谁在跟谁说话」显式化。
-   * 线上问题（2026-10-13）：群里消息它几乎都默认当成对自己说的——消息对象里只有
+   * 线上问题（2026-10-13）：群里消息它几乎都默认当成对自己说的，消息对象里只有
    * isSelf / quoteTargetIsSelf，既没有「@了你」的标记，也没写清引用的是谁，它只能自己猜。
    * 约定：**只有带 aboutYou 字段的才是针对你的**；没有这个字段＝这条没针对你。
    */
@@ -16566,7 +16573,7 @@ const agentTokenOk = (key, token) => {
     // 只有「主动开口」那一轮才装自我重复闸门；普通唤醒立刻卸掉，免得耽误正常回复。
     proactiveGuardTurns.set(key, { armed: reason === 'proactiveCheck', used: false });
     // 投递水位初始化（升级到「补缝隙」逻辑后的第一轮）：
-    // 把当前未读算作**待投递**，而不是当作已经给过 AI——否则升级前那一刻就已经积压的未读
+    // 把当前未读算作**待投递**，而不是当作已经给过 AI，否则升级前那一刻就已经积压的未读
     // （例如线上那条从没进过 newMessages 的「玉山镇」）会被后续 mark_read 静默清掉。
     if (!Number(st.deliveredSeq)) {
       const firstUnread = (Array.isArray(st.unread) ? st.unread : []).find((m) => m && Number(m.seq));
@@ -16593,7 +16600,7 @@ const agentTokenOk = (key, token) => {
       // 否则表现就是「AI 明明在线，却把每条消息都判成会话繁忙、永不回复」。
       //
       // 探针必须包在 try 里：它只是个「要不要提前清忙标记」的优化判断，探针本身出任何错
-      // （RPC 失败、字段变了、甚至写成 ReferenceError）都**绝不能把这次唤醒弄丢** ——
+      // （RPC 失败、字段变了、甚至写成 ReferenceError）都**绝不能把这次唤醒弄丢** ，
       // 探针炸了就当「不确定，不清理」，老老实实走下面的暂存队列，等回合结束补投。
       // 这里踩过真坑：探针里一个变量名拼错（sessionIdleCache vs sessionIdCache）让
       // `await` 直接抛 ReferenceError，把整个函数打断在 push 之前，于是「回合进行中
@@ -16631,7 +16638,7 @@ const agentTokenOk = (key, token) => {
     const recentHour = (st.wakeTimes || []).filter((t) => now - t < 3600000).length;
     if ((maxPerMinute > 0 && recentMinute >= maxPerMinute) || (maxPerHour > 0 && recentHour >= maxPerHour)) {
       // **不能直接丢**：线上事故（2026-10-13 11:57 群 1050666134）owner 发的 B 站卡片触发 question
-      // 唤醒，恰好撞上频率上限（前几次 busyRecovery 先把额度吃掉了），于是这条消息**永远没人处理**——
+      // 唤醒，恰好撞上频率上限（前几次 busyRecovery 先把额度吃掉了），于是这条消息**永远没人处理**，
       // 群里看到的只是「AI 没回我」。改为暂存 + 排一个补投定时器，额度一放开就补投。
       if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
       const seq = st.lastUnreadSeq || 0;
@@ -16767,7 +16774,7 @@ const agentTokenOk = (key, token) => {
    * 推进「已真正投递给 AI」的 seq 水位线。
    *
    * 为什么需要它：`qq_wait_for_messages` 原来的 baseline 取「等待开始那一刻的最新 seq」，
-   * 于是**上一次 wait 返回到下一次 wait 开始之间到达的消息**正好落在缝里——既不在上一次的
+   * 于是**上一次 wait 返回到下一次 wait 开始之间到达的消息**正好落在缝里，既不在上一次的
    * newMessages 里（那时还没到），也不在下一次的（seq 不大于 baseline），但它躺在 unread 里。
    * AI 的常见习惯是只看 newMessages、收尾再 mark_read，那条消息就被静默清掉了。
    * 线上实例：玄真回答「玉山镇」的那条 @（seq452，落在 04:20:32 与 04:20:41 两次 wait 之间），
@@ -16788,7 +16795,7 @@ const agentTokenOk = (key, token) => {
   /**
    * 暂存的唤醒意图现在还要不要补发？
    * 判据是**它自己那条消息**仍在未读里。注意必须精确匹配 seq：
-   * 曾写成 `seq >= item.seq`，于是任何一条更新的未读都会让陈旧意图「仍然相关」——
+   * 曾写成 `seq >= item.seq`，于是任何一条更新的未读都会让陈旧意图「仍然相关」，
    * 会话卡死恢复后暂存队列常积压 20 条旧意图，那会变成每回合结束补一刀、连叫十几次。
    */
   function pendingWakeStillRelevantV2(st, item) {
@@ -16828,7 +16835,7 @@ const agentTokenOk = (key, token) => {
    * 用途：区分「真忙」与「忙标记残留」。桥接在回合中途重启、或 DSH 侧回合异常结束时，
    * 内存里的 collector / promptQueue.running / pendingWakeKey 会永久留下，表现为
    * 「会话繁忙，暂存唤醒原因」无限排队、AI 再也不回话。`staleTurnMarkerV2` 只能靠
-   * turn 起点证明卡死，而重启恰好会丢掉 turn 起点——此时这个只读探针是唯一能证明
+   * turn 起点证明卡死，而重启恰好会丢掉 turn 起点，此时这个只读探针是唯一能证明
    * 「DSH 侧其实没人干活」的依据。
    *
    * 30 秒缓存；查询失败或字段缺失一律视为「不确定 → 不清理」，宁可多等看门狗，
@@ -16858,7 +16865,7 @@ const agentTokenOk = (key, token) => {
    * 启动后清一次残留忙标记。
    *
    * 启动时 `state.sessions` 是刚从磁盘读回来的映射，而 v2TurnStartAt / collectors /
-   * promptQueues / pendingWakeKeys 全在内存里——所以这里其实没有「可残留的标记」。
+   * promptQueues / pendingWakeKeys 全在内存里，所以这里其实没有「可残留的标记」。
    * 真正的价值是**自检**：万一将来有别的路径在启动阶段写入了标记，或 DSH 侧
    * 明确报告某会话空闲却仍被本地判定为忙，这里会立刻发现、清掉并留一条可读日志。
    */
@@ -17025,11 +17032,11 @@ const agentTokenOk = (key, token) => {
       st.proactiveNextAt = 0;
       ensureWakeableV2(st, { key });
       const idleThreshold = Number(p.idleThresholdMs) || 15 * 60 * 1000;
-      // owner 要求：按「群里**最后一条消息**的时间」判冷场——包括我自己发的那条。
+      // owner 要求：按「群里**最后一条消息**的时间」判冷场，包括我自己发的那条。
       // 之前只看 lastIncomingAt（群友发言），我自己刚说完没人接时它仍认为"冷"，于是又冒泡。
       const lastAny = Math.max(Number(st.lastIncomingAt) || 0, Number(st.lastAiReplyAt) || 0);
       const idle = Date.now() - lastAny;
-      // owner 要求：**不要概率，纯时间间隔**——到点且群冷（闲置 ≥ 阈值）就主动开一次，
+      // owner 要求：**不要概率，纯时间间隔**，到点且群冷（闲置 ≥ 阈值）就主动开一次，
       // 否则白天群容易冷场。概率/翻倍/打折那套全部去掉，只保留两个硬判定：
       //   ① 闲置时间够长（idleThresholdMs，默认 10 分钟）
       //   ② 凌晨静默时段（proactive.quietHours，默认 1~7 点）不打扰
@@ -17039,7 +17046,7 @@ const agentTokenOk = (key, token) => {
       if (!inQuiet && idle >= idleThreshold && !isConversationBusyV2(key, st)) {
         // 冒泡冷却：真的开口之后，下一次机会至少隔 cooldownMs（默认 4 小时）。
         // 否则一个整天没人说话的群会每隔 20~40 分钟就冒一次泡（线上反馈：太频繁）。
-        // owner：冒泡只取决于「群里最后一条消息的时间」——冒泡本身会写进 lastAiReplyAt，
+        // owner：冒泡只取决于「群里最后一条消息的时间」，冒泡本身会写进 lastAiReplyAt，
         // 3 小时的冷场计时自然从这里重启，所以不需要再叠一层冷却（cooldownMs=0 即关闭）。
         const cooldown = Math.max(0, Number(p.cooldownMs) || 0);
         st.proactiveNextAt = Date.now() + (cooldown || 3 * 60 * 60 * 1000);
@@ -17101,7 +17108,7 @@ const agentTokenOk = (key, token) => {
   // ── 掉线补拉 ────────────────────────────────────────────────────────────
   // OneBot 是**推送**模型：断线期间群里的消息网关不会重发。
   // 实测（2026-10-05 23:20–23:26，WS 每 30 秒 code=1006 抖了一次）那段窗口群里发了 6 条，
-  // 桥接只收到重连后的 1 条，**5 条整段消失**——AI 完全不知道那 5 条存在过。
+  // 桥接只收到重连后的 1 条，**5 条整段消失**，AI 完全不知道那 5 条存在过。
   // 好在网关实现了 get_group_msg_history / get_friend_msg_history，且 `count` 与
   // `message_seq` 搭配时能从任意位置往后取（message_seq 单独传会被忽略），所以错过的能补。
   //
@@ -17158,7 +17165,7 @@ const agentTokenOk = (key, token) => {
         out.checked += 1;
         const action = kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history';
         const baseParams = kind === 'group' ? { group_id: Number(id) } : { user_id: Number(id) };
-        // **不再拿 message_seq 当水位**：实测这个网关的 message_seq 并不是「按会话单调递增」——
+        // **不再拿 message_seq 当水位**：实测这个网关的 message_seq 并不是「按会话单调递增」，
         // 私聊里 10/11 的一条文件是 59884，而 10/15 的「hi」只有 35758。用「见过的最大 seq」过滤，
         // 会把比它小的新消息**永久**挡在门外（线上事故：owner 的 hi 一直没被处理，补拉却报「没有缺口」）。
         // 而且 get_*_msg_history 对这个网关来说 message_seq 参数是无效的（传什么值都返回最近 N 条）。
@@ -17177,7 +17184,7 @@ const agentTokenOk = (key, token) => {
           : (Array.isArray(data?.messages) ? data.messages : []);
         if (!list.length) continue;
         // 时间窗：只看最近 maxAgeMs（默认 6 小时）内、本地没见过的消息。
-        // **不能用「本地最新一条」当锚点**：缺口常常出现在中间——线上（2026-10-15 群 1050666134）
+        // **不能用「本地最新一条」当锚点**：缺口常常出现在中间，线上（2026-10-15 群 1050666134）
         // 11:20~13:21 有 6 条被漏掉，而本地最新一条是 14:03 的「睡醒了没」；拿后者当锚点就会
         // 永远补不到那批更早的缺口。以「现在」为锚 + 有界回看，才不会漏中间那段。
         const horizonMs = Math.max(0, Number(bf.maxAgeMs) || 6 * 60 * 60 * 1000);
@@ -17242,7 +17249,7 @@ const agentTokenOk = (key, token) => {
         //
         // **私聊例外**：私聊是有人直接找它（尤其 owner）。线上事故（2026-10-15）：owner 13:23 发的
         // 「hi」正好落在网关故障窗口里，网关 13:54 恢复后补进了上下文，却因为超过 10 分钟闸门
-        // 「只入库不唤醒」—— 于是 AI 从来没被叫起来看过它，用户看到的就是「没响应」。
+        // 「只入库不唤醒」， 于是 AI 从来没被叫起来看过它，用户看到的就是「没响应」。
         // 群里刷屏的旧账仍然只入库；私聊放宽到 6 小时。
         const wakeAgeMs = kind === 'private' ? Math.max(wakeMaxAgeMs, 6 * 60 * 60 * 1000) : wakeMaxAgeMs;
         if (built.length <= wakeMaxMessages && oldestAge <= wakeAgeMs) {
@@ -17452,7 +17459,7 @@ const agentTokenOk = (key, token) => {
           + '\n';
       }
       // ── 入站内容策略：越线请求在进队列之前就拦掉 ──────────────────────
-      // 拦下的消息不进未读、不触发唤醒、不写进会话上下文——模型那边连它存在都不知道，
+      // 拦下的消息不进未读、不触发唤醒、不写进会话上下文，模型那边连它存在都不知道，
       // 自然不会有「思考 → 拒绝 → 对方还是没收到」这一串浪费。见 src/content-filter.js。
       const moderation = contentGate.check(plainContent, { key });
       if (moderation.blocked) {
@@ -17506,7 +17513,7 @@ const agentTokenOk = (key, token) => {
       + mediaHintFor(key, messageRef, mediaList);
 
     // 一代模式（chat / reserved）同样先过内容策略：越线请求不该进模型。
-    // 管理员不例外——拦的是「这类请求」，不是「谁发的」。
+    // 管理员不例外，拦的是「这类请求」，不是「谁发的」。
     const moderationLegacy = contentGate.check(plainContent, { key });
     if (moderationLegacy.blocked) {
       if (moderationLegacy.reply) await sendToQQ(key, moderationLegacy.reply);
@@ -18231,7 +18238,7 @@ const agentTokenOk = (key, token) => {
       } catch (error) {
         const streamErr = String(error?.message ?? error);
         log('事件流中断:', streamErr);
-        // DSH 重启后 launch token 会变。401 说明手里那枚已经失效——必须重新发现一次，
+        // DSH 重启后 launch token 会变。401 说明手里那枚已经失效，必须重新发现一次，
         // 否则就是永久 401 死循环（2026-10-15 线上实测：DSH 重启后事件流刷了一屏
         // "DSH *** failed: HTTP 401"，QQ 消息全卡在队列里，直到手动重启桥接才恢复）。
         if (/\b401\b|unauthor/i.test(streamErr)) {
@@ -18294,7 +18301,7 @@ const agentTokenOk = (key, token) => {
         log(`机器人昵称: ${login.nickname}`);
       }
     }).catch(() => {});
-    // 断线期间的消息网关不会重发，必须自己补——否则那段窗口在 AI 眼里根本没存在过。
+    // 断线期间的消息网关不会重发，必须自己补，否则那段窗口在 AI 眼里根本没存在过。
     // 延后几秒等连接真正稳下来再拉：抖动时立刻连拉会把网关打满。
     const t = setTimeout(() => {
       backfillMissedMessages('reconnect').then((r) => {

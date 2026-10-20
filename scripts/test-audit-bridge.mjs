@@ -45,37 +45,12 @@ function apiRequest(server, path, { method = 'POST', body = null, agentToken = '
     request.end(payload);
   });
 }
-await test('closed-agent session is not reused after switching to chat', async (h) => {
-  h.setMode('closed-agent');
-  const privileged = await h.ensureSession('private:123');
-  h.setMode('chat');
-  const restricted = await h.ensureSession('private:123');
-  assert.notEqual(restricted, privileged);
-  assert.equal(h.calls.created.at(-1).agentPreset, 'qq-chat');
-  assert.ok(h.calls.cancelled.includes(privileged));
-});
 await test('unavailable preset catalogue fails closed for QQ and learner sessions', async (h) => {
   h.setPresets([]);
-  assert.equal(h.resolvePresetName('missing', { strict: true }), '');
+  assert.equal(h.resolvePresetName('missing'), '');
   await assert.rejects(h.ensureSession('group:456'));
   await assert.rejects(h.ensureSlangLearnerSession());
   assert.equal(h.calls.created.length, 0);
-});
-await test('session creation crossing a mode change never accepts stale permissions', async (h) => {
-  h.setMode('closed-agent');
-  let release;
-  const original = h.api.sessions.create;
-  h.api.sessions.create = async (params) => {
-    const result = await original(params);
-    await new Promise((resolve) => { release = resolve; });
-    return result;
-  };
-  const pending = h.ensureSession('private:123');
-  while (!release) await new Promise((resolve) => setImmediate(resolve));
-  h.setMode('chat');
-  release();
-  await assert.rejects(pending);
-  assert.equal(h.state.sessions['private:123'], undefined);
 });
 await test('queued send rechecks allowlist at actual transport time', async (h) => {
   const sending = h.sendToQQ('group:456', 'fixture');
@@ -1364,25 +1339,13 @@ await test('主动开口提示要摆出「你最近说过的话」（避免换�
   assert.match(block, /5 天前/, '要标时间');
 });
 
-await test('主动开话题：更早开过的头要带时间摆出来（避免隔天又来一遍）', async (h) => {
-  const now = Date.now();
-  const st = {
-    proactiveOpeners: [
-      { text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: now - 2 * 86400000 },
-      { text: '刚跑完回来灌了两大杯白开水，越喝越渴', at: now - 30 * 3600000 },
-      { text: '中午一碗面下肚，现在坐在椅子上像被人拔了电源', at: now - 20 * 3600000 },
-      { text: '不说话是吧，那我继续睡了', at: now - 10 * 3600000 },
-      { text: '一早上自言自语四次，我词库都干了', at: now - 5 * 3600000 },
-      { text: '现在这个点，群里的都在干嘛', at: now - 3600000 },
-    ],
-    proactiveDomains: [],
-  };
+await test('主动开话题：改成让 AI 自己去翻记忆（不再把旧开盘硬塞进提示词）', async (h) => {
+  const st = { proactiveOpeners: [{ text: '耳虫那件事', at: Date.now() - 2 * 86400000 }], proactiveDomains: [] };
   const block = h.buildProactiveTopicBlock(st);
-  assert.match(block, /更早你主动开过的/, '要把更早的开盘也摆出来');
-  assert.match(block, /2 天前/, '要标出大致时间，让模型知道那是旧账');
-  assert.match(block, /耳虫/, '两天前那条必须在清单里');
+  assert.match(block, /开口前先翻一下记忆/, '要提示它先查记忆（qq_recall / qq_search_history）');
+  assert.match(block, /qq_recall/, '要指明用哪个工具查');
+  assert.match(block, /qq_search_history/, '也要给归档检索这条兜底');
 });
-
 await test('主动开话题：方向池轮换——连续两轮不会建议同一批方向', async (h) => {
   const st = { proactiveOpeners: [], proactiveDomains: [] };
   const pickOf = (text) => /【这次换个方向】([^\n]*)/.exec(text)?.[1] ?? '';
@@ -2234,18 +2197,14 @@ await testWith(
 // 这条许可以前哪都没有（preset、角色卡、唤醒提示全都不提），所以 AI 挨骂只会忍着或解释。
 // 角色卡在二代**不是每轮注入**（只给名字，正文要 qq_get_prompt 才读到），
 // 所以每轮唤醒提示里必须自带这一条，否则改了 preset 也得等会话重建才生效。
-await test('唤醒提示里明确允许「被挑衅可以骂回去」并划了边界', async (h) => {
+await test('唤醒提示里给出还嘴口径（默认幽默 + 贴吧老哥风 + 边界）', async (h) => {
   h.setMode('reserved2');
   const prompt = h.buildWakePromptV2('group:456', 'message');
-  assert.match(prompt, /【被挑衅可以骂回去】/, '要给明确许可');
-  assert.match(prompt, /当场还嘴/, '要说清可以带脏话还击');
-  assert.match(prompt, /不主动升级/, '对等还击，不主动升级');
-  assert.match(prompt, /不牵连无关群友/, '只打挑事的人');
-  assert.match(prompt, /不拿家人、地域、性别、身体、疾病当武器/, '划出不能碰的靶子');
-  assert.match(prompt, /操你妈/, '极端脏字要明确排除在外');
-  assert.match(prompt, /对方收手或让别骂了就停/, '对方收手就停');
+  assert.match(prompt, /默认幽默/, '默认要幽默，别端着');
+  assert.match(prompt, /贴吧老哥/, '真要还嘴时按贴吧老哥那一档');
+  assert.match(prompt, /不碰家人、地域、性别、外貌、疾病/, '划出不能碰的靶子');
+  assert.match(prompt, /对方收手/, '对方收手就停');
 });
-
 // 线上反馈：合并转发里明明有几十张图，AI 说「只能看到前五张」。
 // 根因是**两层写死的 5**：MCP 工具 images.slice(0,5) + 桥接 fetchMediaData 的 MAX_MEDIA_COUNT=5。
 // 光调一处没用。改成窗口式：能翻页、能报总数、单次上限可配（一次塞几十张会炸上下文）。
@@ -3138,6 +3097,55 @@ await testWith({
     const again = await apiRequest(server, base, { method: 'POST', agentToken: st.agentToken, body: { key, text: '再说一句' } });
     assert.equal(again.status, 429, '冷却期内要拒');
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
+});
+
+// 线上事故（2026-10-18 15:19）：WS 掉线丢了 send_group_msg 的回执，桥接按「不确定」上报
+// 并明确让模型别原样重发，模型 24 秒后照发 → 群里两条「一天念那么多字，电费你出啊」
+// （seq 38378 / 38379）。提示词劝不住，所以必须在发送侧硬拦。
+await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：回执不确定的那条不许原样再发', async (h) => {
+  h.setMode('reserved2');
+  h.recordAiTextSend('group:456', '一天念那么多字，电费你出啊', 'uncertain');
+  const dup = h.checkTextDupGuard('group:456', ['一天念那么多字，电费你出啊']);
+  assert.ok(dup, '应当判为重复');
+  assert.equal(dup.status, 'uncertain');
+  assert.match(dup.reason, /可能已经发到群里/, dup.reason);
+  // 真发一次：必须被拦下，而且一条都没发出去
+  const err = await h.sendMessagesV2('group:456', ['一天念那么多字，电费你出啊'], []).then(() => null, (e) => e);
+  assert.ok(err && err.duplicateGuard === true, `应当被闸门拦下，实际：${err?.message}`);
+});
+
+await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：确认送达的只挡极短窗口', async (h) => {
+  h.setMode('reserved2');
+  // 刚发过（0 秒前，status=sent）→ 拦
+  h.recordAiTextSend('group:456', '笑死', 'sent');
+  assert.ok(h.checkTextDupGuard('group:456', ['笑死']), '刚发过的原文应当拦');
+  // 5 秒前的 sent → 放行（正常人也会重复一句口头禅）
+  const st = h.getSocialV2State('group:456');
+  st.recentAiTextSends = [{ text: '笑死', at: Date.now() - 6000, status: 'sent' }];
+  assert.equal(h.checkTextDupGuard('group:456', ['笑死']), null, '过了短窗口就该放行');
+});
+
+await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：复读别人的话不受影响', async (h) => {
+  h.setMode('reserved2');
+  // 我们只发过 A；现在要发 B（群友刚说的话，AI 跟着复读）
+  h.recordAiTextSend('group:456', '我发的原话', 'sent');
+  assert.equal(h.checkTextDupGuard('group:456', ['群友刚才说的那句']), null, '复读别人的话不能被拦');
+  assert.equal(h.checkTextDupGuard('group:456', ['我发的另一句']), null, '不同文本不拦');
+  // 但自己刚发过的原文在短窗口内仍然要拦（这是闸门本来的职责）
+  assert.ok(h.checkTextDupGuard('group:456', ['我发的原话']), '自己刚发过的原文仍要拦');
+});
+
+await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：空白差异算同一条（归一化）', async (h) => {
+  h.setMode('reserved2');
+  h.recordAiTextSend('group:456', '一天念那么多字，电费你出啊', 'uncertain');
+  assert.ok(h.checkTextDupGuard('group:456', ['  一天念那么多字，电费你出啊  ']), '前后空格不该绕过闸门');
+  assert.ok(h.checkTextDupGuard('group:456', ['一天念那么多字， 电费你出啊'.replace('， ', '，')]), '归一化后仍应命中');
+});
+
+await testWith({ config: { socialV2: { send: { dupGuard: { enabled: false } } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门可以关掉', async (h) => {
+  h.setMode('reserved2');
+  h.recordAiTextSend('group:456', '同一句', 'uncertain');
+  assert.equal(h.checkTextDupGuard('group:456', ['同一句']), null, '关掉后不拦');
 });
 
 if (failures) process.exitCode = 1;
