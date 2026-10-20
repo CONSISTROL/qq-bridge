@@ -25,6 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
+import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
 import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
@@ -7338,6 +7339,23 @@ const agentTokenOk = (key, token) => {
             st.unseenNudgeAt = Date.now();
             scheduleWakeV2(key, 'unseenBacklog');
           }
+          return;
+        }
+        // ── 自主性（L2）：自己的目标 / 每日自由行动预算 / 行动日志 ──────────
+        if (url.pathname === '/api/socialV2/autonomy' || url.pathname.startsWith('/api/socialV2/autonomy/')) {
+          const action = url.pathname === '/api/socialV2/autonomy' ? '' : url.pathname.slice('/api/socialV2/autonomy/'.length);
+          const limit = Math.max(0, Number(cfg.socialV2?.autonomy?.dailyBudget ?? 5));
+          try {
+            if (req.method === 'GET' && (action === '' || action === 'status')) {
+              sendJson({ ok: true, budget: budgetStatus({ stateDir: STATE_DIR, limit }), goals: listGoals({ stateDir: STATE_DIR }), log: recentLog({ stateDir: STATE_DIR, limit: 20 }) });
+              return;
+            }
+            const body = req.method === 'POST' ? await readBody() : {};
+            if (req.method === 'POST' && action === 'goal-add') { sendJson(addGoal({ stateDir: STATE_DIR, text: body.text, source: body.source || 'ai' })); return; }
+            if (req.method === 'POST' && action === 'goal-done') { sendJson(completeGoal({ stateDir: STATE_DIR, id: body.id })); return; }
+            if (req.method === 'POST' && action === 'spend') { sendJson(spendBudget({ stateDir: STATE_DIR, limit, what: body.what })); return; }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
         // ── 发 QQ 动态（SnowLuma 的 send_qzone_msg，支持中文、不用手机）──────
@@ -16016,6 +16034,18 @@ const agentTokenOk = (key, token) => {
         + saidRecent.map((o) => `- [${relativeTimeLabel(o.at)}] ${String(o.text).replace(/\s+/g, ' ').slice(0, 34)}`).join('\n')
         + '\n这些是你自己讲过的内容：要接着聊就明确接着说，别换个说法当成新发现再讲一遍。\n\n';
     }
+    // 自主行动（L2）：冷场时除了说话，还能自己挑一件"有作为"的事做；但有每日预算与"什么都不做"选项。
+    try {
+      const b = budgetStatus({ stateDir: STATE_DIR, limit: Math.max(0, Number(cfg.socialV2?.autonomy?.dailyBudget ?? 5)) });
+      const gs = listGoals({ stateDir: STATE_DIR }).slice(0, 6);
+      out += '【自主时间（L2）】群冷了，你可以只说话，也可以自己挑一件事做：\n'
+        + `· 今日自由行动预算：剩余 ${b.left} / ${b.limit} 次（说话不算，发动态/刷B站/学东西这类算）\n`
+        + (gs.length ? `· 你自己的待办：${gs.map((g) => g.text).join(' / ')}\n` : '')
+        + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
+        + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
+        + '规则：做之前先用 qq_autonomy_status 看预算，做完用 qq_autonomy_spend 记一次；预算没了就只能聊天。'
+        + '"什么都不做"永远是合法选择——别为了"有作为"而刷屏。\n\n';
+    } catch { /* 自主性模块异常不影响主流程 */ }
     // ② 最关键的一条：记忆和群史是「背景」，不是「题材」。
     out += '【别拿记忆和群史当题材】上面的【群聊上下文】【进行中的话题】只是让你知道群里在聊什么，'
       + '**不是让你顺着它往下说**。主动冒泡是要**开一个新话题**；'

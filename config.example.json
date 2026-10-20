@@ -462,6 +462,9 @@
         "enabled": true,
         "hour": 4
       }
+    },
+    "autonomy": {
+      "dailyBudget": 5
     }
   },
   "moderation": {

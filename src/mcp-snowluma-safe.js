@@ -1300,6 +1300,63 @@ defineTool(
   }
 );
 
+// ── 自主性（L2）：自己的目标 / 预算 ─────────────────────────────────────────
+defineTool(
+  'qq_autonomy_status',
+  '看自己的自主状态：今天的自由行动预算还剩几次、自己的待办目标、最近做过哪些自主行动。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi('/api/socialV2/autonomy', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      const b = d.budget || {};
+      const goals = (d.goals || []).map((g) => `· ${g.text}`).join('\n');
+      const log = (d.log || []).slice(0, 5).map((l) => `· ${l.what}`).join('\n');
+      return { content: [{ type: 'text', text: `今日自由行动：${b.used || 0}/${b.limit || 0}（剩 ${b.left || 0}）\n`
+        + (goals ? `待办目标：\n${goals}\n` : '待办目标：（空）\n')
+        + (log ? `最近做过：\n${log}` : '最近没做过自主行动') }] };
+    } catch (error) { return { content: [{ type: 'text', text: `查自主状态失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_self_goal',
+  '管自己的待办目标：add=加一条（从聊天里长出来的"我想做/要跟进"的事）、done=标记完成、list=看未完成的。'
+    + '目标是给你自己用的，不要拿来向群友承诺。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    op: z.enum(['add', 'done', 'list']).describe('操作'),
+    text: z.string().optional().describe('add 时的目标内容'),
+    id: z.string().optional().describe('done 时的目标 id')
+  },
+  async ({ key, token, op, text, id }) => {
+    try {
+      if (op === 'list') {
+        const d = await agentApi('/api/socialV2/autonomy', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+        const gs = (d.goals || []).map((g) => `· ${g.id} ${g.text}`).join('\n');
+        return { content: [{ type: 'text', text: gs || '（没有未完成的目标）' }] };
+      }
+      const path = op === 'add' ? '/api/socialV2/autonomy/goal-add' : '/api/socialV2/autonomy/goal-done';
+      const body = op === 'add' ? { text } : { id };
+      const d = await agentApi(path, { method: 'POST', body: JSON.stringify(body), headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      return { content: [{ type: 'text', text: d.ok ? (op === 'add' ? `已记下目标（${d.goal?.id}）：${d.goal?.text}` : '已完成') : `失败：${d.error || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `操作目标失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_autonomy_spend',
+  '做完一次**对外可见的自主行动**后记一次账（发动态、刷B站、主动学习这类；聊天不算）。'
+    + '预算用完就不能再做，只能聊天。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), what: z.string().describe('做了什么（一句话）') },
+  async ({ key, token, what }) => {
+    try {
+      const d = await agentApi('/api/socialV2/autonomy/spend', { method: 'POST', body: JSON.stringify({ what }), headers: { 'x-agent-token': token }, timeoutMs: 30000 });
+      return { content: [{ type: 'text', text: d.ok ? `记了一次（今天 ${d.used}/${d.limit}，剩 ${d.left}）` : `不能做：${d.error}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `记账失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 手机控制（插件「手机控制」；看屏幕/操作手机是基础能力，刷 B站要单独开）──────
 defineTool(
   'qq_phone_status',
