@@ -1260,6 +1260,90 @@ defineTool(
   }
 );
 
+// ── 手机控制（插件「手机控制」；看屏幕/操作手机是基础能力，刷 B站要单独开）──────
+defineTool(
+  'qq_phone_status',
+  '看手机状态：型号、Android 版本、电量、是否充电、温度、屏幕是否点亮、当前前台应用。'
+    + '需要控制台「插件 → 手机控制」开着（看屏幕是基础能力）。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi('/api/phone/status', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 40000 });
+      return { content: [{ type: 'text', text: `手机：${d.model}（Android ${d.android}）\n电量 ${d.battery ?? '?'}%${d.charging ? '（充电中）' : ''} · 温度 ${d.temperatureC ?? '?'}℃\n屏幕：${d.screenAwake}\n前台：${d.foreground || '（未知）'}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `看手机状态失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_phone_look',
+  '截一张手机屏幕的图（你能直接看到）。截不到会如实报错（比如屏幕没亮）。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi('/api/phone/screenshot', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 60000 });
+      return { content: [{ type: 'image', data: d.data, mimeType: d.mimeType || 'image/png' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `截屏失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_phone_act',
+  '操作手机：点击（tap）、滑动（swipe）、按键（key：back/home/recents/power/enter 或数字 keycode）、输入文本（text，仅英文数字）。'
+    + '坐标是屏幕像素；不确定位置就先 qq_phone_look 看一眼。基础能力，插件开着即可用。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    action: z.enum(['tap', 'swipe', 'key', 'text']).describe('动作'),
+    x: z.number().optional().describe('tap/swipe 起点 x'),
+    y: z.number().optional().describe('tap/swipe 起点 y'),
+    x2: z.number().optional().describe('swipe 终点 x'),
+    y2: z.number().optional().describe('swipe 终点 y'),
+    ms: z.number().optional().describe('swipe 时长毫秒（默认 300）'),
+    keycode: z.string().optional().describe('key 动作：back/home/recents/power/enter 或数字'),
+    text: z.string().optional().describe('text 动作的内容（仅英文数字与基本符号）')
+  },
+  async ({ key, token, ...rest }) => {
+    try {
+      const d = await agentApi('/api/phone/act', { method: 'POST', body: JSON.stringify(rest), headers: { 'x-agent-token': token }, timeoutMs: 40000 });
+      return { content: [{ type: 'text', text: `已执行：${d.cmd || d.action}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `操作手机失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_phone_bili',
+  '在手机上刷 B站：打开 App（或按关键词搜索），往下刷几屏，回来把截图和前台页面给你看。'
+    + '这是「刷 B站」能力（不是基础能力），没在控制台开启时会返回未启用。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    task: z.enum(['feed', 'search']).optional().describe('feed=首页刷一刷（默认），search=按关键词搜'),
+    query: z.string().optional().describe('search 时的关键词'),
+    swipes: z.number().optional().describe('刷几屏（0~10，默认 3）')
+  },
+  async ({ key, token, task = 'feed', query = '', swipes = 3 }) => {
+    try {
+      const d = await agentApi('/api/phone/bili', { method: 'POST', body: JSON.stringify({ task, query, swipes }), headers: { 'x-agent-token': token }, timeoutMs: 180000 });
+      const blocks = [{ type: 'text', text: `B站（${d.pkg}）已打开，刷了 ${swipes} 屏；前台：${d.foreground || '未知'}` }];
+      if (d.screenshot && d.screenshot.data) blocks.push({ type: 'image', data: d.screenshot.data, mimeType: d.screenshot.mimeType || 'image/png' });
+      return { content: blocks };
+    } catch (error) { return { content: [{ type: 'text', text: `刷 B站失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_phone_shell',
+  '在手机上以 root 执行一条 shell 命令（高危：默认关闭，需控制台开启「执行命令」能力）。'
+    + '只在你确实需要查手机系统信息、且前面的工具都做不到时使用。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), cmd: z.string().describe('shell 命令') },
+  async ({ key, token, cmd }) => {
+    try {
+      const d = await agentApi('/api/phone/shell', { method: 'POST', body: JSON.stringify({ cmd }), headers: { 'x-agent-token': token }, timeoutMs: 120000 });
+      return { content: [{ type: 'text', text: `$ ${cmd}\n${String(d.out || '').slice(0, 6000)}${d.err ? '\n[stderr] ' + String(d.err).slice(0, 1000) : ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `执行失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 读用户资料（头像 / 签名 / 等级 / 群身份）──────────────────────────────
 defineTool(
   'qq_get_user_profile',

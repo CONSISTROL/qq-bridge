@@ -25,6 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
+import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -7332,6 +7333,49 @@ const agentTokenOk = (key, token) => {
             st.unseenNudgeAt = Date.now();
             scheduleWakeV2(key, 'unseenBacklog');
           }
+          return;
+        }
+        // ── 手机控制（插件 phone 的能力；走 ssh phone → su -c）────────────
+        if (url.pathname === '/api/phone' || url.pathname.startsWith('/api/phone/')) {
+          const action = url.pathname === '/api/phone' ? '' : url.pathname.slice('/api/phone/'.length);
+          const need = (flag, label) => {
+            if (!v2ToolEnabled(flag)) { sendJson({ ok: false, error: `能力未启用：${label}（控制台 → 插件 → 手机控制）` }, 403); return false; }
+            return true;
+          };
+          try {
+            if (req.method === 'GET' && action === 'status') {
+              if (!need('phoneStatus', '看屏幕')) return;
+              sendJson({ ok: true, ...(await phoneStatus()) });
+              return;
+            }
+            if (req.method === 'GET' && action === 'screenshot') {
+              if (!need('phoneScreenshot', '看屏幕')) return;
+              const shot = await phoneScreenshot();
+              if (!shot.ok) { sendJson({ ok: false, error: shot.error }, 502); return; }
+              sendJson({ ok: true, data: shot.data, mimeType: shot.mimeType, bytes: shot.bytes });
+              return;
+            }
+            if (req.method === 'POST' && action === 'act') {
+              if (!need('phoneTap', '操作手机')) return;
+              const body = await readBody();
+              const r = await phoneAct(body);
+              sendJson(r, r.ok ? 200 : 400);
+              return;
+            }
+            if (req.method === 'POST' && action === 'shell') {
+              if (!need('phoneExec', '在手机上执行命令')) return;
+              const body = await readBody();
+              sendJson(await phoneShell(String(body.cmd ?? '')));
+              return;
+            }
+            if (req.method === 'POST' && action === 'bili') {
+              if (!need('biliSearch', '刷 B站')) return;
+              const body = await readBody();
+              sendJson(await phoneBili({ task: String(body.task ?? 'feed'), query: String(body.query ?? ''), swipes: Number(body.swipes) || 3 }));
+              return;
+            }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
         // 读用户资料：昵称/签名/等级/性别 + 群身份（群里的名片、角色、入群时间、最后发言）
