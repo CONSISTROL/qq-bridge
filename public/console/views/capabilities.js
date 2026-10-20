@@ -6,13 +6,25 @@
 export const id = 'capabilities';
 export const title = '插件';
 export const desc = '它有哪些能力：按插件分组，逐项开关（拨动即写入 config.json 并立即生效）';
-export const icon = '🧩';
+export const icon = 'capabilities';
 export const group = '总览';
 export const order = 2;
 
 import { api } from '../core/api.js';
-import { $, toast, delegate } from '../core/dom.js';
+import { $, toast, delegate, esc } from '../core/dom.js';
+import { iconSvg } from '../core/icons.js';
 import { mountFragment } from '../core/fragments.js';
+
+const PLUGIN_ICON = {
+  chat: 'chat',
+  media: 'media',
+  memory: 'memory',
+  members: 'users',
+  tasks: 'tasks',
+  persona: 'persona',
+  webapps: 'globe',
+  phone: 'phone'
+};
 
 export async function mount(root) {
   const view = await mountFragment(root, 'capabilities');
@@ -27,7 +39,7 @@ export async function mount(root) {
       const head = document.createElement('div');
       head.className = 'v2-plugin-head';
       const capOn = p.capabilities.filter((c) => c.enabled).length;
-      head.innerHTML = `<b>${p.icon || ''} ${p.name}</b> <span class="meta">${capOn}/${p.capabilities.length} 项</span>`;
+      head.innerHTML = `<b><span class="head-ico">${iconSvg(PLUGIN_ICON[p.id] || 'capabilities', { size: 16 })}</span> ${esc(p.name)}</b> <span class="meta">${capOn}/${p.capabilities.length} 项</span>`;
       const sw = document.createElement('input');
       sw.type = 'checkbox';
       sw.className = 'switch';
@@ -63,7 +75,7 @@ export async function mount(root) {
     const r = await api('/api/socialV2/plugins', 'GET').catch(() => null);
     if (!r || !r.ok) {
       const box = $('#capList', view);
-      if (box) box.innerHTML = '<div class="meta">插件清单加载失败</div>';
+      if (box) box.innerHTML = '<div class="empty">插件清单加载失败<br>刷新页面或检查桥接日志。</div>';
       return [];
     }
     render(r.plugins || []);

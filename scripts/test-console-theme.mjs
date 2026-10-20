@@ -141,8 +141,8 @@ check('存过 dark → 首屏脚本就切深色（不闪浅色）', () => {
   assert.equal(dom.attrs.get('data-theme'), 'dark');
 });
 check('按钮文案显示的是「切到哪」而不是当前态', () => {
-  assert.equal(run(undefined).dom.btn.textContent, '🌙 深色');
-  assert.equal(run('dark').dom.btn.textContent, '☀️ 浅色');
+  assert.equal(run(undefined).dom.btn.textContent, '深色');
+  assert.equal(run('dark').dom.btn.textContent, '浅色');
 });
 check('点击可来回切换并写入 localStorage', () => {
   const { dom } = run(undefined);

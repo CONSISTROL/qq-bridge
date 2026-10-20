@@ -46,14 +46,19 @@ const anon = await fetch(BASE + '/');
 ok('外壳匿名访问被拒（401）', anon.status === 401, `HTTP ${anon.status}`);
 
 const VIEWS = [
-  ['overview', ['运行模式', '会话映射', '挂起审批', '活动日志']],
+  ['overview', ['运行模式', '活动日志']],
   ['persona', ['人格（角色扮演）', '静默开关']],
-  ['social1', ['一代仿真模式（reserved）']],
-  ['social2', ['二代仿真模式（reserved2）控制台', '工具调用日志', '轻量记忆']],
-  ['slang', ['群聊黑话 / 网络用语库', '本地向量检索（黑话选词 / 语义匹配）']],
+  ['social2', ['基础配置', '工具调用日志', '轻量记忆']],
+  ['memorydb', ['mdSearch', 'mdTabs']],
+  ['album', ['albumTabs', 'albumGrid']],
+  ['voicepack', ['vpList', 'vpCreate']],
   ['tools', ['DSH 侧 MCP 工具', '后台控制端引导']],
   ['security', ['白名单 / 管理员', '安全拦截通知', '控制台访问令牌']],
-  ['ops', ['测试发送', '桥接控制']]
+  ['ops', ['测试发送', '桥接控制']],
+  ['capabilities', ['capList', 'capAllOn']],
+  ['plugins', ['plgPending', 'plgList']],
+  ['mc', ['B站直播', '整机控制']],
+  ['autonomy', ['auBudget', 'auGoals']]
 ];
 for (const [name, markers] of VIEWS) {
   const res = await fetch(`${BASE}/console/views/${name}.html`); // 故意不带令牌
@@ -72,6 +77,7 @@ const assets = [
   ['/console/core/poll.js', 'text/javascript', 'export function every'],
   ['/console/core/dom.js', 'text/javascript', 'export function esc'],
   ['/console/core/status.js', 'text/javascript', 'refreshStatus'],
+  ['/console/core/icons.js', 'text/javascript', 'iconSvg'],
   ['/console/core/fragments.js', 'text/javascript', 'mountFragment']
 ];
 for (const [path, type, marker] of assets) {

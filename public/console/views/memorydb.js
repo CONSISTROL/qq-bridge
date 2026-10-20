@@ -3,13 +3,15 @@
 export const id = 'memorydb';
 export const title = '记忆库';
 export const desc = '黑话 / 知识库 / 档案 / 成员备注 / 话题 / 想法 / 印象，全部在 state/memory.db';
-export const icon = '🗄️';
+export const icon = 'memory';
 export const group = '语料';
 export const order = 1;
 
 import { api } from '../core/api.js';
 import { $, esc, setMsg, toast, confirmDanger, delegate, debounce, fmtClock } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
+
+const KIND_CLASS = { slang: 'b', knowledge: 'g', fact: 'y', remark: 'r', topic: 'b', thought: '', impression: 'y' };
 
 const KINDS = [
   ['', '全部'],
@@ -43,15 +45,15 @@ export async function mount(root) {
   const render = () => {
     const box = $('#mdList', view);
     if (!box) return;
-    if (!state.items.length) { box.innerHTML = '<div class="meta">没有条目</div>'; return; }
+    if (!state.items.length) { box.innerHTML = '<div class="empty">还没有条目<br><b>用上方输入框添加</b>，或等 AI 自主沉淀。</div>'; return; }
     box.innerHTML = '';
     for (const it of state.items) {
       const row = document.createElement('div');
       row.className = 'md-item';
       const time = it.updated || it.at ? fmtClock(new Date(Number(it.updated || it.at))) : '';
-      row.innerHTML = `<div class="md-head"><span class="pill">${esc(it.kind)}</span> <b>${esc(String(it.text).slice(0, 80))}</b> <span class="meta">${esc(it.scope || '')} ${esc(time)}</span></div>`
+      row.innerHTML = `<div class="md-head"><span class="pill ${KIND_CLASS[it.kind] || ''}">${esc(it.kind)}</span> <b>${esc(String(it.text).slice(0, 80))}</b> <span class="meta">${esc(it.scope || '')} ${esc(time)}</span></div>`
         + (it.answer ? `<div class="md-answer">${esc(String(it.answer).slice(0, 300))}</div>` : '')
-        + `<div class="row" style="gap:6px"><button class="small" type="button" data-md-edit="${esc(it.id)}">改</button><button class="small danger" type="button" data-md-del="${esc(it.id)}">删</button></div>`;
+        + `<div class="row tight mt-6"><button class="small" type="button" data-md-edit="${esc(it.id)}">改</button><button class="small danger-ghost" type="button" data-md-del="${esc(it.id)}">删</button></div>`;
       box.append(row);
     }
   };

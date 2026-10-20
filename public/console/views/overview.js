@@ -8,7 +8,7 @@ import { getStatus, getPending, refreshStatus } from '../core/status.js';
 export const id = 'overview';
 export const title = '总览';
 export const desc = '运行模式 · 会话映射 · 挂起审批 · 活动日志';
-export const icon = '📊';
+export const icon = 'overview';
 export const group = '总览';
 export const order = 1;
 export const badge = 'navPending';
@@ -21,7 +21,7 @@ function renderStatus(view, s) {
 function renderPending(view, list) {
   const box = $('#pendingList', view);
   if (!box) return; // 总览已移除「挂起审批」卡
-  if (!list.length) { box.innerHTML = '<span class="meta">无挂起请求</span>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="empty">无挂起请求</div>'; return; }
   let html = '<table><tr><th>会话</th><th>类型</th><th>详情</th></tr>';
   for (const x of list) {
     const kind = x.kind === 'approval' ? '<span class="pill r">审批</span>' : '<span class="pill b">提问</span>';
@@ -38,7 +38,7 @@ async function refreshSessions(view) {
   const s = await api('/api/sessions').catch(() => null);
   if (!s) return;
   const box = $('#sessionList', view);
-  if (!s.sessions.length) { box.innerHTML = '<span class="meta">暂无会话</span>'; return; }
+  if (!s.sessions.length) { box.innerHTML = '<div class="empty">暂无会话<br><b>收到 QQ 消息后这里会出现</b>。</div>'; return; }
   let html = '<table><tr><th>QQ 会话</th><th>DSH 会话 ID</th><th>类型</th><th></th></tr>';
   for (const x of s.sessions) {
     const isPrivate = x.key.startsWith('private:');
@@ -60,12 +60,15 @@ export async function mount(root) {
   renderStatus(view, getStatus());
   renderPending(view, getPending());
 
-  delegate($('#sessionList', view), 'click', '[data-reset-key]', async (_ev, btn) => {
-    if (!confirmDanger('确定清除该会话的上下文？下次消息将开新会话。')) return;
-    const r = await api('/api/session/reset', 'POST', { key: btn.dataset.resetKey }).catch((e) => ({ ok: false, error: e.message }));
-    toast(r.ok ? '✅ 已清除上下文' : ('❌ ' + (r.error || '失败')), r.ok ? 'ok' : 'err');
-    refreshSessions(view);
-  });
+  const sessionBox = $('#sessionList', view);
+  if (sessionBox) {
+    delegate(sessionBox, 'click', '[data-reset-key]', async (_ev, btn) => {
+      if (!confirmDanger('确定清除该会话的上下文？下次消息将开新会话。')) return;
+      const r = await api('/api/session/reset', 'POST', { key: btn.dataset.resetKey }).catch((e) => ({ ok: false, error: e.message }));
+      toast(r.ok ? '✅ 已清除上下文' : ('❌ ' + (r.error || '失败')), r.ok ? 'ok' : 'err');
+      refreshSessions(view);
+    });
+  }
 
   refreshSessions(view);
   const stopSessions = every(10000, () => refreshSessions(view));

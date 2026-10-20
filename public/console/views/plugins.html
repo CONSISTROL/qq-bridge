@@ -1,19 +1,14 @@
-<div class="view-head">
-  <h2>动态插件</h2>
-  <p class="muted">动态插件：一个目录 + <code>manifest.json</code>，只能声明 <b>HTTP 工具</b> 和 <b>定时任务</b>（不执行任意代码）。<br>
-    来源按目录判定：<code>plugins/</code> = <b>用户添加</b>，<code>state/ai-plugins/</code> = <b>AI 自己添加</b>；AI 写的插件默认关闭，需人工启用。</p>
-</div>
-<div class="row" style="gap:10px;align-items:center">
+<div class="toolbar">
   <span id="plgCounts" class="muted"></span>
   <span id="plgMsg" class="msg"></span>
 </div>
-<h3 style="margin:14px 0 6px">待批准（AI 写的插件）</h3>
-<div id="plgPending" class="plg-list"></div>
-<h3 style="margin:14px 0 6px">已安装</h3>
-<div id="plgList" class="plg-list"></div>
-<style>
-  .plg-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-  .plg-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel); }
-  .plg-card.plg-off { opacity: .55; }
-  .plg-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-</style>
+
+<section class="card">
+  <h2>待批准 <span class="meta">AI 写的插件，需要人工启用</span></h2>
+  <div id="plgPending" class="plg-list"></div>
+</section>
+
+<section class="card">
+  <h2>已安装</h2>
+  <div id="plgList" class="plg-list"></div>
+</section>

@@ -4,7 +4,7 @@
 export const id = 'autonomy';
 export const title = '自主性';
 export const desc = '它自己的目标、每天的自由行动预算、做过什么（L2）';
-export const icon = '🧭';
+export const icon = 'autonomy';
 export const group = '运行';
 export const order = 3;
 
@@ -28,7 +28,7 @@ export async function mount(root) {
     const goals = $('#auGoals', view);
     if (goals) {
       const list = data.goals || [];
-      goals.innerHTML = list.length ? '' : '<div class="meta">（没有未完成的目标）</div>';
+      goals.innerHTML = list.length ? '' : '<div class="empty">没有未完成的目标<br><b>在下方加一条</b>，或等它自己立目标。</div>';
       for (const g of list) {
         const row = document.createElement('div');
         row.className = 'au-goal';
@@ -41,8 +41,8 @@ export async function mount(root) {
     if (log) {
       const rows = data.log || [];
       log.innerHTML = rows.length
-        ? `<table><tr><th>时间</th><th>类型</th><th>做了什么</th></tr>${rows.map((l) => `<tr><td class="meta">${esc(fmtTime(l.t))}</td><td class="meta">${esc(l.kind || '')}</td><td>${esc(l.what || '')}</td></tr>`).join('')}</table>`
-        : '<div class="meta">（还没有自主行动记录）</div>';
+        ? `<div class="table-wrap"><table><tr><th>时间</th><th>类型</th><th>做了什么</th></tr>${rows.map((l) => `<tr><td class="meta">${esc(fmtTime(l.t))}</td><td class="meta">${esc(l.kind || '')}</td><td>${esc(l.what || '')}</td></tr>`).join('')}</table></div>`
+        : '<div class="empty">还没有自主行动记录<br>冷场时它会自己决定做点什么。</div>';
     }
   };
 

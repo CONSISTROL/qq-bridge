@@ -15,9 +15,18 @@ export function applyTheme(theme, persist) {
   document.documentElement.setAttribute('data-theme', t);
   const btn = document.getElementById('themeToggle');
   if (btn) {
-    // 按钮显示的是「点一下会切到哪」，不是当前状态
-    btn.textContent = t === 'dark' ? '☀️ 浅色' : '🌙 深色';
+    // 按钮显示的是「点一下会切到哪」，不是当前状态；图标由 CSS 按 data-icon 渲染。
+    const next = t === 'dark' ? 'light' : 'dark';
+    const label = next === 'dark' ? '深色' : '浅色';
+    // 真实按钮里是「图标 + 文本」；测试桩只有 textContent，走回退分支。
+    const text = typeof btn.querySelector === 'function' ? btn.querySelector('.theme-label') : null;
+    if (text) text.textContent = label;
+    else btn.textContent = label;
     btn.title = t === 'dark' ? '当前深色，点击切到浅色' : '当前浅色，点击切到深色';
+    if (typeof btn.setAttribute === 'function') {
+      btn.setAttribute('data-icon', next === 'dark' ? 'moon' : 'sun');
+      btn.setAttribute('aria-label', btn.title);
+    }
   }
   if (persist) {
     try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* 隐私模式忽略 */ }

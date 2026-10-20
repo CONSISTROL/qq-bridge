@@ -33,7 +33,10 @@
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| 内核 | `src/bridge.js` | 主程序：QQ 消息接入、社交状态机、DSH 投递、发送链、控制台 API、安全审计 |
+| 内核 | `src/bridge.js` | 主程序：QQ 消息接入、社交状态机、DSH 投递、发送链、安全审计（控制台路由见 `src/console/`） |
+| 内核 | `src/config.js` | 配置加载与默认值/规范化（从 bridge 抽出，可单独阅读） |
+| 内核 | `src/json-store.js` | JSON/文本文件的安全读写（BOM 容错 + 原子写；各模块共用） |
+| 内核 | `src/console/*.js` | 控制台 HTTP 路由：按领域拆成 mc / core / slang-knowledge / social / media / agent 六个模块，依赖由工厂函数注入 |
 | 内核 | `src/dsh-client.js` | DSH 协议客户端：RPC + WebSocket 事件流 + turn 收集 |
 | 内核 | `src/mcp-snowluma-safe.js` | 给 DSH agent 用的安全 QQ 工具（只读 + 白名单发送） |
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
@@ -47,6 +50,38 @@
 | 外核 | `start.bat` / `restart.bat` | 守护启动 / 一键重启 |
 | 外核 | `scripts/*` | 测试/辅助脚本 |
 
+### 3.1 控制台路由（`src/console/`）
+
+控制台 HTTP 路由按领域拆成六个模块，每个模块导出 `createXxxRoutes(deps)`，返回一组
+`handleXxxRoutes(routeCtx)`：
+
+- **依赖注入**：`bridge.js` 在 `main()` 里创建 handler。稳定的函数/常量按值传入；
+  会被重新赋值的绑定（`cfg` 以外的 `let`，如 `slangEntries`）用 getter/setter，
+  模块内以 `deps.xxx` 访问，改的是同一份内存。
+- **请求上下文**：`routeCtx` 提供 `req / res / url / sendJson / readBody`，以及控制台作用域里的
+  `v2ToolEnabled`、`consoleCookieHeader` 等。
+- **分发**：`startConsoleServer` 按数组顺序调用 handler，命中并响应后 `res.writableEnded === true`，
+  后面的组不再执行。**新增路由**：在对应模块里加分支，再把 handler 名加进 `consoleRouteHandlers`。
+
+### 3.2 控制台视觉规范（`public/console/style.css`）
+
+控制台的视觉样式只有一个来源：`public/console/style.css`。改样式前先看这几条，避免又回到
+「每个页面各写一套内联样式」：
+
+- **颜色只写在两个主题变量块里**（`:root` / `:root[data-theme="dark"]`），规则里一律用
+  `var(--x)`。`scripts/test-console-theme.mjs` 会检查两套变量集合完全一致、规则里没有写死色值。
+- **页面标题由外壳统一渲染**：`views/<id>.js` 导出 `title` / `desc` / `icon`，`app.js` 写进顶栏；
+  片段里不要再写一份 `<h2>`（会重复）。`icon` 必须是 `core/icons.js` 注册表里的名字。
+- **图标统一用 SVG**：导航、页头、状态、提示都用 `core/icons.js` 的线性图标（24×24、1.7px 线宽、
+  `currentColor`），不要再往界面里放 emoji（不同系统字体下大小/颜色不可控）。
+- **优先用共享组件**：`.card`、`.btn`（`primary` / `danger` / `danger-ghost` / `small`）、
+  `.toolbar`、`.tabs` + `.tab`、`.pill`、`.msg`、`.empty`、`.modal`、`.form-row` / `.form-grid`。
+  需要新样式时加在 `style.css`，不要往 `.html` 片段里塞 `<style>`。
+- **布局断点**：1100px（侧栏收窄）、900px（侧栏隐藏，换成底部四个常用分区 + 「更多」抽屉）、
+  640px（表单/卡片单列、输入框 16px、弹窗改成底部 sheet）。列表页优先用 `.grid` /
+  `.grid.cols-2` / `.toolbar`，不要在行内写 `margin`、`gap`。
+- **手机安全区**：`viewport-fit=cover` + `env(safe-area-inset-*)`，底栏和弹窗都留出 iPhone/小米全面屏底部空间。
+
 ---
 
 ## 3. 目录结构（公开仓库）
@@ -54,7 +89,16 @@
 ```
 qq-bridge/
 ├── src/
-│   ├── bridge.js               # 主程序（核心）
+│   ├── bridge.js               # 主程序（启动、消息流、调度；控制台路由已拆到 console/）
+│   ├── config.js               # 配置加载与默认值/规范化
+│   ├── json-store.js           # JSON/文本安全读写（BOM 容错 + 原子写）
+│   ├── console/                # 控制台 HTTP 路由（按领域拆分，工厂注入依赖）
+│   │   ├── mc-routes.js        #   MC 状态/推流/服务控制/白名单
+│   │   ├── core-routes.js      #   首页/角色/会话/白名单/安全/令牌/重启
+│   │   ├── slang-knowledge-routes.js  # 黑话库 + 群知识库
+│   │   ├── social-routes.js    #   聊天模式（配置/唤醒/发送/资料/探索/工作车道）
+│   │   ├── media-routes.js     #   表情/搜图/B站/相册/AI 图片/图片查询
+│   │   └── agent-routes.js     #   转发/备注/记忆/插件/语音/手机/豆包
 │   ├── dsh-client.js           # DSH API 客户端
 │   ├── mcp-snowluma-safe.js    # 安全 MCP（QQ 读/发工具）
 │   ├── mcp-host-server.js      # MCP（SnowLuma 进程管理，默认禁用启停）
@@ -79,7 +123,7 @@ qq-bridge/
 │       ├── index.html          # 外壳：侧边导航 + 视图容器 + 防闪烁内联主题脚本
 │       ├── style.css           # 样式（浅/深两套变量；含布局与吐司提示）
 │       ├── app.js              # 入口：注册分区 → 建导航 → 起路由与状态轮询
-│       ├── core/               # api / dom / router / poll / status / fragments / theme
+│       ├── core/               # api / dom / routing / poll / status / fragments / theme / icons（SVG 图标）
 │       └── views/              # 每分区一对：xxx.js（逻辑）+ xxx.html（markup）
 │           ├── overview.*      # 01 运行模式 + 02 会话 + 03 挂起 + 04 日志
 │           ├── social1.*       # 06 一代仿真模式
@@ -622,11 +666,9 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 ### 常用验证
 
 ```bash
-node --check src/bridge.js
-node --check src/dsh-client.js
-node --check src/mcp-snowluma-safe.js
-node --check src/mcp-web-search-safe.js
-node --check src/slang-learner.js
+npm run check          # 全仓库语法 + 未声明标识符（不依赖 eslint）
+npm run check:dead     # 额外列出疑似死代码
+npm run test:audit     # 离线审计套件（桩环境，不碰真实 QQ/DSH）
 ```
 
 控制台前端语法校验（每个模块单独 check，ES module 不会被当脚本执行）：

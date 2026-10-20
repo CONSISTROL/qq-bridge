@@ -4,6 +4,7 @@
 export const id = 'plugins';
 export const title = '动态插件';
 export const desc = '声明式插件：用户添加 / AI 添加，各自的工具与定时任务';
+export const icon = 'plugins';
 export const group = '总览';
 export const order = 3;
 
@@ -19,7 +20,7 @@ export async function mount(root) {
     const box = $('#plgList', view);
     if (!box) return;
     const badge = (o) => (o === 'ai' ? '<span class="pill b">AI 添加</span>' : '<span class="pill g">用户添加</span>');
-    box.innerHTML = plugins.length ? '' : '<div class="meta">还没有插件。用户插件放 <code>plugins/&lt;id&gt;/manifest.json</code>；AI 自己写会落到 <code>state/ai-plugins/</code>。</div>';
+    box.innerHTML = plugins.length ? '' : '<div class="empty">还没有插件<br>用户插件放 <code>plugins/&lt;id&gt;/manifest.json</code>，AI 自己写会落到 <code>state/ai-plugins/</code>。</div>';
     for (const p of plugins) {
       const card = document.createElement('div');
       card.className = 'plg-card' + (p.enabled ? '' : ' plg-off');
@@ -58,19 +59,19 @@ export async function mount(root) {
     if (!box) return;
     const r = await api('api/ai-plugins/pending', 'GET').catch(() => null);
     const pending = Object.values((r && r.pending) || {});
-    if (!pending.length) { box.innerHTML = '<div class="meta">没有待批准的 AI 插件。</div>'; return; }
+    if (!pending.length) { box.innerHTML = '<div class="empty">没有待批准的 AI 插件<br><b>AI 写的新插件会出现在这里</b>，等人工启用。</div>'; return; }
     box.innerHTML = '';
     for (const p of pending) {
       const card = document.createElement('div');
       card.className = 'plg-card';
       const m = p.manifest || {};
-      const tests = (p.testResults || []).map((t) => `${t.tool}: HTTP ${t.status}${t.ok ? ' ✅' : ' ❌'}`).join(' · ');
+      const tests = (p.testResults || []).map((t) => `${esc(t.tool)}: HTTP ${esc(t.status)} ${t.ok ? '<span class="pill g">通过</span>' : '<span class="pill r">失败</span>'}`).join(' · ');
       card.innerHTML = `<div class="plg-head"><b>${esc(m.name || p.id)}</b> <span class="pill b">AI 添加</span> <span class="meta">${esc(p.id)}</span>`
         + ` <button class="small" type="button" data-plg-approve="${esc(p.id)}">批准启用</button>`
         + ` <button class="small danger" type="button" data-plg-reject="${esc(p.id)}">拒绝并删除</button></div>`
         + (m.description ? `<div class="meta">${esc(m.description)}</div>` : '')
         + `<div class="meta">工具：${(m.tools || []).map((t) => esc(t.name)).join(', ') || '无'}</div>`
-        + (tests ? `<div class="meta">自测：${esc(tests)}</div>` : '<div class="meta">还没自测</div>');
+        + (tests ? `<div class="meta">自测：${tests}</div>` : '<div class="meta">还没自测</div>');
       box.append(card);
     }
   };

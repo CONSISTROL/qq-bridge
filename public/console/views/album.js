@@ -10,6 +10,7 @@ import { mountFragment } from '../core/fragments.js';
 export const id = 'album';
 export const title = '相册';
 export const desc = '所有图片：聊天收到 · AI 发出 · 图库 · 抓取 · 视频帧';
+export const icon = 'image';
 export const group = '语料';
 export const order = 11;
 
@@ -43,6 +44,9 @@ export async function mount(root) {
     // 重载（筛选/删除/保存后）必须先把旧卡片清掉，否则删掉的那张还留在网格里，
     // 看起来就是"要手动刷新页面才变化"（线上真事）。
     if (clear) grid.textContent = '';
+    if (!list.length) {
+      grid.innerHTML = '<div class="empty">没有符合条件的图片<br><b>换个来源或清空搜索</b>，也可以点「重扫」重新索引。</div>';
+    }
     for (const it of list) {
       const card = document.createElement('div');
       card.className = 'album-card';
@@ -120,7 +124,7 @@ export async function mount(root) {
     if (delBtn) delBtn.style.display = it.source === 'sticker' ? 'none' : '';
     $('#albumModalNotes', view).value = it.notes || '';
     $('#albumModalTags', view).value = (it.tags || []).join(', ');
-    modal.style.display = '';
+    modal.style.display = 'flex';
   };
   const closeModal = () => { const m = $('#albumModal', view); if (m) m.style.display = 'none'; };
 
@@ -132,7 +136,7 @@ export async function mount(root) {
   });
 
   // 统一用事件委托：按钮可能被重新渲染/替换，直接 addEventListener 容易"点了没反应"。
-  const modalMsg = (text) => { const el = $('#albumModalMsg', view); if (el) el.textContent = text; setMsg($('#albumMsg', view), text); };
+  const modalMsg = (text, ok = true) => { setMsg($('#albumModalMsg', view), text, ok); setMsg($('#albumMsg', view), text, ok); };
   delegate($('#albumModal', view), 'click', '#albumModalClose', () => closeModal());
   delegate($('#albumModal', view), 'click', '#albumModalSave', async () => {
     const modal = $('#albumModal', view);
@@ -143,7 +147,7 @@ export async function mount(root) {
       notes: $('#albumModalNotes', view).value,
       tags: $('#albumModalTags', view).value
     }).catch((e) => ({ ok: false, error: e.message }));
-    modalMsg(r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '保存失败')));
+    modalMsg(r.ok ? '已保存' : (r.error || '保存失败'), r.ok);
     if (r.ok) { closeModal(); await load(); }
   });
   delegate($('#albumModal', view), 'click', '#albumModalDelete', async () => {
@@ -152,7 +156,7 @@ export async function mount(root) {
     modalMsg('删除中…');
     const r = await api('api/album/delete', 'POST', { source: modal.dataset.source, file: modal.dataset.file })
       .catch((e) => ({ ok: false, error: e.message }));
-    modalMsg(r.ok ? '✅ 已移入回收站' : ('❌ ' + (r.error || '删除失败')));
+    modalMsg(r.ok ? '已移入回收站' : (r.error || '删除失败'), r.ok);
     if (r.ok) { closeModal(); await load(); }
   });
   $('#albumModal', view)?.addEventListener('click', (ev) => { if (ev.target.id === 'albumModal') closeModal(); });
@@ -222,7 +226,7 @@ export async function mount(root) {
       list.append(card);
     }
   };
-  delegate(view, 'click', '#albumTrashBtn', async () => { const m = $('#albumTrashModal', view); if (m) m.style.display = ''; await renderTrash(); });
+  delegate(view, 'click', '#albumTrashBtn', async () => { const m = $('#albumTrashModal', view); if (m) m.style.display = 'flex'; await renderTrash(); });
   delegate($('#albumTrashModal', view), 'click', '#albumTrashClose', () => { const m = $('#albumTrashModal', view); if (m) m.style.display = 'none'; });
   delegate($('#albumTrashModal', view), 'click', '#albumTrashEmpty', async () => {
     if (!confirmDanger('清空回收站？这些图会被**永久删除**，无法还原。')) return;

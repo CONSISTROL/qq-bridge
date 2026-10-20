@@ -1,32 +1,19 @@
-<div class="view-head">
-  <h2>自主性</h2>
-  <p class="muted">L2 自主行动：每天 <b>5 次</b>自由行动（说话不算，发动态 / 刷 B站 / 学东西这类算）。
-    它有自己的待办目标，冷场时自己决定做什么——"什么都不做"也是合法选项。</p>
-</div>
-
 <div class="card">
-  <h3 style="margin-top:0">今日自由行动预算</h3>
+  <h2>今日自由行动预算</h2>
   <div id="auBudget" class="meta">加载中…</div>
 </div>
 
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">它自己的待办</h3>
+<div class="card">
+  <h2>它自己的待办</h2>
   <div id="auGoals" class="au-goals">加载中…</div>
-  <div class="row" style="gap:8px;margin-top:10px">
-    <input id="auText" placeholder="给它加一条目标（比如：跟进 S 赛赛程）" style="flex:1">
-    <button id="auAdd" class="btn" type="button">加入目标</button>
+  <div class="toolbar plain mt-12">
+    <input id="auText" class="grow" placeholder="给它加一条目标（比如：跟进 S 赛程）">
+    <button id="auAdd" class="primary" type="button">加入目标</button>
   </div>
 </div>
 
-<div class="card" style="margin-top:12px">
-  <h3 style="margin-top:0">最近的自主行动</h3>
+<div class="card">
+  <h2>最近的自主行动</h2>
   <div id="auLog" class="meta">加载中…</div>
 </div>
 <div id="auMsg" class="msg"></div>
-
-<style>
-  .au-bar { height: 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin-bottom: 6px; }
-  .au-bar-fill { height: 100%; background: var(--accent); transition: width .3s; }
-  .au-goals { display: flex; flex-direction: column; gap: 6px; }
-  .au-goal { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--line); }
-</style>

@@ -2,6 +2,7 @@
 export const id = 'voicepack';
 export const title = '语音包';
 export const desc = '目标音色的参考音频（可从 B站视频抽取），供 TTS/变声参考';
+export const icon = 'voice';
 export const group = '语料';
 export const order = 12;
 
@@ -18,7 +19,7 @@ export async function mount(root) {
   const render = () => {
     const box = $('#vpList', view);
     if (!box) return;
-    box.innerHTML = packs.length ? '' : '<div class="meta">还没有语音包，先建一个。</div>';
+    box.innerHTML = packs.length ? '' : '<div class="empty">还没有语音包<br><b>先在上方建一个包</b>，再从 B站视频抽音频。</div>';
     for (const p of packs) {
       const card = document.createElement('div');
       card.className = 'vp-card';

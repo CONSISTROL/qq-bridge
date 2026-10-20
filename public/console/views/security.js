@@ -7,7 +7,7 @@ import { refreshStatus } from '../core/status.js';
 export const id = 'security';
 export const title = '白名单与安全';
 export const desc = '群/私聊白名单、管理员、安全拦截通知、控制台令牌';
-export const icon = '🔒';
+export const icon = 'security';
 export const group = '总览';
 export const order = 4;
 

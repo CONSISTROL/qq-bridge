@@ -1,4 +1,5 @@
 // 通用 DOM 小工具。所有 view 共用，避免每个文件各写一份 esc/查询/提示。
+import { iconSvg } from './icons.js';
 
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,6 +19,22 @@ export function delegate(root, type, selector, handler) {
   });
 }
 
+// 旧代码用 ✅/❌/⚠️ 前缀表达状态；统一抽出来换成图标 + 颜色，不再依赖 emoji 字体。
+const STATUS_PREFIX = /^\s*(✅|❌|⚠️?|✓|⛔|🟢|🔴)\s*/u;
+function splitStatus(text, fallbackKind = 'ok') {
+  const raw = String(text ?? '');
+  const hit = STATUS_PREFIX.exec(raw);
+  let kind = fallbackKind;
+  if (hit) {
+    const mark = hit[1];
+    if (mark === '❌' || mark === '⛔' || mark === '🔴') kind = 'err';
+    else if (mark.startsWith('⚠')) kind = 'warn';
+    else kind = 'ok';
+  }
+  return { kind, text: hit ? raw.slice(hit[0].length) : raw };
+}
+const KIND_ICON = { ok: 'check', err: 'x', warn: 'alert', info: 'info' };
+
 export function toast(message, kind = 'info', ttl = 4200) {
   let wrap = document.getElementById('toastWrap');
   if (!wrap) {
@@ -26,21 +43,28 @@ export function toast(message, kind = 'info', ttl = 4200) {
     wrap.className = 'toast-wrap';
     document.body.appendChild(wrap);
   }
+  const parsed = splitStatus(message, kind);
+  const finalKind = parsed.kind;
   const node = document.createElement('div');
-  node.className = 'toast' + (kind === 'ok' ? ' ok' : kind === 'err' ? ' err' : '');
-  node.textContent = String(message ?? '');
+  node.className = 'toast ' + finalKind;
+  node.innerHTML = iconSvg(KIND_ICON[finalKind] || 'info', { size: 16 })
+    + `<span>${esc(parsed.text)}</span>`;
   wrap.appendChild(node);
   setTimeout(() => node.remove(), ttl);
   return node;
 }
 
-// 就地写一行状态文字（原来的 .meta + 绿/红）
+// 就地写一行状态文字：识别旧 emoji 前缀 → 图标 + 颜色
 export function setMsg(target, text, ok = true) {
   const node = typeof target === 'string' ? $(target) : target;
   if (!node) return;
-  node.textContent = text ?? '';
-  node.classList.remove('ok', 'err');
-  if (text) node.classList.add(ok ? 'ok' : 'err');
+  const parsed = splitStatus(text, ok ? 'ok' : 'err');
+  node.classList.remove('ok', 'err', 'warn');
+  node.innerHTML = '';
+  if (!parsed.text) return;
+  node.classList.add(parsed.kind);
+  node.innerHTML = iconSvg(KIND_ICON[parsed.kind] || 'info', { size: 14 })
+    + `<span>${esc(parsed.text)}</span>`;
 }
 
 export function confirmDanger(message) { return window.confirm(message); }

@@ -1,22 +1,13 @@
-<div class="view-head">
-  <h2>记忆库</h2>
-  <p class="muted">所有「AI 记住的东西」都在一个数据库里（<code>state/memory.db</code>）：黑话、群知识库、档案、
-    群成员备注、话题/想法/印象。一个搜索框查全部，按类型筛选，随时改/删。</p>
-</div>
-<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-  <input id="mdSearch" type="search" placeholder="搜内容 / 解释 / 标签…" style="min-width:240px">
-  <span id="mdTabs" class="album-tabs"></span>
+<div class="toolbar">
+  <input id="mdSearch" type="search" class="grow" placeholder="搜内容 / 解释 / 标签…">
+  <span id="mdTabs" class="tabs"></span>
   <span id="mdMsg" class="msg"></span>
 </div>
-<div class="row" style="gap:8px;margin-top:8px;align-items:center">
-  <input id="mdNewText" placeholder="新增一条（内容）" style="flex:1">
-  <input id="mdNewScope" placeholder="scope（all / owner / group:号）" style="width:200px">
-  <button id="mdAdd" class="btn" type="button">添加</button>
+
+<div class="toolbar plain">
+  <input id="mdNewText" class="grow" placeholder="新增一条（内容）">
+  <input id="mdNewScope" class="w-md" placeholder="scope（all / owner / group:号）">
+  <button id="mdAdd" class="primary" type="button">添加</button>
 </div>
+
 <div id="mdList" class="md-list"></div>
-<style>
-  .md-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-  .md-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
-  .md-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .md-answer { margin: 6px 0; font-size: 12.5px; color: var(--text); white-space: pre-wrap; }
-</style>

@@ -7,7 +7,7 @@ import { mountFragment } from '../core/fragments.js';
 export const id = 'mc';
 export const title = 'Minecraft';
 export const desc = 'bot 状态 · 里程碑 · 背包 · 直播入口';
-export const icon = '⛏️';
+export const icon = 'cube';
 export const group = '扩展';
 export const order = 20;
 
@@ -49,9 +49,9 @@ function renderOverview(view, d) {
     ['白名单', s.whitelist ? '<span class="pill b">开启</span>' : '关闭'],
     ['状态更新时间', b.updatedAt ? new Date(b.updatedAt).toLocaleString() : '—'],
   ];
-  let html = '<table>';
+  let html = '<div class="table-wrap"><table>';
   for (const [k, v] of rows) html += `<tr><th style="width:130px">${k}</th><td>${v}</td></tr>`;
-  $('#mcOverview', view).innerHTML = html + '</table>';
+  $('#mcOverview', view).innerHTML = html + '</table></div>';
 }
 
 function renderMilestones(view, ms) {
@@ -63,7 +63,7 @@ function renderMilestones(view, ms) {
   let html = `<div class="meta" style="margin-bottom:6px">已完成 ${done.size}/${TOTAL}　`
     + `受阻 ${Object.keys(blocked).length}（peaceful 下刷不出怪）`
     + (ms.current ? `　进行中：#${ms.current}` : '') + '</div>';
-  html += '<table><tr><th style="width:52px">#</th><th>里程碑</th><th style="width:110px">状态</th></tr>';
+  html += '<div class="table-wrap"><table><tr><th style="width:52px">#</th><th>里程碑</th><th style="width:110px">状态</th></tr>';
   for (let id = 1; id <= 15; id++) {
     const isBlocked = !!blocked[id];
     let status;
@@ -74,7 +74,7 @@ function renderMilestones(view, ms) {
     const why = isBlocked ? ` <span class="meta">${esc(blocked[id])}</span>` : '';
     html += `<tr><td>${id}</td><td>${esc(MILESTONE_TITLES[id] || '')}${why}</td><td>${status}</td></tr>`;
   }
-  html += '</table>';
+  html += '</table></div>';
   if (ms.current) html += `<div class="meta" style="margin-top:6px">当前推进：里程碑 ${ms.current}</div>`;
   $('#mcMilestones', view).innerHTML = html;
 }
@@ -108,9 +108,9 @@ function renderMemory(view, m) {
     ['经验流水', `${m.experience?.entries ?? 0} 条 / ${Math.round((m.experience?.chars ?? 0) / 1000)}k 字`],
     ['对话窗口', `${m.turns?.count ?? 0} 条 / ${m.turns?.chars ?? 0} 字`],
   ];
-  let html = '<table>';
+  let html = '<div class="table-wrap"><table>';
   for (const [k, v] of rows) html += `<tr><th style="width:130px">${k}</th><td>${v}</td></tr>`;
-  html += '</table>';
+  html += '</table></div>';
 
   // 「总目标」以 MISSION.md 为准。自驱模式下才有 selfPromptGoal，
   // 里程碑任务模式下 turns 里没有那段话（踩过：一开始从 turns 抠 goal，取到空）。
@@ -250,7 +250,7 @@ async function refreshStream(view) {
     const bits = [];
     if (s) bits.push(`实测 ${s.fps}fps`, `已编码 ${s.frames} 帧`, `丢 ${s.dropped} 帧`, `投射 ${s.rayMs}ms`, `合成 ${s.composeMs}ms`);
     if (p.logAgeSec != null) bits.push(`日志 ${p.logAgeSec}s 前`);
-    bits.push(d.hasPushUrl ? '推流码已就绪' : '⚠ 还没有推流码（先点「开播」）');
+    bits.push(d.hasPushUrl ? '推流码已就绪' : '注意：还没有推流码（先点「开播」）');
     if (d.pushUrlMasked) bits.push(d.pushUrlMasked);
     stats.textContent = bits.join('　');
   }

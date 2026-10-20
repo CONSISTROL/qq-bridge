@@ -10,11 +10,12 @@ import { $, $$, esc, toast, setMsg, confirmDanger, delegate, fmtClock } from '..
 import { every } from '../core/poll.js';
 import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
+import { iconSvg } from '../core/icons.js';
 
 export const id = 'social2';
 export const title = '聊天模式';
 export const desc = 'AI 工具开关、唤醒/发送/等待参数、工具日志、轻量记忆、工具级配置';
-export const icon = '🤖';
+export const icon = 'chat';
 export const group = '仿真';
 export const order = 2;
 
@@ -280,7 +281,7 @@ function toolLogCell(value, tool) {
 function renderToolLog(view, entries) {
   const box = $('#v2ToolLogOutput', view);
   const list = entries || [];
-  if (!list.length) { box.innerHTML = '<span class="meta">（空）</span>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无记录</div>'; return; }
   let html = '<table><tr><th>时间</th><th>会话 key</th><th>工具名</th><th>状态</th><th>参数</th><th>错误信息</th></tr>';
   for (const e of list) {
     html += '<tr>'
@@ -303,39 +304,39 @@ function renderMemory(view, data) {
   const topics = Array.isArray(raw.activeTopics) ? raw.activeTopics : [];
   const thoughts = Array.isArray(raw.pendingThoughts) ? raw.pendingThoughts : [];
   const impressions = raw.memberImpressions && typeof raw.memberImpressions === 'object' ? raw.memberImpressions : {};
-  let html = '<div style="padding:8px">';
-  html += '<div class="memory-section"><b>进行中的话题</b> <button class="small" data-action="clear" data-cat="activeTopic">清空</button>';
-  if (!topics.length) html += '<div class="meta">（空）</div>';
+  let html = '<div class="mem-list">';
+  html += '<div class="memory-section"><div class="mem-head"><b>进行中的话题</b><button class="small" data-action="clear" data-cat="activeTopic">清空</button></div>';
+  if (!topics.length) html += '<div class="empty compact">暂无记录</div>';
   for (const t of topics) {
     const text = esc(String(t?.text || ''));
     const extra = t?.pendingQuestion ? `；待追问：${esc(String(t.pendingQuestion))}` : '';
-    html += `<div style="margin:4px 0">📌 ${text}${extra} <button class="small" data-action="edit" data-cat="activeTopic" data-content="${esc(String(t?.text || ''))}">编辑</button> <button class="small" data-action="remove" data-cat="activeTopic" data-content="${esc(String(t?.text || ''))}">删除</button></div>`;
+    html += `<div class="mem-row"><span class="mem-ico">${iconSvg('pin', { size: 15 })}</span><span class="mem-text">${text}${extra}</span><span class="mem-actions"><button class="small" data-action="edit" data-cat="activeTopic" data-content="${esc(String(t?.text || ''))}">编辑</button><button class="small danger-ghost" data-action="remove" data-cat="activeTopic" data-content="${esc(String(t?.text || ''))}">删除</button></span></div>`;
   }
   html += '</div>';
-  html += '<div class="memory-section"><b>你想说但还没说的</b> <button class="small" data-action="clear" data-cat="pendingThought">清空</button>';
-  if (!thoughts.length) html += '<div class="meta">（空）</div>';
+  html += '<div class="memory-section"><div class="mem-head"><b>你想说但还没说的</b><button class="small" data-action="clear" data-cat="pendingThought">清空</button></div>';
+  if (!thoughts.length) html += '<div class="empty compact">暂无记录</div>';
   for (const t of thoughts) {
-    html += `<div style="margin:4px 0">💭 ${esc(String(t?.text || ''))}${t?.motivation ? `（${esc(String(t.motivation))}）` : ''} <button class="small" data-action="edit" data-cat="pendingThought" data-content="${esc(String(t?.text || ''))}">编辑</button> <button class="small" data-action="remove" data-cat="pendingThought" data-content="${esc(String(t?.text || ''))}">删除</button></div>`;
+    html += `<div class="mem-row"><span class="mem-ico">${iconSvg('cloud', { size: 15 })}</span><span class="mem-text">${esc(String(t?.text || ''))}${t?.motivation ? `（${esc(String(t.motivation))}）` : ''}</span><span class="mem-actions"><button class="small" data-action="edit" data-cat="pendingThought" data-content="${esc(String(t?.text || ''))}">编辑</button><button class="small danger-ghost" data-action="remove" data-cat="pendingThought" data-content="${esc(String(t?.text || ''))}">删除</button></span></div>`;
   }
   html += '</div>';
-  html += '<div class="memory-section"><b>对群友的印象</b> <button class="small" data-action="clear" data-cat="memberImpression">清空</button>';
+  html += '<div class="memory-section"><div class="mem-head"><b>对群友的印象</b><button class="small" data-action="clear" data-cat="memberImpression">清空</button></div>';
   const names = Object.keys(impressions);
-  if (!names.length) html += '<div class="meta">（空）</div>';
+  if (!names.length) html += '<div class="empty compact">暂无记录</div>';
   for (const name of names) {
     const im = impressions[name] || {};
     const traits = Array.isArray(im.traits) ? im.traits : [];
-    html += `<div style="margin:4px 0">👤 ${esc(name)}：${traits.length ? esc(traits.join('、')) : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次） <button class="small" data-action="edit" data-cat="memberImpression" data-target="${esc(name)}" data-traits="${esc(traits.join(', '))}">编辑</button> <button class="small" data-action="remove" data-cat="memberImpression" data-target="${esc(name)}">删除</button></div>`;
+    html += `<div class="mem-row"><span class="mem-ico">${iconSvg('user', { size: 15 })}</span><span class="mem-text">${esc(name)}：${traits.length ? esc(traits.join('、')) : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次）</span><span class="mem-actions"><button class="small" data-action="edit" data-cat="memberImpression" data-target="${esc(name)}" data-traits="${esc(traits.join(', '))}">编辑</button><button class="small danger-ghost" data-action="remove" data-cat="memberImpression" data-target="${esc(name)}">删除</button></span></div>`;
   }
   html += '</div>';
   // 成员备注存在 state/member-remarks.json（不属于 social-v2 状态），单独列一段。
   const remarks = Array.isArray(data.memberRemarks) ? data.memberRemarks : [];
-  html += '<div class="memory-section"><b>成员备注（本地记忆，不动 QQ）</b>';
-  if (!remarks.length) html += '<div class="meta">（空）</div>';
+  html += '<div class="memory-section"><div class="mem-head"><b>成员备注（本地记忆，不动 QQ）</b></div>';
+  if (!remarks.length) html += '<div class="empty compact">暂无记录</div>';
   for (const r of remarks) {
     const who = r?.remark ? esc(String(r.remark)) : '（未命名）';
     const nick = r?.nick && r.nick !== r.remark ? `，昵称：${esc(String(r.nick))}` : '';
     const note = r?.note ? `｜${esc(String(r.note))}` : '';
-    html += `<div style="margin:4px 0">🏷️ ${who}（QQ ${esc(String(r?.qq || ''))}${nick}）${note} <button class="small" data-action="remark-edit" data-user="${esc(String(r?.qq || ''))}" data-remark="${esc(String(r?.remark || ''))}" data-note="${esc(String(r?.note || ''))}">编辑</button> <button class="small" data-action="remark-remove" data-user="${esc(String(r?.qq || ''))}">删除</button></div>`;
+    html += `<div class="mem-row"><span class="mem-ico">${iconSvg('tag', { size: 15 })}</span><span class="mem-text">${who}（QQ ${esc(String(r?.qq || ''))}${nick}）${note}</span><span class="mem-actions"><button class="small" data-action="remark-edit" data-user="${esc(String(r?.qq || ''))}" data-remark="${esc(String(r?.remark || ''))}" data-note="${esc(String(r?.note || ''))}">编辑</button><button class="small danger-ghost" data-action="remark-remove" data-user="${esc(String(r?.qq || ''))}">删除</button></span></div>`;
   }
   html += '</div></div>';
   box.innerHTML = html;
@@ -350,7 +351,7 @@ function formatWakeStatus(r) {
   lines.push(`<div><b>模式：</b>${esc(mode)}</div>`);
   lines.push(`<div><b>无限期：</b>${wc.infinite ? '是' : '否'}</div>`);
   const safety = r.wakeSafety || {};
-  lines.push(`<div><b>唤醒保证：</b>${safety.guaranteed ? '🟢 已保证' : '🔴 无保证'}${safety.stale ? '（配置较旧，未确认）' : ''}</div>`);
+  lines.push(`<div><b>唤醒保证：</b>${safety.guaranteed ? '<span class="pill g">已保证</span>' : '<span class="pill r">无保证</span>'}${safety.stale ? '（配置较旧，未确认）' : ''}</div>`);
   let next;
   if (wc.mode === 'active' || wc.triggers?.anyMessage) {
     next = '任何新消息都会唤醒';
@@ -407,7 +408,7 @@ const CFG_SCHEMA = {
   },
   image: {
     title: '图片 / 表情来源（含搜图分级）',
-    desc: '作用于 qq_save_sticker · qq_send_image · qq_search_images · qq_list_image_library；搜图的图源在 qq_search_images 行的 ⚙ 里配，年龄分级在这个分区里配',
+    desc: '作用于 qq_save_sticker · qq_send_image · qq_search_images · qq_list_image_library；搜图的图源在 qq_search_images 行的「设置」里配，年龄分级在这个分区里配',
     fields: [
       { path: 'enabled', label: '启用图片功能', type: 'bool' },
       { path: 'allowRemoteUrl', label: '允许远程 URL', type: 'bool', hint: '关闭后只能用本地图库/base64，AI 不能抓网络图' },
@@ -438,7 +439,7 @@ const CFG_SCHEMA = {
   },
   card: {
     title: '链接分享卡',
-    desc: '⚠️ 实测当前网关协议版本下**渲染不出来**：QQ 客户端只显示「发送者版本过低，无法展示内容」——消息本身被正常接受（message_seq 有值），门禁在 QQ 的发送端协议版本上，桥接改不了，所以 AI 侧默认关闭（工具开关见「工具」行）。要分享链接，直接用 qq_send_message 发「标题 + 完整链接」更实际。\n\n下面是功能本身的说明（换到支持的协议版本后可用）：作用于 qq_send_card。AI 只能填标题/摘要/链接/缩略图，卡片体（com.tencent.structmsg / news）由桥接组装——**不做任意 json/xml 透传**：卡片体是网关侧的任意结构化内容，能伪造「系统通知 / 红包 / 群邀请」这类看着像官方的东西，群里点开就是外部跳转，所以只开放这一个固定形状。链接与缩略图必须是公网 http(s)：本机/内网地址一律拒绝（否则提示注入能让 AI 发一张指向本机控制台、还带着令牌的可点击卡片）。',
+    desc: '注意：实测当前网关协议版本下**渲染不出来**：QQ 客户端只显示「发送者版本过低，无法展示内容」——消息本身被正常接受（message_seq 有值），门禁在 QQ 的发送端协议版本上，桥接改不了，所以 AI 侧默认关闭（工具开关见「工具」行）。要分享链接，直接用 qq_send_message 发「标题 + 完整链接」更实际。\n\n下面是功能本身的说明（换到支持的协议版本后可用）：作用于 qq_send_card。AI 只能填标题/摘要/链接/缩略图，卡片体（com.tencent.structmsg / news）由桥接组装——**不做任意 json/xml 透传**：卡片体是网关侧的任意结构化内容，能伪造「系统通知 / 红包 / 群邀请」这类看着像官方的东西，群里点开就是外部跳转，所以只开放这一个固定形状。链接与缩略图必须是公网 http(s)：本机/内网地址一律拒绝（否则提示注入能让 AI 发一张指向本机控制台、还带着令牌的可点击卡片）。',
     fields: [
       { path: 'enabled', label: '启用卡片发送', type: 'bool' },
       { path: 'maxTitleChars', label: '标题最大字数', type: 'number' },
@@ -821,10 +822,10 @@ export async function mount(root) {
     if (!r?.ok) { if (summary) summary.textContent = '读取失败'; return; }
     state.selfProfile = r;
     if (summary) {
-      summary.textContent = `${r.enabled ? '✅ 已启用' : '⛔ 未启用（默认关，改的是账号级身份）'}`
-        + `｜昵称：${r.current.nickname || '（未记录）'}｜签名：${r.current.personalNote || '（未记录）'}`
+      summary.innerHTML = `<span class="pill ${r.enabled ? 'g' : 'y'}">${r.enabled ? '已启用' : '未启用'}</span>`
+        + ` ｜昵称：${esc(r.current.nickname || '（未记录）')}｜签名：${esc(r.current.personalNote || '（未记录）')}`
         + `｜头像：${r.avatar.sha256 ? '已托管' : '（未记录）'}`
-        + (r.selfId ? `｜账号 ${r.selfId}` : '');
+        + (r.selfId ? `｜账号 ${esc(String(r.selfId))}` : '');
     }
     const img = $('#profileAvatar', view);
     if (img) {
@@ -848,8 +849,7 @@ export async function mount(root) {
   const profileMsg = (text, ok = true) => {
     const el = $('#profileMsg', view);
     if (!el) return;
-    el.textContent = text;
-    el.style.color = ok ? '' : '#c66';
+    setMsg(el, text, ok);
   };
   $('#profileSave', view)?.addEventListener('click', async () => {
     const nickname = $('#profileNickname', view).value.trim();
@@ -1044,7 +1044,7 @@ export async function mount(root) {
   const modalDirty = trackDirty(view, {
     selector: '#v2CfgBody [data-v2-cfg-field]',
     label: '工具配置弹窗',
-    // ⚙ 按钮在 view 里但在弹窗之外：点开弹窗不算「碰过弹窗里的字段」，
+    // 「设置」按钮在 view 里但在弹窗之外：点开弹窗不算「碰过弹窗里的字段」，
     // 否则紧接着的浏览器自动填充（密码框尤其常见）会被当成用户改动。
     interactionScope: '#v2CfgBody',
     onChange: (n) => {

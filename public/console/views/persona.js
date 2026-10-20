@@ -7,7 +7,7 @@ import { getStatus, refreshStatus } from '../core/status.js';
 export const id = 'persona';
 export const title = '人格与静默';
 export const desc = '当前角色、人格库、静默开关';
-export const icon = '🎭';
+export const icon = 'persona';
 export const group = '运行';
 export const order = 2;
 
