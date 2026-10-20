@@ -74,6 +74,9 @@ export async function phoneAct({ action, x, y, x2, y2, ms, keycode, text } = {})
   } else {
     return { ok: false, error: 'action 只能是 tap / swipe / key / text' };
   }
+  // 锁屏时点/滑等于白点：先尝试进入可操作状态
+  const kg = await sh('dumpsys window policy | grep -m1 -E "showing="');
+  if (/showing=true/.test(kg.out)) await phonePrepare();
   const r = await sh(cmd, { timeoutMs: 20000 });
   return r.ok ? { ok: true, action: a, cmd } : { ok: false, error: r.err || r.out || '执行失败' };
 }
@@ -88,9 +91,12 @@ export async function phoneShell(cmd, { timeoutMs = 60000 } = {}) {
 /** 刷 B站（高层）：打开 App → 可选的搜索 → 刷几屏 → 截图 + 前台标题。 */
 export async function phoneBili({ task = 'feed', query = '', swipes = 3 } = {}) {
   // 先亮屏 + 上滑解锁：锁屏状态下 App 起来了也看不到，等于白刷。
-  const wake = await phoneWake();
+  let wake = await phoneWake();
   if (!wake.unlocked) {
-    return { ok: false, error: wake.note, wake };
+    // 锁屏 → 尝试进入「可全程操作」状态（关闭锁屏+常亮），再试一次
+    const prep = await phonePrepare();
+    wake = prep.wake || wake;
+    if (!wake.unlocked) return { ok: false, error: wake.note, wake, prepare: prep };
   }
   const pkgs = ['tv.danmaku.bili', 'com.bilibili.app', 'tv.danmaku.bilibili'];
   const exists = await sh('pm list packages | grep -i bili | head -3');
@@ -164,4 +170,33 @@ export async function phoneWake() {
     foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '',
     note: locked ? '仍在锁屏：手机有密码/图案，只能你手动解锁（我做到「亮屏+上滑」为止）' : '已解锁'
   };
+}
+
+/**
+ * 让手机进入「可被全程操作」的状态（owner 要求全程由 bot 操作）：
+ *   1. 关闭锁屏（settings secure lockscreen.disabled 1）——这样亮屏就是桌面/App，不需要密码；
+ *   2. 充电时常亮（svc power stayon true），并拉长息屏时间（1 小时）；
+ *   3. 亮屏 + 上滑，把当前锁屏退掉。
+ * 这一步会**降低手机安全性**（谁拿到手机都能直接用）；还原：
+ *   su -c 'settings put secure lockscreen.disabled 0' && su -c 'svc power stayon false'
+ */
+export async function phonePrepare() {
+  const steps = [];
+  const run = async (cmd, label) => {
+    const r = await sh(cmd, { timeoutMs: 20000 });
+    steps.push({ label, ok: r.ok, err: r.ok ? '' : (r.err || r.out).slice(0, 160) });
+    return r.ok;
+  };
+  await run('settings put secure lockscreen.disabled 1', '关闭锁屏');
+  await run('svc power stayon true', '充电时常亮');
+  await run('settings put system screen_off_timeout 3600000', '息屏时间 1 小时');
+  const wake = await phoneWake();
+  return { ok: wake.awake, steps, wake, note: wake.unlocked ? '已就绪：锁屏已关闭，可直接操作' : `仍受限：${wake.note}` };
+}
+
+/** 还原（交还手机时用）：恢复锁屏与息屏设置。 */
+export async function phoneUnprepare() {
+  await sh('settings put secure lockscreen.disabled 0', { timeoutMs: 15000 });
+  await sh('svc power stayon false', { timeoutMs: 15000 });
+  return { ok: true, note: '已恢复锁屏与常亮设置' };
 }

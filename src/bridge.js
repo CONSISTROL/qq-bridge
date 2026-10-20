@@ -25,7 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
-import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake } from './phone-ctl.js';
+import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -7346,6 +7346,16 @@ const agentTokenOk = (key, token) => {
             if (req.method === 'GET' && action === 'status') {
               if (!need('phoneStatus', '看屏幕')) return;
               sendJson({ ok: true, ...(await phoneStatus()) });
+              return;
+            }
+            if (req.method === 'POST' && action === 'prepare') {
+              if (!need('phoneKey', '操作手机')) return;
+              sendJson(await phonePrepare());
+              return;
+            }
+            if (req.method === 'POST' && action === 'unprepare') {
+              if (!need('phoneKey', '操作手机')) return;
+              sendJson(await phoneUnprepare());
               return;
             }
             if (req.method === 'POST' && action === 'wake') {
