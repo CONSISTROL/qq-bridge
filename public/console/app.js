@@ -10,9 +10,7 @@ import { $, autoGrowTextareas } from './core/dom.js';
 
 import * as overview from './views/overview.js';
 import * as social2 from './views/social2.js';
-import * as slang from './views/slang.js';
-import * as knowledge from './views/knowledge.js';
-import * as memory from './views/memory.js';
+import * as memorydb from './views/memorydb.js';
 import * as album from './views/album.js';
 import * as voicepack from './views/voicepack.js';
 import * as persona from './views/persona.js';
@@ -24,7 +22,7 @@ import * as plugins from './views/plugins.js';
 import * as capabilities from './views/capabilities.js';
 import * as mc from './views/mc.js';
 
-const VIEWS = [overview, social2, slang, knowledge, memory, album, voicepack, persona, autonomy, security, ops, tools, capabilities, plugins, mc];
+const VIEWS = [overview, social2, memorydb, album, voicepack, persona, autonomy, security, ops, tools, capabilities, plugins, mc];
 const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 

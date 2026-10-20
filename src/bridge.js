@@ -25,6 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
+import { listItems, countItems, upsertItem, deleteItem, migrateFromJson } from './memdb.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -7406,6 +7407,26 @@ const agentTokenOk = (key, token) => {
             biliHotCache = { at: now, items, limit };
             sendJson({ ok: true, cached: false, items: items.slice(0, limit) });
           } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
+          return;
+        }
+        // ── 统一记忆库（一个 SQLite 管所有记忆：黑话/知识库/档案/备注/轻量记忆）──
+        if (url.pathname === '/api/memdb' || url.pathname.startsWith('/api/memdb/')) {
+          const action = url.pathname === '/api/memdb' ? '' : url.pathname.slice('/api/memdb/'.length);
+          try {
+            if (req.method === 'GET') {
+              const kind = String(url.searchParams.get('kind') ?? '').trim();
+              const q = String(url.searchParams.get('q') ?? '').trim();
+              const scope = String(url.searchParams.get('scope') ?? '').trim();
+              const limit = Number(url.searchParams.get('limit')) || 200;
+              sendJson({ ok: true, counts: countItems({ stateDir: STATE_DIR }), items: listItems({ stateDir: STATE_DIR, kind, q, scope, limit }) });
+              return;
+            }
+            const body = await readBody();
+            if (action === 'add' || action === 'update') { sendJson(upsertItem({ stateDir: STATE_DIR, item: body })); return; }
+            if (action === 'delete') { sendJson(deleteItem({ stateDir: STATE_DIR, id: body.id })); return; }
+            if (action === 'migrate') { sendJson(migrateFromJson({ stateDir: STATE_DIR, log })); return; }
+            sendJson({ ok: false, error: '未知操作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
           return;
         }
         // ── Web 应用：AI 给管理员请求做的小页面，对外挂在 /apps/<slug> ──────
