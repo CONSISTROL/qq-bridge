@@ -7463,6 +7463,28 @@ const agentTokenOk = (key, token) => {
               }
               const shot = await phoneScreenshot();
               if (!shot.ok) { sendJson({ ok: false, error: shot.error }, 502); return; }
+              // send=1：直接把截图发到指定会话（群聊/私聊都行）——AI 看得到图，但"发出去"必须这里做
+              const sendKey = String(url.searchParams.get('send') ?? '') === '1' ? String(url.searchParams.get('key') ?? '').trim() : '';
+              if (sendKey) {
+                const km = /^(group|private):(\d+)$/.exec(sendKey);
+                if (!km) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+                // 手机截图原图 2~4MB，直接发会触发 QQ 的 highway upload 921（实测）；
+                // 先缩到 1080 宽的 jpeg（通常 200~400KB），稳。
+                let raw = Buffer.from(shot.data, 'base64');
+                try {
+                  raw = await sharp(raw).rotate().resize({ width: 1080, withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+                } catch { try { raw = await fitMediaBuffer(raw, 'phone-screenshot.png'); } catch { /* 原样发 */ } }
+                const seg = [{ type: 'image', data: { file: 'base64://' + raw.toString('base64') } }];
+                const gid = Number(km[2]);
+                const r = km[1] === 'group'
+                  ? await bot.raw('send_group_msg', { group_id: gid, message: seg })
+                  : await bot.raw('send_private_msg', { user_id: gid, message: seg });
+                const mid = r?.message_id ?? r?.data?.message_id ?? null;
+                recordSentMessagesV2(sendKey, ['[手机截图]']);
+                log(`[phone] 已发截图 ${sendKey}（${Math.round(raw.length / 1024)}KB）`);
+                sendJson({ ok: true, sent: true, messageId: mid, data: shot.data, mimeType: shot.mimeType, bytes: raw.length, wake: wakeInfo });
+                return;
+              }
               sendJson({ ok: true, data: shot.data, mimeType: shot.mimeType, bytes: shot.bytes, wake: wakeInfo });
               return;
             }

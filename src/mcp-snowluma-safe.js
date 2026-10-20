@@ -1392,14 +1392,23 @@ defineTool(
 
 defineTool(
   'qq_phone_look',
-  '截一张手机屏幕的图（你能直接看到）。可选 wake=true：先亮屏+上滑（手机有密码/图案时仍会停在锁屏，'
-    + '返回值会说明，别假装解锁了）。截不到会如实报错。',
-  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), wake: z.boolean().optional().describe('先亮屏+上滑解锁（无密码时有效）') },
-  async ({ key, token, wake }) => {
+  '截一张手机屏幕的图（你能直接看到）。'
+    + '可选 **send=true**：把这张截图**直接发到当前会话**（群聊/私聊都行）——想给群友看手机画面时用它；'
+    + '否则只返回给你看，不会发出去。'
+    + '可选 wake=true：先亮屏+上滑（有密码时会停在锁屏，返回值会说明，别假装解锁了）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    wake: z.boolean().optional().describe('先亮屏+上滑解锁'),
+    send: z.boolean().optional().describe('true=把截图发到当前会话')
+  },
+  async ({ key, token, wake, send }) => {
     try {
-      const d = await agentApi(`/api/phone/screenshot${wake ? '?wake=1' : ''}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 90000 });
+      const qs = [wake ? 'wake=1' : '', send ? 'send=1' : '', send ? `key=${encodeURIComponent(key)}` : ''].filter(Boolean).join('&');
+      const d = await agentApi(`/api/phone/screenshot${qs ? '?' + qs : ''}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 120000 });
       const blocks = [];
       if (d.wake && d.wake.note) blocks.push({ type: 'text', text: d.wake.note });
+      if (send && d.sent) blocks.push({ type: 'text', text: `截图已发到会话（${Math.round((d.bytes || 0) / 1024)}KB）` });
       blocks.push({ type: 'image', data: d.data, mimeType: d.mimeType || 'image/png' });
       return { content: blocks };
     } catch (error) { return { content: [{ type: 'text', text: `截屏失败：${error?.message ?? error}` }], isError: true }; }
