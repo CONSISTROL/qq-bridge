@@ -30,11 +30,14 @@ export function readManifest(file) {
       origin,
       version: String(m.version || '0'),
       enabled: m.enabled !== false,
-      tools: Array.isArray(m.tools) ? m.tools.filter((t) => t && t.name && t.url).map((t) => ({
+      tools: Array.isArray(m.tools) ? m.tools.filter((t) => t && t.name && (t.url || t.kind === 'phone')).map((t) => ({
         name: String(t.name),
         description: String(t.description || ''),
+        // kind=phone：不跑 HTTP，而是调用桥接的手机动作（白名单 action），用于 App 类能力
+        kind: t.kind === 'phone' ? 'phone' : 'http',
+        action: t.kind === 'phone' ? String(t.action || '') : '',
         method: String(t.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET',
-        url: String(t.url),
+        url: String(t.url || ''),
         body: t.body && typeof t.body === 'object' ? t.body : null,
         timeoutMs: Math.max(1000, Math.min(60000, Number(t.timeoutMs) || 15000)),
         maxChars: Math.max(200, Math.min(20000, Number(t.maxChars) || 4000))

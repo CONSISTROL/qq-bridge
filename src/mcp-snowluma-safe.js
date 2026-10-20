@@ -1572,13 +1572,14 @@ defineTool(
     token: z.string().describe('会话令牌'),
     origin: z.enum(['user', 'ai']).describe('插件来源：user=用户添加，ai=AI 添加'),
     plugin: z.string().describe('插件 id'),
-    tool: z.string().describe('工具名（来自 qq_plugin_list）')
+    tool: z.string().describe('工具名（来自 qq_plugin_list）'),
+    params: z.record(z.any()).optional().describe('工具参数（比如购物插件传 {keyword:"机械键盘", app:"jd"}）')
   },
-  async ({ key, token, origin, plugin, tool }) => {
+  async ({ key, token, origin, plugin, tool, params }) => {
     try {
       const data = await agentApi('/api/plugins/call', {
         method: 'POST',
-        body: JSON.stringify({ origin, plugin, tool }),
+        body: JSON.stringify({ origin, plugin, tool, params: params || {} }),
         headers: { 'x-agent-token': token },
         timeoutMs: 60000
       });

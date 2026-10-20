@@ -359,3 +359,39 @@ export async function phonePostMoment({ text = '', pin = '', send = true } = {})
   shots.push(await shot('发送后'));
   return { ok: true, stage: 'sent', steps, shots };
 }
+
+/**
+ * 购物查价（插件 shopping 用）：在手机上打开京东 / 什么值得买搜索，截图回来。
+ * 为什么走手机 App：京东/什么值得买的网页都有反爬（实测 302 跳验证、202 空页），
+ * App 反而能用 deep link 直接带关键词进去，不需要中文输入法。
+ */
+export async function phoneShopping({ keyword = '', app = 'jd', pin = '' } = {}) {
+  const kw = String(keyword || '').trim();
+  if (!kw) return { ok: false, error: 'keyword 不能为空' };
+  let wake = await phoneWake();
+  if (!wake.unlocked && pin) { const u = await phoneUnlock({ pin }); if (u.unlocked) wake = { ...wake, unlocked: true }; }
+  if (!wake.unlocked) return { ok: false, error: wake.note || '手机仍锁屏' };
+  const enc = encodeURIComponent;
+  const targets = [];
+  const wantJd = app === 'jd' || app === 'both';
+  const wantSmzdm = app === 'smzdm' || app === 'both';
+  const results = [];
+  const shoot = async (label) => { const s = await phoneScreenshot(); return s.ok ? { label, data: s.data, bytes: s.bytes } : null; };
+  if (wantJd) {
+    const params = enc(JSON.stringify({ category: 'jump', des: 'productList', keyword: kw }));
+    const url = `openapp.jdmobile://virtual?params=${params}`;
+    await sh(`am start -a android.intent.action.VIEW -d ${JSON.stringify(url)}`, { timeoutMs: 25000 });
+    await new Promise((r) => setTimeout(r, 3500));
+    const fg = (await sh('dumpsys window | grep -m1 mCurrentFocus')).out;
+    results.push({ app: 'jd', foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '', shot: await shoot('京东') });
+  }
+  if (wantSmzdm) {
+    // 什么值得买 App 的 `smzdm://` 只能拉到首页；关键词搜索退回浏览器打开搜索页
+    const url = `https://search.smzdm.com/?s=${enc(kw)}`;
+    await sh(`am start -a android.intent.action.VIEW -d ${JSON.stringify(url)}`, { timeoutMs: 25000 });
+    await new Promise((r) => setTimeout(r, 4000));
+    const fg = (await sh('dumpsys window | grep -m1 mCurrentFocus')).out;
+    results.push({ app: 'smzdm', foreground: /mCurrentFocus=([^}\n]+)/.exec(fg)?.[1]?.trim() || '', shot: await shoot('什么值得买') });
+  }
+  return { ok: true, keyword: kw, results };
+}

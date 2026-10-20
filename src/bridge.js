@@ -27,7 +27,7 @@ import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
-import { phoneStatus, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
+import { phoneStatus, phoneShopping, phoneScreenshot, phoneAct, phoneShell, phoneBili, phoneWake, phonePrepare, phoneUnprepare, phoneEnsureUnlocked, phonePostMoment } from './phone-ctl.js';
 import { describeAnimation } from './image-meta.js';
 import { createBiliClient, readBiliCookie } from './bili.js';
 import { createVideoTools } from './bili-video.js';
@@ -11163,6 +11163,19 @@ const agentTokenOk = (key, token) => {
               if (!plugin.enabled) { sendJson({ ok: false, error: '插件未启用（需要管理员在控制台开启）' }, 403); return; }
               const tool = plugin.tools.find((t) => t.name === String(body.tool));
               if (!tool) { sendJson({ ok: false, error: '插件里没有这个工具' }, 404); return; }
+              if (tool.kind === 'phone') {
+                // 声明式插件的"手机能力"：action 白名单，参数来自调用方
+                const act = String(tool.action || '');
+                const kw = String(body.params?.keyword ?? body.params?.q ?? tool.keyword ?? '').trim();
+                const appSel = String(body.params?.app ?? tool.app ?? 'jd');
+                if (act === 'shopping') {
+                  const r = await phoneShopping({ keyword: kw, app: appSel, pin: phonePin() });
+                  sendJson({ ok: true, plugin: plugin.id, tool: tool.name, kind: 'phone', result: r });
+                  return;
+                }
+                sendJson({ ok: false, error: `插件声明了不支持的手机动作：${act}` }, 400);
+                return;
+              }
               const resp = await fetch(tool.url, {
                 method: tool.method,
                 headers: { 'user-agent': 'qq-bridge-plugin/1.0', ...(tool.method === 'POST' ? { 'content-type': 'application/json' } : {}), ...(tool.body ? {} : {}) },

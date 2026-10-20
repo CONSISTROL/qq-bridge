@@ -1,0 +1,32 @@
+{
+  "id": "shopping",
+  "name": "购物比价（京东 / 什么值得买）",
+  "description": "群里有人问「推荐/多少钱/值不值/便宜点的」这类购物需求时，去手机上打开京东、什么值得买搜一下，截图回来给结论",
+  "origin": "user",
+  "version": "1.0.0",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "jd",
+      "description": "在京东 App 里搜商品（deep link 带关键词，无需输入法）",
+      "kind": "phone",
+      "action": "shopping",
+      "app": "jd"
+    },
+    {
+      "name": "smzdm",
+      "description": "在什么值得买搜商品（打开搜索页）",
+      "kind": "phone",
+      "action": "shopping",
+      "app": "smzdm"
+    },
+    {
+      "name": "both",
+      "description": "京东 + 什么值得买 各搜一次，两张截图对比",
+      "kind": "phone",
+      "action": "shopping",
+      "app": "both"
+    }
+  ],
+  "jobs": []
+}
