@@ -79,6 +79,16 @@ export const PLUGINS = [
     ]
   },
   {
+    id: 'webapps',
+    name: '网页应用',
+    icon: '🌐',
+    desc: '给管理员/群友做小网页（看板、清单、表单），发布成公开链接，谁拿到链接都能看',
+    capabilities: [
+      { id: 'publish', label: '发布/更新页面（qq_webapp_save）', flags: ['webappSave'] },
+      { id: 'list', label: '查看已发布页面（qq_webapp_list）', flags: ['webappList'] }
+    ]
+  },
+  {
     id: 'phone',
     name: '手机控制',
     icon: '📱',

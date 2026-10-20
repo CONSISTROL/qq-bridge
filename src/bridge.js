@@ -24,7 +24,7 @@ import { appendArchive, searchArchive, archiveStats as archiveStatsOf, toArchive
 import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, dayKey } from './memory-diary.js';
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
-import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS } from './capabilities.js';
+import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -5420,7 +5420,21 @@ const agentTokenOk = (key, token) => {
     // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
     // 会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
-    // 常驻活跃：启动时把 forceActive 里的群强制拉回活跃（否则它上次潜水设置会一直生效）
+    // 补齐新增插件：注册表里有、但 config.socialV2.plugins 里没有的，按默认值建条目。
+  try {
+    if (!cfg.socialV2) cfg.socialV2 = {};
+    if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') cfg.socialV2.plugins = {};
+    let added = 0;
+    for (const pl of PLUGINS) {
+      if (cfg.socialV2.plugins[pl.id]) continue;
+      const caps = {};
+      for (const c of pl.capabilities) if (!c.base) caps[c.id] = c.default === true;
+      cfg.socialV2.plugins[pl.id] = { enabled: Object.values(caps).some(Boolean), capabilities: caps };
+      added += 1;
+    }
+    if (added) { atomicWriteJson(path.join(ROOT, 'config.json'), cfg); log(`[config] 补齐 ${added} 个新增插件的配置条目`); }
+  } catch (error) { log('补齐插件配置失败：' + (error?.message ?? error)); }
+  // 常驻活跃：启动时把 forceActive 里的群强制拉回活跃（否则它上次潜水设置会一直生效）
   try {
     const fa = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
     for (const key of fa) {
@@ -7407,6 +7421,9 @@ const agentTokenOk = (key, token) => {
         }
         if (url.pathname === '/api/webapps' || url.pathname.startsWith('/api/webapps/')) {
           const action = url.pathname === '/api/webapps' ? '' : url.pathname.slice('/api/webapps/'.length);
+          // 能力开关：发布页 / 看列表 分别受 plugins.webapps 控制（控制台 → 插件 → 网页应用）
+          if (req.method === 'POST' && !v2ToolEnabled('webappSave')) { sendJson({ ok: false, error: '能力未启用：发布页面（控制台 → 插件 → 网页应用）' }, 403); return; }
+          if (req.method === 'GET' && !v2ToolEnabled('webappList')) { sendJson({ ok: false, error: '能力未启用：查看页面列表' }, 403); return; }
           try {
             if (req.method === 'GET') { sendJson({ ok: true, apps: listApps({ stateDir: STATE_DIR }) }); return; }
             const body = await readBody();
@@ -7650,8 +7667,7 @@ const agentTokenOk = (key, token) => {
             const on = body.enabled !== false;
             if (String(body.bulk ?? '') === 'all') {
               // 批量：全部插件开/关；开启时跳过需要人工确认的高危能力（能力表里 default 即"默认关"的那些）
-              const { PLUGINS } = await import('./capabilities.js');
-              for (const pl of PLUGINS) {
+                        for (const pl of PLUGINS) {
                 const cur0 = cfg.socialV2.plugins[pl.id] || {};
                 cur0.capabilities = cur0.capabilities && typeof cur0.capabilities === 'object' ? cur0.capabilities : {};
                 for (const c of pl.capabilities) {
