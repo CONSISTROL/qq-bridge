@@ -25,7 +25,7 @@ import { saveDiary, listDiary, readDiary, searchDiary, looksLikeMemoryQuery, day
 import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from './voice-pack.js';
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
-import { listItems, countItems, upsertItem, deleteItem, migrateFromJson } from './memdb.js';
+import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallForPrompt, decayMemories } from './memdb.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -16294,11 +16294,17 @@ const agentTokenOk = (key, token) => {
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
     // 档案：跨会话共享的事实（私聊学到的在群里也能用）
+    // 记忆（LSTM 式输出门）：按"当前消息相关度 × 重要性 × 强度"取 top-K，而不是全量塞档案。
     let profileLine = '';
     try {
-      const pf = profileForPrompt({ stateDir: STATE_DIR, key });
-      const lines = [...pf.shared, ...pf.local];
-      if (lines.length) profileLine = `【档案】关于主人/这个会话，你已经记下的事实（跨会话共享，别重复问）：\n${lines.map((t) => '- ' + t).join('\n')}\n\n`;
+      const st0 = getSocialV2State(key);
+      const query = lastIncomingTextV2(st0) || '';
+      const hits = recallForPrompt({ stateDir: STATE_DIR, key, query, limit: 10 });
+      if (hits.length) {
+        profileLine = '【记忆·这次想起来的】按你这条消息的相关度挑出来的（不是全部记忆）：\n'
+          + hits.map((h) => `- [${h.kind}] ${h.text}${h.answer ? '：' + String(h.answer).slice(0, 120) : ''}`).join('\n')
+          + '\n用到哪个就自然用，别把清单整段念出来。\n\n';
+      }
     } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
@@ -16474,11 +16480,17 @@ const agentTokenOk = (key, token) => {
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
     // 档案：跨会话共享的事实（私聊学到的在群里也能用）
+    // 记忆（LSTM 式输出门）：按"当前消息相关度 × 重要性 × 强度"取 top-K，而不是全量塞档案。
     let profileLine = '';
     try {
-      const pf = profileForPrompt({ stateDir: STATE_DIR, key });
-      const lines = [...pf.shared, ...pf.local];
-      if (lines.length) profileLine = `【档案】关于主人/这个会话，你已经记下的事实（跨会话共享，别重复问）：\n${lines.map((t) => '- ' + t).join('\n')}\n\n`;
+      const st0 = getSocialV2State(key);
+      const query = lastIncomingTextV2(st0) || '';
+      const hits = recallForPrompt({ stateDir: STATE_DIR, key, query, limit: 10 });
+      if (hits.length) {
+        profileLine = '【记忆·这次想起来的】按你这条消息的相关度挑出来的（不是全部记忆）：\n'
+          + hits.map((h) => `- [${h.kind}] ${h.text}${h.answer ? '：' + String(h.answer).slice(0, 120) : ''}`).join('\n')
+          + '\n用到哪个就自然用，别把清单整段念出来。\n\n';
+      }
     } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
@@ -18357,6 +18369,8 @@ const agentTokenOk = (key, token) => {
     } catch { /* 忽略 */ }
   }
 
+  // LSTM 式遗忘门：每 6 小时衰减一次（弱的淡出/淘汰，人/群稳定事实保留）
+  setInterval(() => { try { const r = decayMemories({ stateDir: STATE_DIR }); if (r.decayed || r.dropped) log(`[memdb] 遗忘门：衰减 ${r.decayed} 条，淘汰 ${r.dropped} 条`); } catch { /* 忽略 */ } }, 6 * 60 * 60 * 1000).unref?.();
   applyWakePolicy('startup');
   setInterval(() => applyWakePolicy('tick'), 10 * 60 * 1000).unref?.();
   // 一次性迁移：旧 socialV2.tools（扁平 47 个开关）→ socialV2.plugins（插件→能力）。
