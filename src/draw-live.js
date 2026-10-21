@@ -74,6 +74,22 @@ export async function liveClick({ x, y }) {
   return { ok: true };
 }
 
+/** 指针事件：支持按下/移动/抬起，才能把「拖拽」转发到真实浏览器。 */
+export async function livePointer({ type, x, y }) {
+  if (!page) return { ok: false, error: '没有活动会话' };
+  const px = Math.max(0, Math.min(W - 1, Math.round(Number(x) || 0)));
+  const py = Math.max(0, Math.min(H - 1, Math.round(Number(y) || 0)));
+  try {
+    if (type === 'down') await page.mouse.move(px, py), await page.mouse.down();
+    else if (type === 'move') await page.mouse.move(px, py, { steps: 2 });
+    else if (type === 'up') await page.mouse.up();
+    else return { ok: false, error: 'type 只能是 down/move/up' };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
 /** 切到「图像生成」并发送提示词。 */
 export async function livePrompt({ prompt }) {
   if (!page) return { ok: false, error: '没有活动会话' };

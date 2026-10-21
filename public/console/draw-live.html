@@ -30,7 +30,7 @@
   </div>
 </header>
 <div id="stage"><img id="shot" alt="browser"></div>
-<div id="msg">提示：点「启动会话」→ 输入提示词点「发送提示词」→ 如果弹出九宫格验证码，直接在画面上点对应的格子、再点「提交」→ 出图后点「抓图并发送」。</div>
+<div id="msg">提示：点「启动会话」→ 输入提示词点「发送提示词」→ 弹验证码时：<b>单击空格子可以选中</b>，也可以<b>按住图片拖到下方虚线框里</b>（拖拽已支持）→ 点画面里的「提交」→ 出图后点「抓图并发送」。</div>
 <script>
 (() => {
   const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('consoleToken') || '';
@@ -57,14 +57,45 @@
     } catch (e) { /* 忽略 */ } finally { pending = false; }
   }
 
-  $('shot').addEventListener('click', async (ev) => {
-    const img = ev.currentTarget;
+  // 指针事件：按下/移动/抬起全部转发到真实浏览器 —— 这样验证码的「拖拽」也能操作
+  const img = $('shot');
+  let dragging = false;
+  let lastSent = 0;
+  let lastPos = { x: 0, y: 0 };
+  const toPoint = (ev) => {
     const rect = img.getBoundingClientRect();
-    const x = Math.round((ev.clientX - rect.left) * (1280 / rect.width));
-    const y = Math.round((ev.clientY - rect.top) * (900 / rect.height));
-    await fetch(API + '/click', { method: 'POST', headers: h, body: JSON.stringify({ x, y }) });
-    setTimeout(shot, 250);
+    return {
+      x: Math.round((ev.clientX - rect.left) * (1280 / rect.width)),
+      y: Math.round((ev.clientY - rect.top) * (900 / rect.height))
+    };
+  };
+  const send = (type, p) => fetch(API + '/pointer', { method: 'POST', headers: h, body: JSON.stringify({ type, x: p.x, y: p.y }) }).catch(() => {});
+
+  img.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    img.setPointerCapture?.(ev.pointerId);
+    dragging = true;
+    lastPos = toPoint(ev);
+    send('down', lastPos);
   });
+  img.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    const now = Date.now();
+    if (now - lastSent < 60) return;   // 限流，别把接口打爆
+    lastSent = now;
+    lastPos = toPoint(ev);
+    send('move', lastPos);
+  });
+  const endDrag = (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    const p = toPoint(ev);
+    send('up', p);
+    setTimeout(shot, 300);             // 抬起后刷新一次画面
+  };
+  img.addEventListener('pointerup', endDrag);
+  img.addEventListener('pointercancel', endDrag);
+  img.addEventListener('pointerleave', endDrag);
 
   $('start').addEventListener('click', async () => {
     say('启动中…（首次约 5–10 秒）');
