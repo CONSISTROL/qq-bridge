@@ -1355,7 +1355,7 @@ defineTool(
   }
 );
 
-// ── 购物平台注册表：动态插件自助扩充 ──────────────────────────────────────
+// ── 购物平台注册表：技能自助扩充 ──────────────────────────────────────
 defineTool(
   'qq_shop_platform_add',
   '给购物插件加一个电商平台（群里提到新的平台、而插件里还没有时用）。'
@@ -1374,6 +1374,30 @@ defineTool(
       const d = await agentApi('/api/shop/platforms/add', { method: 'POST', body: JSON.stringify({ id, name, template, pkg, source: 'ai' }), headers: { 'x-agent-token': token }, timeoutMs: 30000 });
       return { content: [{ type: 'text', text: d.ok ? `已加入平台 ${d.platform?.name}（${d.platform?.id}），现在可以用 shopping 插件搜它了` : `没加成：${d.error || ''}` }] };
     } catch (error) { return { content: [{ type: 'text', text: `加平台失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+// ── 自主升级：从对话里发现问题，自己升级自己 ──────────────────────────────
+defineTool(
+  'qq_self_upgrade',
+  '从群聊里发现「我缺什么能力 / 我总答不好什么 / 有个规矩该记下来」时，给自己提一条升级：'
+    + 'kind=prompt-hint（提示词补充，**立即生效**，如「问到价格先说不确定再查」）；'
+    + 'kind=skill（要新增/改一个技能，进待批准，管理员批准后才装）；'
+    + 'kind=tune（参数微调建议，进待批准）。别滥用：只提真的反复出现、且能一句话说清的问题。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    kind: z.enum(['prompt-hint', 'skill', 'tune']).describe('升级类型'),
+    content: z.string().describe('一条具体的改进（prompt-hint 会直接进提示词，写短一点）'),
+    reason: z.string().optional().describe('为什么提这条（观察到什么）')
+  },
+  async ({ key, token, kind, content, reason }) => {
+    try {
+      const d = await agentApi('/api/self-upgrade/propose', {
+        method: 'POST', body: JSON.stringify({ kind, content, reason, key }), headers: { 'x-agent-token': token }, timeoutMs: 30000
+      });
+      return { content: [{ type: 'text', text: d.ok ? `${kind === 'prompt-hint' ? '已生效' : '已提交待批准'}：${d.item?.content}` : `没提成：${d.error || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `提升级失败：${error?.message ?? error}` }], isError: true }; }
   }
 );
 

@@ -1,3 +1,4 @@
+import { listUpgrades, proposeUpgrade, decideUpgrade, activePromptHints } from '../self-upgrade.js';
 // 控制台核心路由：首页/状态、角色、会话、白名单、安全、令牌、重启。
 //
 // 从 bridge.js 抽出的控制台路由。依赖由工厂函数注入：
@@ -501,7 +502,27 @@ export function createConsoleCoreRoutes(deps) {
       }
       return;
     }
-    // ── 购物平台注册表（动态插件可自助扩充）──────────────────────
+    // ── 自主升级（从对话里自己发现问题并升级）───────────────────
+    if (url.pathname === '/api/self-upgrade' || url.pathname.startsWith('/api/self-upgrade/')) {
+      const action = url.pathname === '/api/self-upgrade' ? '' : url.pathname.slice('/api/self-upgrade/'.length);
+      try {
+        if (req.method === 'GET') {
+          sendJson({ ok: true, items: listUpgrades({ stateDir: STATE_DIR, status: String(url.searchParams.get('status') ?? '') }), active: activePromptHints({ stateDir: STATE_DIR }) });
+          return;
+        }
+        const body = await readBody();
+        if (action === 'propose') {
+          const r = proposeUpgrade({ stateDir: STATE_DIR, kind: body.kind, content: body.content, reason: body.reason, key: body.key });
+          if (r.ok) log(`[self-upgrade] ${r.item.kind} ${r.item.status}：${String(r.item.content).slice(0, 60)}`);
+          sendJson(r, r.ok ? 200 : 400);
+          return;
+        }
+        if (action === 'decide') { sendJson(decideUpgrade({ stateDir: STATE_DIR, id: body.id, approve: body.approve !== false })); return; }
+        sendJson({ ok: false, error: '未知操作' }, 404);
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    // ── 购物平台注册表（技能可自助扩充）──────────────────────
     if (url.pathname === '/api/shop/platforms' || url.pathname === '/api/shop/platforms/add') {
       const file = path.join(STATE_DIR, 'shop-platforms.json');
       const readAll = () => {

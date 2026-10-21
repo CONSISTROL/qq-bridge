@@ -33,6 +33,7 @@ import { listPacks, createPack, addClip, removeClip, clipPath, removePack } from
 import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
 import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallForPrompt, decayMemories } from './memdb.js';
+import { activePromptHints } from './self-upgrade.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -9100,6 +9101,14 @@ const agentTokenOk = (key, token) => {
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
     const profileLine = buildMemoryRecallLine(key);
+    // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
+    let upgradeLine = '';
+    upgradeLine += '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
+      + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
+    try {
+      const hints = activePromptHints({ stateDir: STATE_DIR });
+      if (hints.length) upgradeLine = '【你自己总结的改进】' + hints.join('；') + '\n\n';
+    } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
@@ -9284,12 +9293,20 @@ const agentTokenOk = (key, token) => {
     // 让它知道「自己是谁」：自己的 QQ 号 + 想看自己头像时怎么查（缺能力就自己造插件，见 preset）。
     const selfId = botSelfIdCache.id || (cfg.snowluma?.selfId ? String(cfg.snowluma.selfId) : '') || '2840404638';
     const profileLine = buildMemoryRecallLine(key);
+    // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
+    let upgradeLine = '';
+    upgradeLine += '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
+      + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
+    try {
+      const hints = activePromptHints({ stateDir: STATE_DIR });
+      if (hints.length) upgradeLine = '【你自己总结的改进】' + hints.join('；') + '\n\n';
+    } catch { /* 忽略 */ }
     const selfLine = `【你自己】你的 QQ 号是 ${selfId}；别人问「你头像什么样/你长啥样」时，`
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialData?.wake?.preSleepWaitMs) || 300000);
-    return `${roleLine}${selfLine}${profileLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+    return `${roleLine}${selfLine}${profileLine}${upgradeLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
 
   /**
