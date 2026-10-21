@@ -45,7 +45,7 @@ export async function mount(root) {
     // 看起来就是"要手动刷新页面才变化"（线上真事）。
     if (clear) grid.textContent = '';
     if (!list.length) {
-      grid.innerHTML = '<div class="empty">没有符合条件的图片<br><b>换个来源或清空搜索</b>，也可以点「重扫」重新索引。</div>';
+      grid.innerHTML = '<div class="empty">没有符合条件的图片<br><b>换个来源或清空搜索</b><br>也可以点「重扫」重新索引。</div>';
     }
     for (const it of list) {
       const card = document.createElement('div');

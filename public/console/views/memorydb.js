@@ -45,7 +45,7 @@ export async function mount(root) {
   const render = () => {
     const box = $('#mdList', view);
     if (!box) return;
-    if (!state.items.length) { box.innerHTML = '<div class="empty">还没有条目<br><b>用上方输入框添加</b>，或等 AI 自主沉淀。</div>'; return; }
+    if (!state.items.length) { box.innerHTML = '<div class="empty">还没有条目<br><b>用上方输入框添加</b><br>或等 AI 自主沉淀。</div>'; return; }
     box.innerHTML = '';
     for (const it of state.items) {
       const row = document.createElement('div');

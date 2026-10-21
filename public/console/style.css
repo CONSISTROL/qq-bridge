@@ -480,19 +480,13 @@ details {
 details > summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 500; }
 details[open] > summary { margin-bottom: 8px; color: var(--text); }
 .form-row .ctl .hint { flex: 1 1 200px; }
-.inline-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.inline-field input[type="number"] { width: 72px; }
-.inline-field input[type="text"] { width: 96px; }
-.inline-field select { width: auto; min-width: 140px; }
+.field-pair { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.field-label { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pair-controls { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pair-controls input[type="number"] { width: 78px; }
+.pair-controls input[type="text"] { width: 92px; }
+.pair-controls select { width: auto; min-width: 150px; }
+.unit { color: var(--muted); font-size: 12px; }
 
 
 
@@ -567,7 +561,7 @@ button.dirty { border-color: var(--accent-border); box-shadow: 0 0 0 2px var(--a
 .icon-btn { width: 30px; height: 30px; padding: 0; }
 
 /* ── 表单控件 ─────────────────────────────────────────────────────────── */
-input[type="text"], input[type="number"], input[type="password"], input[type="search"],
+input:not([type]), input[type="text"], input[type="number"], input[type="password"], input[type="search"],
 input[type="url"], input[type="email"], textarea, select {
   width: 100%;
   min-height: 34px;
@@ -592,7 +586,7 @@ select {
   background-repeat: no-repeat;
 }
 input:hover, textarea:hover, select:hover { border-color: var(--faint); }
-input:focus, textarea:focus, select:focus {
+input:not([type]):focus, input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -626,6 +620,7 @@ label {
 label > input[type="checkbox"] { vertical-align: -2px; margin-right: 5px; }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; max-width: 820px; }
 .field > label { margin: 0; }
+.field + .field { margin-top: 8px; }
 .hint { color: var(--faint); font-size: 11.5px; line-height: 1.6; }
 
 /* 参数表单：左标签右控件，同一张卡片里输入框左边缘对齐 */
@@ -654,7 +649,7 @@ label > input[type="checkbox"] { vertical-align: -2px; margin-right: 5px; }
 }
 .form-row > .ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .form-row .ctl input[type="number"] { width: 96px; flex: 0 0 auto; }
-.form-row .ctl input[type="text"] { width: 240px; max-width: 100%; }
+.form-row .ctl input:not([type]), .form-row .ctl input[type="text"] { width: 240px; max-width: 100%; }
 .form-row .ctl select { width: auto; min-width: 150px; max-width: 100%; }
 .form-row .ctl textarea { width: 100%; min-height: 52px; }
 .form-row .ctl .tilde { color: var(--muted); }
@@ -844,6 +839,22 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.session-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 1.4fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.session-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.session-key { font-weight: 600; font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.session-sid { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-wrap.table-wide table { min-width: 560px; }
+
 /* ── 只读键值对 ───────────────────────────────────────────────────────── */
 .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 20px; }
 .kv > div { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; }
@@ -1023,8 +1034,8 @@ input[type="checkbox"].switch.saving { opacity: 0.55; cursor: progress; }
   top: 8px;
   left: 8px;
   z-index: 2;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   margin: 0;
   border-radius: 50%;
   border: 2px solid var(--on-image);
@@ -1038,8 +1049,8 @@ input[type="checkbox"].switch.saving { opacity: 0.55; cursor: progress; }
 .album-pick:checked { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .album-pick:checked::after {
   content: "";
-  width: 9px;
-  height: 5px;
+  width: 11px;
+  height: 6px;
   margin-top: -2px;
   border-left: 2px solid var(--on-accent);
   border-bottom: 2px solid var(--on-accent);
@@ -1361,7 +1372,7 @@ body.sheet-open { overflow: hidden; }
   .toolbar { padding: 8px 10px; }
   .toolbar.plain { padding: 0; }
   input.w-sm, input.w-md, input.w-lg, select.w-sm, select.w-md, select.w-lg { width: 100%; }
-  input[type="text"], input[type="number"], input[type="password"], input[type="search"],
+  input:not([type]), input[type="text"], input[type="number"], input[type="password"], input[type="search"],
   input[type="url"], input[type="email"], select { min-height: 42px; font-size: 16px; }
   textarea { font-size: 15px; min-height: 96px; }
   button, .btn { min-height: 42px; }
@@ -1372,9 +1383,14 @@ body.sheet-open { overflow: hidden; }
   .form-row > .ctl { gap: 6px; }
   .inline-field { white-space: normal; }
   .hint { font-size: 12px; }
-  input[type="checkbox"].switch { width: 44px; height: 26px; border-radius: 13px; }
-  input[type="checkbox"].switch::after { width: 20px; height: 20px; }
-  input[type="checkbox"].switch:checked::after { transform: translateX(18px); }
+  .section-head { flex-wrap: wrap; row-gap: 2px; }
+  .section-head > .meta, .section-head > .hint { flex: 1 1 100%; }
+  .card > h2 { flex-wrap: wrap; row-gap: 4px; }
+  .card > h2 > .meta { flex: 1 1 100%; }
+  input[type="checkbox"].switch { width: 48px; height: 28px; border-radius: 14px; }
+  input[type="checkbox"].switch::after { width: 22px; height: 22px; top: 2px; }
+  input[type="checkbox"].switch:checked::after { transform: translateX(20px); }
+  .v2-cap { min-height: 34px; }
   .inline-field input[type="number"], .inline-field input[type="text"] { width: 100%; min-width: 0; }
   .kv { grid-template-columns: 1fr; }
   .album-tabs, .tabs { width: 100%; flex-wrap: wrap; }
@@ -1389,9 +1405,34 @@ body.sheet-open { overflow: hidden; }
   .v2-modal .v2-cfg-row { grid-template-columns: 1fr; gap: 4px; }
   .sheet-grid { grid-template-columns: 1fr; }
   .toast-wrap { left: 12px; right: 12px; bottom: calc(82px + env(safe-area-inset-bottom)); max-width: none; }
+  .album-modal-head { flex-wrap: wrap; }
+  .album-modal-head > .row { flex: 1 1 100%; justify-content: flex-end; }
   .mem-row { grid-template-columns: 16px 1fr; }
+  .session-row { grid-template-columns: 1fr auto; }
+  .session-sid { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
   .mem-actions { grid-column: 2; justify-content: flex-start; }
   .table-wrap, .tool-log-table, .slang-scroll { -webkit-overflow-scrolling: touch; }
+  .tools-wrap { border: 0; overflow: visible; }
+  .tools-wrap .tools-table { min-width: 0; }
+  .tools-wrap thead { display: none; }
+  .tools-wrap, .tools-wrap tbody, .tools-wrap tr, .tools-wrap td { display: block; width: auto; }
+  .tools-wrap tr { margin-top: 8px; padding: 9px 11px; border: 1px solid var(--card-border); border-radius: var(--radius-md); background: var(--surface-2); }
+  .tools-wrap td { padding: 2px 0; border: 0; }
+  .tools-wrap td:first-child { white-space: normal; font-weight: 600; }
+  .table-wrap.table-wide { position: relative; }
+  .table-wrap.table-wide::before, .tool-log-table::before {
+    content: "左右滑动查看完整表格";
+    position: sticky;
+    left: 0;
+    top: 0;
+    display: block;
+    width: max-content;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--card-border);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 11px;
+  }
   .album-modal-body { grid-template-columns: 1fr; }
 }
 

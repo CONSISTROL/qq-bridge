@@ -59,7 +59,7 @@ export async function mount(root) {
     if (!box) return;
     const r = await api('api/ai-plugins/pending', 'GET').catch(() => null);
     const pending = Object.values((r && r.pending) || {});
-    if (!pending.length) { box.innerHTML = '<div class="empty">没有待批准的 AI 插件<br><b>AI 写的新插件会出现在这里</b>，等人工启用。</div>'; return; }
+    if (!pending.length) { box.innerHTML = '<div class="empty">没有待批准的 AI 插件<br><b>AI 写的新插件会出现在这里</b><br>等人工启用。</div>'; return; }
     box.innerHTML = '';
     for (const p of pending) {
       const card = document.createElement('div');

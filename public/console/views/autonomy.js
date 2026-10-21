@@ -28,7 +28,7 @@ export async function mount(root) {
     const goals = $('#auGoals', view);
     if (goals) {
       const list = data.goals || [];
-      goals.innerHTML = list.length ? '' : '<div class="empty">没有未完成的目标<br><b>在下方加一条</b>，或等它自己立目标。</div>';
+      goals.innerHTML = list.length ? '' : '<div class="empty">没有未完成的目标<br><b>在下方加一条</b><br>或等它自己立目标。</div>';
       for (const g of list) {
         const row = document.createElement('div');
         row.className = 'au-goal';

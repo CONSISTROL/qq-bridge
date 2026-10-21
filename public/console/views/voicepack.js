@@ -19,7 +19,7 @@ export async function mount(root) {
   const render = () => {
     const box = $('#vpList', view);
     if (!box) return;
-    box.innerHTML = packs.length ? '' : '<div class="empty">还没有语音包<br><b>先在上方建一个包</b>，再从 B站视频抽音频。</div>';
+    box.innerHTML = packs.length ? '' : '<div class="empty">还没有语音包<br><b>先在上方建一个包</b><br>再从 B站视频抽音频。</div>';
     for (const p of packs) {
       const card = document.createElement('div');
       card.className = 'vp-card';
@@ -74,8 +74,14 @@ export async function mount(root) {
 
   await load();
   const sel = $('#vpPackSel', view);
-  const fillSel = () => { if (!sel) return; sel.innerHTML = packs.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join(''); };
+  const fillSel = () => {
+    if (!sel) return;
+    sel.innerHTML = packs.length
+      ? packs.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')
+      : '<option value="">（还没有语音包）</option>';
+  };
   fillSel();
-  const obs = setInterval(() => { if (sel && sel.options.length !== packs.length) fillSel(); }, 1500);
+  const want = Math.max(1, packs.length);
+  const obs = setInterval(() => { if (sel && sel.options.length !== want) fillSel(); }, 1500);
   return () => clearInterval(obs);
 }

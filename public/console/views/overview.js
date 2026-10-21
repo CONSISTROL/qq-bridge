@@ -21,9 +21,8 @@ function renderStatus(view, s) {
 function renderPending(view, list) {
   const box = $('#pendingList', view);
   if (!box) return; // 片段里缺这块时不要让整个视图崩掉
-  if (!box) return; // 总览已移除「挂起审批」卡
   if (!list.length) { box.innerHTML = '<div class="empty">无挂起请求</div>'; return; }
-  let html = '<table><tr><th>会话</th><th>类型</th><th>详情</th></tr>';
+  let html = '<div class="table-wrap table-wide"><table><tr><th>会话</th><th>类型</th><th>详情</th></tr>';
   for (const x of list) {
     const kind = x.kind === 'approval' ? '<span class="pill r">审批</span>' : '<span class="pill b">提问</span>';
     let detail = '';
@@ -31,7 +30,7 @@ function renderPending(view, list) {
     else if (x.questions) detail = x.questions.map((q) => esc(q.question)).join(' / ');
     html += `<tr><td>${esc(x.key)}</td><td>${kind}</td><td>${detail}</td></tr>`;
   }
-  box.innerHTML = html + '</table>';
+  box.innerHTML = html + '</table></div>';
 }
 
 async function refreshSessions(view) {
@@ -39,16 +38,18 @@ async function refreshSessions(view) {
   if (!s) return;
   const box = $('#sessionList', view);
   if (!box) return;
-  if (!s.sessions.length) { box.innerHTML = '<div class="empty">暂无会话<br><b>收到 QQ 消息后这里会出现</b>。</div>'; return; }
-  let html = '<table><tr><th>QQ 会话</th><th>DSH 会话 ID</th><th>类型</th><th></th></tr>';
+  if (!s.sessions.length) { box.innerHTML = '<div class="empty">暂无会话<br><b>收到 QQ 消息后这里会出现</b></div>'; return; }
+  let html = '<div class="session-list">';
   for (const x of s.sessions) {
     const isPrivate = x.key.startsWith('private:');
     const type = isPrivate ? '<span class="pill b">私聊</span>' : '<span class="pill g">群</span>';
     const ownerTag = x.owner ? ' <span class="pill r">管理员</span>' : '';
-    html += `<tr><td>${esc(x.key)}${ownerTag}</td><td><code>${esc(x.sessionId)}</code></td><td>${type}</td>`
-      + `<td><button class="small" data-reset-key="${esc(x.key)}">清除上下文</button></td></tr>`;
+    const sid = typeof x.sessionId === 'string' ? x.sessionId : (x.sessionId?.sessionId || '');
+    html += `<div class="session-row"><div class="session-main"><span class="session-key">${esc(x.key)}</span>${type}${ownerTag}</div>`
+      + `<code class="session-sid" title="${esc(sid)}">${esc(sid || '—')}</code>`
+      + `<button class="small" data-reset-key="${esc(x.key)}">清除上下文</button></div>`;
   }
-  box.innerHTML = html + '</table>';
+  box.innerHTML = html + '</div>';
 }
 
 export async function mount(root) {

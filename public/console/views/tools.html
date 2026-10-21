@@ -1,9 +1,10 @@
 <section class="card span-all">
   <h2>DSH 侧 MCP 工具</h2>
   <div class="meta">由 qq-bridge 的 MCP server 提供给 DSH agent；修改后需重启 DSH 才会刷新工具 schema。</div>
-  <div class="table-wrap">
+  <div class="table-wrap tools-wrap">
     <table class="tools-table">
-      <tr><th>工具</th><th>说明</th></tr>
+      <thead><tr><th>工具</th><th>说明</th></tr></thead>
+      <tbody>
       <tr><td>qq_status</td><td>登录状态（只读）</td></tr>
       <tr><td>qq_list_groups</td><td>群列表（只返回白名单群）</td></tr>
       <tr><td>qq_get_group_members</td><td>群成员（只读，群号必须白名单）</td></tr>
@@ -13,6 +14,7 @@
       <tr><td>qq_send_private_message</td><td>发私聊；可选 <code>replyToMessageId</code> 引用/回复</td></tr>
       <tr><td>qq_slang_query</td><td>查询已确认黑话/梗/网络表达（只读）</td></tr>
       <tr><td>qq_slang_submit</td><td>AI 提交陌生词/黑话给管理员筛选</td></tr>
+      </tbody>
     </table>
   </div>
   <div class="meta mt-10">聊天模式工具：qq_get_prompt / qq_get_unread_messages / qq_get_recent_messages / qq_social_state / qq_send_burst / qq_send_message / qq_wait_for_messages / qq_set_wake_config / qq_mark_read / qq_memory_* / qq_slang_query / qq_slang_submit 等。</div>

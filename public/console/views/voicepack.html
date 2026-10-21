@@ -5,11 +5,16 @@
 </div>
 
 <div class="toolbar">
-  <select id="vpPackSel" class="w-md"></select>
+  <select id="vpPackSel" class="w-md" aria-label="目标语音包">
+    <option value="">（还没有语音包）</option>
+  </select>
   <input id="vpBvid" class="grow" placeholder="B站 bvid 或链接（BV1xx411c7mD）">
-  <input id="vpStart" type="number" value="0" min="0" placeholder="起始秒" class="w-sm">
-  <input id="vpDur" type="number" value="30" min="1" max="600" placeholder="时长秒" class="w-sm">
   <button id="vpAddBili" class="primary" type="button">从 B站抽音频</button>
+</div>
+
+<div class="toolbar">
+  <div class="field-pair"><span class="field-label">起始秒</span><div class="pair-controls"><input id="vpStart" type="number" value="0" min="0"></div></div>
+  <div class="field-pair"><span class="field-label">时长</span><div class="pair-controls"><input id="vpDur" type="number" value="30" min="1" max="600"><span class="unit">秒</span></div></div>
   <span id="vpMsg" class="msg"></span>
 </div>
 
