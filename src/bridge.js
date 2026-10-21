@@ -9156,6 +9156,16 @@ const agentTokenOk = (key, token) => {
       : '';
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
+    // 常驻活跃的会话：AI 反复 set_wake_config(mode=diving) 会被桥接改回 active（白做一次工具调用），
+    // 所以提前说明：想安静就直接不发言，不必调它。
+    const forceActiveCfg = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
+    const dayWin = Array.isArray(cfg.socialV2?.wake?.dayActiveHours) ? cfg.socialV2.wake.dayActiveHours : [8, 24];
+    const hourNow2 = new Date().getHours();
+    const inDayWin = dayWin.length === 2 && hourNow2 >= Number(dayWin[0]) && hourNow2 < Number(dayWin[1]);
+    const forcedActiveLine = (forceActiveCfg.includes(key) || inDayWin)
+      ? '【这个会话是常驻活跃】不许设成潜水：qq_set_wake_config 传 mode=diving 会被桥接立刻改回 active，纯属白调。想安静就直接不发言、不安排下一次唤醒；需要留意新消息时正常等消息即可。\n\n'
+      : '';
+
     const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages，判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
     // 这一条是拿真实事故换来的：模型写好了回复文本、以为已经发出去，转头去等待/潜水，
     // 结果 QQ 那边一个字都没收到（reserved2 的文本不自动转发）。每轮都注入，且不依赖 preset，
@@ -9241,7 +9251,7 @@ const agentTokenOk = (key, token) => {
       if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
       return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查日记（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
-    const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
