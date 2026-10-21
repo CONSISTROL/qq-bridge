@@ -4633,7 +4633,7 @@ async function main() {
             last[key] = Date.now();
             atomicWriteJson(stateFile, last);
             try {
-              const r = await fetch(j.url, { signal: AbortSignal.timeout(20000), headers: { 'user-agent': 'qq-bridge-plugin-job/1.0' } });
+              const r = await fetch(j.url, { signal: AbortSignal.timeout(20000), headers: { 'user-agent': '鱼群bot-plugin-job/1.0' } });
               const text = (await r.text()).slice(0, 20000);
               let hit = true;
               if (j.match) { try { hit = new RegExp(j.match).test(text); } catch { hit = false; } }
@@ -10228,7 +10228,7 @@ const agentTokenOk = (key, token) => {
         } else {
           const roleFile = path.join(ROOT, 'roles', name + '.md');
           if (!fs.existsSync(roleFile)) {
-            await sendToQQ(key, `角色「${name}」不存在。角色文件放 qq-bridge/roles/ 目录。`);
+            await sendToQQ(key, `角色「${name}」不存在。角色文件放 鱼群bot/roles/ 目录。`);
           } else {
             writeRoleState(name, roleState.mode);
             await sendToQQ(key, `已切换角色：${name}。`);

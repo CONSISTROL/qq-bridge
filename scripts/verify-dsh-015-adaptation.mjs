@@ -60,7 +60,7 @@ const snowlumaEntry = patchDoc.filter((e) => e?.insert).flatMap((e) => e.insert)
 check('mcp-snowluma 带 toolCallTimeoutMs=725000', snowlumaEntry?.config?.toolCallTimeoutMs === 725000);
 check('mcp 路径指向本仓库', mcpIds.every((id) => {
   const e = patchDoc.filter((x) => x?.insert).flatMap((x) => x.insert).find((y) => y.id === id);
-  return String(e?.config?.args?.[0] ?? '').includes('qq-bridge');
+  return String(e?.config?.args?.[0] ?? '').includes('鱼群bot');
 }));
 
 const pkg = JSON.parse(fs.readFileSync(path.join(DSH_HOME, 'profiles/web/package.json'), 'utf8'));

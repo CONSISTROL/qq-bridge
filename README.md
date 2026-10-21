@@ -112,7 +112,7 @@ node scripts/setup-dsh.mjs
 2. **装桥接并复制配置**
    ```bash
    git clone https://github.com/Derpyu520/qq-bridge.git
-   cd qq-bridge
+   cd 鱼群bot
    npm install
    ```
    Windows CMD 用 `copy config.example.json config.json`，其他平台用 `cp config.example.json config.json`。
@@ -218,7 +218,7 @@ npm run self-test
 ## 目录结构
 
 ```
-qq-bridge/
+鱼群bot/
   config.example.json   # 配置模板（脱敏占位符；真实 config.json 不入库）
   docs/
     PROJECT_GUIDE.md    # 公开版项目说明书

@@ -3,7 +3,7 @@
 ## 运行模式（鱼群bot四模式）
 
 模式由**桥接控制台**（默认 `http://127.0.0.1:3100`）顶部的模式按钮切换，也可直接改 DSH 设置的 `qq-mode` 命名空间；
-控制台会**同时**写穿到 DSH 设置与本地 `qq-bridge/state/mode.json`，两者保持一致。
+控制台会**同时**写穿到 DSH 设置与本地 `鱼群bot/state/mode.json`，两者保持一致。
 （DSH 设置页目前**没有** `qq-mode` 卡片：该插件只有 host 半，未实现浏览器半。详见 docs/DSH_SETUP.md。）
 桥接每 5 秒读取一次；控制台切换立即应用。会话持久化记录创建时的模式、preset 和管理员边界，权限变化时自动撤销旧会话映射和聊天模式 token，并在下次消息到达时重建，避免继续使用旧的高权限 preset。升级前没有这些权限元数据的旧会话也会重建一次，历史仍保留在 DSH。
 全新安装运行 `scripts/setup-dsh.mjs` 后，DSH 设置与本地兜底默认均为 `chat`；若已存在 `state/mode.json` 或 DSH 设置旧值，脚本不会覆盖。
@@ -116,16 +116,16 @@ agent 由此可以对**那台手机**执行命令，与本机工具是两套相�
 
 **途径 B：DSH WebUI**：
 - 在 GUI 会话里对我说「给 QQ 机器人设置角色：小鲸鱼」/「清除角色」/「开启静默模式」，我写 `state/current-role.json`
-- 或手动编辑 `qq-bridge/state/current-role.json`：
+- 或手动编辑 `鱼群bot/state/current-role.json`：
   ```json
   { "role": "小鲸鱼", "mode": "active" }   // active=正常, silent=静默
   ```
-- 角色文件放 `qq-bridge/roles/<角色名>.md`（格式见 `roles/README.md`）
+- 角色文件放 `鱼群bot/roles/<角色名>.md`（格式见 `roles/README.md`）
 
 ### 查看 QQ 活动
 
 - WebUI 里直接打开「QQ 聊天」工作区的会话，可完整查看每次交互（含工具调用）
-- 桥接还会把每次收发写入 `qq-bridge/state/qq-activity.log`（最近 500 行），GUI 会话的 agent 可读取汇报
+- 桥接还会把每次收发写入 `鱼群bot/state/qq-activity.log`（最近 500 行），GUI 会话的 agent 可读取汇报
 
 ### 在 WebUI 与 QQ 机器人对话
 

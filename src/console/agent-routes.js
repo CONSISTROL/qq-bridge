@@ -1721,7 +1721,7 @@ export function createAgentRoutes(deps) {
           const resp = await fetch(tool.url, {
             method: tool.method,
             headers: {
-              'user-agent': 'qq-bridge-plugin/1.0',
+              'user-agent': '鱼群bot-plugin/1.0',
               ...(tool.method === 'POST' ? { 'content-type': 'application/json' } : {}),
               ...(tool.body ? {} : {}),
             },

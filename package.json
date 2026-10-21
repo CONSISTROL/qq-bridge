@@ -1,8 +1,8 @@
 {
-  "name": "qq-bridge",
+  "name": "yuqun-bot",
   "version": "0.1.5",
   "private": true,
-  "description": "Bridge between SnowLuma (OneBot v11 / QQ) and DeepSeek Harness Web API: QQ messages become DSH agent prompts, agent replies go back to QQ. Targets the DSH Cookie-auth / slash-RPC / remote.mux protocol generation, so it deliberately names no DSH version here.",
+  "description": "鱼群bot：把 DSH 接进 QQ 群/私聊的桥接（原 qq-bridge）",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"

@@ -1,5 +1,5 @@
 [Unit]
-Description=MC 状态同步（笔记本 → 服务器镜像，供 qq-bridge 读取）
+Description=MC 状态同步（笔记本 → 服务器镜像，供 鱼群bot 读取）
 Documentation=file:/home/wx/mc/README.md
 After=network-online.target wg-quick@wg0.service
 Wants=network-online.target

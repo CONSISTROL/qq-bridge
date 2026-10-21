@@ -2,11 +2,11 @@
  * Minecraft 控制模块 —— 让 QQ 里的 AI 能开关「推流 / AI 游玩 / 服务端」。
  *
  * 架构（重要）：
- *   qq-bridge 跑在**云端服务器**，而 MC 全套服务在 **tzd（10.8.0.2）**。
+ *   鱼群bot 跑在**云端服务器**，而 MC 全套服务在 **tzd（10.8.0.2）**。
  *   所以本模块通过 SSH 调用 tzd 上的 systemctl，而不是本地 systemctl。
  *   免密通道：云端 /root/.ssh/id_ed25519 → tzd 的 authorized_keys（已装好）。
  *
- * 为什么不让 qq-bridge 在本地直接 systemctl：
+ * 为什么不让 鱼群bot 在本地直接 systemctl：
  *   它和 MC 不在同一台机器上。这是最容易搞错的一点。
  *
  * 设计原则：

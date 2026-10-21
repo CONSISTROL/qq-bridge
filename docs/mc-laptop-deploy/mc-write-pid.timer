@@ -1,5 +1,5 @@
 [Unit]
-Description=刷新 MC 服务端 PID 文件（供 qq-bridge 判断服务端存活）
+Description=刷新 MC 服务端 PID 文件（供 鱼群bot 判断服务端存活）
 
 [Timer]
 OnBootSec=20s

@@ -69,7 +69,7 @@ cat > /usr/local/bin/mc-proxy-warmup.sh <<'WSH'
 #!/usr/bin/env bash
 # 1) 自己连一下 25565/3200，触发 systemd-socket-proxyd 把转发进程拉起来并常驻
 # 2) 把该进程 PID 写进 /home/wx/mc/server/logs/server.pid
-#    —— qq-bridge 用 pidAlive(server.pid) 判断"MC 服务端在运行"，
+#    —— 鱼群bot 用 pidAlive(server.pid) 判断"MC 服务端在运行"，
 #       而真正的 java 在笔记本上、PID 在服务器无意义，这里用"端口桥活着"代表服务端可达。
 set -u
 for port in 25565 3200; do

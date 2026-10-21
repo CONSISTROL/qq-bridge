@@ -1,4 +1,4 @@
-# QQ ↔ DeepSeek Harness Bridge (qq-bridge)
+# QQ ↔ DeepSeek Harness Bridge (鱼群bot)
 
 > Connect QQ messages to DeepSeek Harness (DSH) agents: QQ friends/groups become DSH conversations, and agent replies (including questions and tool approvals) are sent back to QQ.
 
@@ -11,7 +11,7 @@ For the detailed Chinese guide, see **[docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE
 ## Architecture
 
 ```
-QQ messages ──► SnowLuma (OneBot v11 WS) ──► qq-bridge ──► DSH Web API (127.0.0.1:3080/api)
+QQ messages ──► SnowLuma (OneBot v11 WS) ──► 鱼群bot ──► DSH Web API (127.0.0.1:3080/api)
                                                     ▲                      │
                                                     └── agent replies / questions / approvals ┘
 ```
@@ -103,7 +103,7 @@ Then restart DSH. See [docs/DSH_SETUP.md](docs/DSH_SETUP.md) for details.
 ## Repository Layout
 
 ```
-qq-bridge/
+鱼群bot/
   config.example.json   # sanitized config template (real config.json is not in repo)
   docs/
     PROJECT_GUIDE.md    # detailed Chinese guide

@@ -1,7 +1,7 @@
-# qq-bridge 架构审查与修复报告
+# 鱼群bot 架构审查与修复报告
 
 日期：2026-09-18  
-审查对象：`D:\LWQ\Agent Workspace\DSH\qq-bridge`  
+审查对象：`D:\LWQ\Agent Workspace\DSH\鱼群bot`  
 基线：`3c54e6b`，项目版本 `0.1.5`，审查开始时 Git 工作区干净。  
 验证环境：Windows，Node.js `v22.23.2`。协议形状另外对照本机 DSH 安装中的 API 类型与实现；未向实际 DSH 提交任务。
 
@@ -220,4 +220,4 @@ npm run test:audit
 
 上述 28 个文件随后作为一个提交发布到公开仓库。发布前的独立复核对照本机 DSH 源码逐条核对了 B1–B6 / D1–D5，确认两项 P1 声明（B1 权限继承、B2 fail-closed）在真实代码中成立、改动行没有引入权限缺口或 fail-open 路径；同时发现并修复了 §3.5 的重置路径问题（B7/B8），并追加了对应的回归场景。核对数据：`npm run test:audit` **10/10**；`verify-dsh-015-adaptation` 37 通过 / 8 失败，8 项全部是 §5 所述的 `spawnSync … EPERM` 管道环境限制；68 个 JS/MJS 文件 `node --check` 全部通过。
 
-修改前的源文件备份与清单：`D:\LWQ\Agent Workspace\Codex\qq-bridge-audit-backup-20260918`。其中 `manifest.json` 记录哪些文件原先存在及修改前哈希；恢复时应只还原列出的源文件，并单独处理本轮新增文件，避免覆盖运行状态。
+修改前的源文件备份与清单：`D:\LWQ\Agent Workspace\Codex\鱼群bot-audit-backup-20260918`。其中 `manifest.json` 记录哪些文件原先存在及修改前哈希；恢复时应只还原列出的源文件，并单独处理本轮新增文件，避免覆盖运行状态。

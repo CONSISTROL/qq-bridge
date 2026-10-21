@@ -1,6 +1,6 @@
 # DSH 端安装说明（本机或另一台设备）
 
-`qq-bridge` 仓库本身包含桥接、控制台和插件，但 **DSH 端的两个聊天模式（`qq-chat` / `qq-chat`）以及 MCP 挂载** 不在仓库根目录，需要通过本说明安装到目标设备的 DSH 环境中。
+`鱼群bot` 仓库本身包含桥接、控制台和插件，但 **DSH 端的两个聊天模式（`qq-chat` / `qq-chat`）以及 MCP 挂载** 不在仓库根目录，需要通过本说明安装到目标设备的 DSH 环境中。
 
 ## 安装步骤
 
@@ -10,7 +10,7 @@
 
    ```bash
    git clone https://github.com/Derpyu520/qq-bridge.git
-   cd qq-bridge
+   cd 鱼群bot
    ```
 
    > 默认分支 `main` 即当前版本 **v0.1.5**（在 DSH 0.1.5-rc.1 上逐项实测；DSH 0.2 起 preset 改为插件行声明，脚本会自动识别并适配），clone 下来无需切换分支。
@@ -54,7 +54,7 @@
    脚本会完成：
 
    - 安装 agent preset：`qq-chat`、`qq-chat`
-     - **DSH 0.2+**：声明成 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里的 `@deepseek-ai/dsh-agent-preset` 插件行（0.2 的 `dsh-agent-preset-registry` 不再扫描 `.agent-presets/` 目录），组成直接由 `dsh/agent-presets/<id>/agent.cordis.yml` 生成，`./` 引用的插件（`qq-tool-restrict.mjs`）复制到 `~/.dsh/profiles/<profile>/qq-bridge-presets/<id>/`，并在该目录写入一个带 **非空 name + version** 的 `package.json`
+     - **DSH 0.2+**：声明成 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里的 `@deepseek-ai/dsh-agent-preset` 插件行（0.2 的 `dsh-agent-preset-registry` 不再扫描 `.agent-presets/` 目录），组成直接由 `dsh/agent-presets/<id>/agent.cordis.yml` 生成，`./` 引用的插件（`qq-tool-restrict.mjs`）复制到 `~/.dsh/profiles/<profile>/鱼群bot-presets/<id>/`，并在该目录写入一个带 **非空 name + version** 的 `package.json`
        > 这个 `package.json` 不是可有可无：DSH 0.2 的 `dsh_plugin_packages` 请求扩展会给每个生效插件向上找「最近的 package.json」推导包身份，只要有 name 就必须有 version，否则整轮请求以 `DeepSeek request extension preparation failed`（`REQUEST_EXTENSION`）失败——症状是机器人每条都回这句错。缺了它就会向上找到 profile 自己的 `package.json`（只有 name、没有 version）。
      - **DSH 0.1.x**：复制到 `~/.dsh/.agent-presets/qq-chat`、`~/.dsh/.agent-presets/qq-chat`
      - 两种方式都由脚本自动判定，也可用 `QQ_BRIDGE_DSH_PRESET_FORMAT=auto|modern|legacy` 强制
@@ -72,8 +72,8 @@
    > 脚本在写入前验证 YAML；无法解析时停止，不覆盖配置或 preset。只修复历史版本在文件开头遗留的多余 `[]`，不会删除正文中的空数组或文本。
    > YAML 格式与注释会在序列化时规范化；首次修改前的完整原文保存在同目录 `cordis.patch.yml.qq-bridge.bak`，后续运行不覆盖该备份。
    > 可用 `node scripts/test-audit-setup.mjs` 验证幂等性、配置保留、路径边界和 Windows CLI 调用；测试只使用独立的临时仓库和 DSH_HOME，不启动真实 DSH。
-   > 已存在的 `qq-bridge/state/mode.json` 会被保留（不覆盖用户设置）；全新安装才会写入 `mode: chat`。
-   > 如果之后把 `qq-bridge` 目录移动/重新 clone 到别的路径，请重新运行一次本脚本，否则 DSH 里的 MCP/插件绝对路径会指向旧位置。
+   > 已存在的 `鱼群bot/state/mode.json` 会被保留（不覆盖用户设置）；全新安装才会写入 `mode: chat`。
+   > 如果之后把 `鱼群bot` 目录移动/重新 clone 到别的路径，请重新运行一次本脚本，否则 DSH 里的 MCP/插件绝对路径会指向旧位置。
    > 也可用环境变量指定 DSH 根目录：`DSH_HOME=/path/to/.dsh node scripts/setup-dsh.mjs <profile>`。
    > `<profile>` 必须是单个目录名，不能包含路径分隔符或 `..` 路径跳转。离线准备配置时，可设置 `QQ_BRIDGE_SKIP_DSH_INSTALL=1` 跳过自动安装 bundle，随后手动运行 `dsh plugin --profile <profile> install`。
    > Windows 下脚本通过隐藏的 `cmd.exe` 调用 npm 的 `dsh.cmd` 启动器；`DSH_HOME` 和 profile 参数会传给该进程。

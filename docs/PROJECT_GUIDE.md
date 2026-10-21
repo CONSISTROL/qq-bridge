@@ -1,4 +1,4 @@
-# DSH 鱼群bot（qq-bridge）项目说明书
+# DSH 鱼群bot（鱼群bot）项目说明书
 
 > 让 DeepSeek Harness（DSH）的 agent 以“仿真群友”身份接入 QQ 群/私聊。
 > 本文是面向公开仓库的精简版说明；本地开发历史、个人配置与运行状态不会包含在仓库中。
@@ -7,7 +7,7 @@
 
 ## 1. 项目是什么
 
-`qq-bridge` 是一个独立的 Node.js 进程，做三件事：
+`鱼群bot` 是一个独立的 Node.js 进程，做三件事：
 
 1. **连接 QQ**：通过 SnowLuma（OneBot v11 WebSocket）收发 QQ 群/私聊消息。
 2. **连接 DSH**：通过 DSH Web API（默认 `127.0.0.1:3080`）创建会话、投递 prompt、接收事件流。
@@ -21,7 +21,7 @@
 
 ```
 ┌─────────────┐   OneBot WS   ┌──────────────────────┐   HTTP/WS   ┌──────────────────┐
-│  SnowLuma   │◄─────────────►│      qq-bridge       │◄───────────►│   DSH Harness    │
+│  SnowLuma   │◄─────────────►│      鱼群bot       │◄───────────►│   DSH Harness    │
 │  (QQ 网关)  │               │   src/bridge.js      │             │  (agent 会话)    │
 └─────────────┘               │   src/dsh-client.js  │             └──────────────────┘
                               │   src/mcp-*.js       │
@@ -52,7 +52,7 @@
 ## 3. 目录结构（公开仓库）
 
 ```
-qq-bridge/
+鱼群bot/
 ├── src/
 │   ├── bridge.js               # 主程序（核心）
 │   ├── dsh-client.js           # DSH API 客户端
@@ -663,7 +663,7 @@ restart.bat
 
 ### Q：MCP 工具改了不生效？
 
-- MCP 由 DSH 拉起，修改 `src/mcp-*.js` 后需要**重启 DSH 进程本身**（不是只重启 qq-bridge），或让 DSH 重连 MCP。
+- MCP 由 DSH 拉起，修改 `src/mcp-*.js` 后需要**重启 DSH 进程本身**（不是只重启 鱼群bot），或让 DSH 重连 MCP。
 - 修改 DSH preset 或 `cordis.patch.yml` 后，同样需要重启 DSH。
 
 ### Q：黑话提取/联网研究没生效？

@@ -14,7 +14,7 @@ Group=wx
 WorkingDirectory=/home/wx/mc/stream
 ExecStart=/home/wx/mc/stream/mc-stream-launch.sh
 
-# 写 stream.pid：qq-bridge 的推流视图靠它判断"推流在跑"（ExecStartPost 里的 $MAINPID 即渲染进程）
+# 写 stream.pid：鱼群bot 的推流视图靠它判断"推流在跑"（ExecStartPost 里的 $MAINPID 即渲染进程）
 ExecStartPost=/bin/bash -c 'echo $MAINPID > /home/wx/mc/stream/stream.pid'
 ExecStopPost=/bin/bash -c 'rm -f /home/wx/mc/stream/stream.pid'
 

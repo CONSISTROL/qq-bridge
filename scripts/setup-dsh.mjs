@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// setup-dsh.mjs — 在目标设备上安装 qq-bridge 的 DSH 端配置
+// setup-dsh.mjs — 在目标设备上安装 鱼群bot 的 DSH 端配置
 //
 // 功能：
 //   1. 安装 agent preset：qq-chat（旧的两套已合并，qq-chat 不再需要）

@@ -174,7 +174,7 @@ server.tool(
       try {
         if (!(await renderToolAvailable())) {
           return {
-            content: [{ type: 'text', text: '无头浏览器不可用：未安装 puppeteer / Chromium。请在 qq-bridge 目录执行 `npm install`（puppeteer 在 optionalDependencies，含约 150MB Chromium），或改用 web_search / 请对方截图。' }],
+            content: [{ type: 'text', text: '无头浏览器不可用：未安装 puppeteer / Chromium。请在 鱼群bot 目录执行 `npm install`（puppeteer 在 optionalDependencies，含约 150MB Chromium），或改用 web_search / 请对方截图。' }],
             isError: true,
           };
         }

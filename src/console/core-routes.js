@@ -96,7 +96,7 @@ export function createConsoleCoreRoutes(deps) {
         // 控制台外壳：导航 + 视图容器，具体分区在 public/console/views/*.html
         res.end(fs.readFileSync(path.join(ROOT, 'public', 'console', 'index.html'), 'utf8'));
       } catch {
-        res.end('控制台页面缺失：qq-bridge/public/console/index.html');
+        res.end('控制台页面缺失：鱼群bot/public/console/index.html');
       }
       return;
     }
@@ -763,7 +763,7 @@ export function createConsoleCoreRoutes(deps) {
       let stoppedCount = 0;
       try {
         // 新版 DSH 不再提供 workspace.list；改为扫描本桥接创建的会话目录并归档。
-        // 只处理 cwd 位于 qq-bridge state/ 下的根会话；子代理会话由父会话管理，不能误归档。
+        // 只处理 cwd 位于 鱼群bot state/ 下的根会话；子代理会话由父会话管理，不能误归档。
         const list = unwrap(await api.sessions.list({}), 'session.list');
         const stateDir = path.resolve(STATE_DIR);
         const statePrefix = path.normalize(stateDir + path.sep);
