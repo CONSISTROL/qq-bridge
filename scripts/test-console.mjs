@@ -54,7 +54,6 @@ const VIEWS = [
   ['voicepack', ['vpList', 'vpCreate']],
   ['tools', ['DSH 侧 MCP 工具', '后台控制端引导']],
   ['security', ['白名单 / 管理员', '安全拦截通知', '控制台访问令牌']],
-  ['ops', ['测试发送', '桥接控制']],
   ['capabilities', ['capList', 'capAllOn']],
   ['plugins', ['plgPending', 'plgList']],
   ['mc', ['B站直播', '整机控制']],

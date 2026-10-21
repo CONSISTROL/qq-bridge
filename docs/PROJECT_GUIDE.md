@@ -1328,7 +1328,7 @@ Chromium 带 `--proxy-server` 指向 `src/safe-proxy.js` 起的本地过滤代�
 3. 看门狗仍是最后兜底；回归用例见 `test-audit-bridge.mjs`
    的「stale turn marker is detected as stuck busy and cleared」。
 
-> 运维提示：如果只是想让某个会话立刻醒过来，控制台可用 `POST /api/socialV2/wake {key, reason}`；
+> 提示：如果只是想让某个会话立刻醒过来，控制台可用 `POST /api/socialV2/wake {key, reason}`；
 > 把桥接重启一次也能清掉全部内存忙标记（代价是内存里还没投递的 `pendingWakeReasons` 会丢，
 > 但未读消息是持久化的，AI 醒来看未读照样能接上）。
 

@@ -1,6 +1,6 @@
 // 总览：01 运行模式 + 02 会话映射 + 03 挂起审批 + 04 活动日志
 import { api } from '../core/api.js';
-import { $, esc, toast, delegate, confirmDanger } from '../core/dom.js';
+import { $, esc, toast, delegate, confirmDanger, setMsg } from '../core/dom.js';
 import { every } from '../core/poll.js';
 import { mountFragment } from '../core/fragments.js';
 import { getStatus, getPending, refreshStatus } from '../core/status.js';
@@ -54,6 +54,13 @@ async function refreshSessions(view) {
 
 export async function mount(root) {
   const view = await mountFragment(root, 'overview');
+
+  // 重启桥接（按钮从已删除的「运维」页搬到这里）
+  delegate(view, 'click', '#restartBtn', async () => {
+    if (!confirmDanger('确定重启桥接？\n\n守护模式下退出后 5 秒自动拉起；重启期间群消息会排队。')) return;
+    const r = await api('/api/restart', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    setMsg($('#restartMsg', view), r.message || r.error || '正在重启…', r.ok !== false);
+  });
 
   const onStatus = (ev) => renderStatus(view, ev.detail);
   const onPending = (ev) => renderPending(view, ev.detail || []);

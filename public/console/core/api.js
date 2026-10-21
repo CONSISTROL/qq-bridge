@@ -71,7 +71,7 @@ function mountPrefix() {
 //   `'/api/restart'` →（反代改写）`'<前缀>/api/restart'` →（这里去 / 相对解析）
 //   `<前缀><前缀>/api/restart` → {"ok":false,"error":"not found"}
 // 实测表现：控制台页面本身正常（HTML/JS 都是单前缀），但每个 /api 调用都 404，
-// 「运维 → 重启桥接」只会提示 not found，且 nginx 日志里是一条双前缀的 404。
+// 「总览 → 重启」只会提示 not found，且 nginx 日志里是一条双前缀的 404。
 // 所以先判断「是不是已经带着当前挂载前缀」，是就原样用（它本身就是站点根下的绝对地址）
 // —— 前提是路径不带兜底前缀时，两种反代行为（改写 / 不改写）都能落到 `<前缀>/api/...`。
 export function relativeUrl(path) {
