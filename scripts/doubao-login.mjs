@@ -10,6 +10,10 @@ const PROFILE = path.join(STATE, 'chrome-profile');
 const QR = path.join(STATE, 'doubao-qr.png');
 const DONE = path.join(STATE, 'doubao-login-state.json');
 fs.mkdirSync(STATE, { recursive: true });
+// Chrome 的持久 profile 被上次异常退出留下锁时会直接挂住，先清掉
+for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+  try { fs.rmSync(path.join(PROFILE, f), { force: true }); } catch { /* 忽略 */ }
+}
 
 const browser = await puppeteer.launch({
   headless: false,
@@ -23,12 +27,11 @@ await new Promise((r) => setTimeout(r, 3500));
 
 // 已登录？页面右上角没有「登录」按钮
 const loggedIn = async () => {
+  // 唯一可靠判据：出现登录态 cookie（扫码成功后豆包会种 sessionid 一族）
   const cookies = await page.cookies().catch(() => []);
-  if (cookies.some((c) => /sessionid/i.test(c.name) && String(c.value || '').length > 8)) return true;
-  // 关键判据：页面右上角还有没有「登录」按钮（前面踩过：用全页文本判断会误判成已登录）
-  const hasLoginBtn = await page.evaluate(() => [...document.querySelectorAll('button,div,a,span')]
-    .some((el) => (el.innerText || '').trim() === '登录' && el.getBoundingClientRect().width > 0)).catch(() => true);
-  return !hasLoginBtn;
+  const hit = cookies.some((c) => /^(sessionid|sessionid_ss|sid_guard|sid_tt|uid_tt)/i.test(c.name) && String(c.value || '').length > 8);
+  if (hit) return true;
+  return false;
 };
 if (await loggedIn()) {
   fs.writeFileSync(DONE, JSON.stringify({ ok: true, at: Date.now(), note: '已经登录过了' }));
