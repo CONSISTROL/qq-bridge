@@ -7,6 +7,7 @@
 // 用法：node src/bridge.js （先编辑 ../config.json）
 import fs from 'node:fs';
 import http from 'node:http';
+import * as wsLib from 'ws';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -4952,6 +4953,17 @@ const agentTokenOk = (key, token) => {
       const suppliedTokens = [url.searchParams.get('token'), req.headers['x-console-token'], cookieToken]
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter(Boolean);
+      // 远程桌面（noVNC）：把 /vnc/* 反代到本机 websockify(6082)，主人可直接操作浏览器
+      if (url.pathname === '/vnc' || url.pathname.startsWith('/vnc/')) {
+        const target = 'http://127.0.0.1:6082' + (url.pathname.replace(/^\/vnc/, '') || '/') + (url.search || '');
+        try {
+          const r = await fetch(target, { headers: { 'accept-encoding': 'identity' } });
+          const buf = Buffer.from(await r.arrayBuffer());
+          res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'no-store' });
+          res.end(buf);
+        } catch (error) { sendJson({ ok: false, error: `noVNC 代理失败：${error?.message ?? error}` }, 502); }
+        return;
+      }
       // 公开页面：AI 生成的 Web 应用（/apps/<slug>）不需要令牌，它们的用途就是"发个链接让大家都能看"。
       // 安全性靠：slug 不可猜 + 页面是静态 HTML（不放桥接内部数据），并且只读。
       if (url.pathname === '/apps' || url.pathname.startsWith('/apps/')) {
@@ -5102,6 +5114,28 @@ const agentTokenOk = (key, token) => {
         sendJson({ ok: false, error: error?.message ?? String(error) }, status);
       }
     });
+    // noVNC WebSocket 中转：/vnc/* → 本机 websockify(6082)（主人用真键鼠操作浏览器）
+    server.on('upgrade', (req, socket, head) => {
+      try {
+        if (!String(req.url || '').startsWith('/vnc/')) { socket.destroy(); return; }
+        const wss = new wsLib.WebSocketServer({ noServer: true });
+        wss.handleUpgrade(req, socket, head, (client) => {
+          const upstream = new wsLib.WebSocket('ws://127.0.0.1:6082/websockify');
+          const pending = [];
+          upstream.on('open', () => { for (const m of pending) upstream.send(m); pending.length = 0; });
+          client.on('message', (data, isBinary) => {
+            if (upstream.readyState === 1) upstream.send(data, { binary: isBinary }); else pending.push(data);
+          });
+          upstream.on('message', (data, isBinary) => {
+            if (client.readyState === 1) client.send(data, { binary: isBinary });
+          });
+          const close = () => { try { client.close(); } catch { /* 忽略 */ } try { upstream.close(); } catch { /* 忽略 */ } };
+          client.on('close', close); upstream.on('close', close);
+          client.on('error', close); upstream.on('error', close);
+        });
+      } catch { socket.destroy(); }
+    });
+
     server.listen(port, '127.0.0.1', () => {
       log(`本地控制台已启动：http://127.0.0.1:${port}`);
       // 预热本地 embedding：模型加载约 200ms，放在启动阶段，别让第一条群消息承担。
