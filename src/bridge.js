@@ -4958,6 +4958,12 @@ const agentTokenOk = (key, token) => {
         const target = 'http://127.0.0.1:6082' + (url.pathname.replace(/^\/vnc/, '') || '/') + (url.search || '');
         try {
           const r = await fetch(target, { headers: { 'accept-encoding': 'identity' } });
+          if (r.status === 404 && /\/package\.json$/.test(url.pathname)) {
+            // noVNC 会探 package.json 拿版本号，取不到只是控制台噪音；给个空对象消掉 404
+            res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+            res.end('{"name":"novnc","version":"0.0.0"}');
+            return;
+          }
           const buf = Buffer.from(await r.arrayBuffer());
           res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'no-store' });
           res.end(buf);
