@@ -17,10 +17,19 @@
       <div class="note mt-12">插件与能力开关已拆成独立页面：<a class="link-chip" href="#/capabilities">插件</a>（拨动即时生效，不用在这里改）。</div>
       <div class="meta mt-8">黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在「记忆库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 
-      <div class="form-row pairs"><label>睡眠时段（起 ~ 止，小时）</label><div class="ctl">
-        <input type="number" id="sleepStart" min="0" max="23" class="w-xs"> ~ <input type="number" id="sleepEnd" min="0" max="23" class="w-xs">
-        <span class="meta">睡眠时段：群里只有被 @ / 叫名字才回，也不主动冒泡</span>
-      </div></div>
+      <div class="form-row">
+        <label for="sleepStart">睡眠时段</label>
+        <div class="ctl sleep-ctl">
+          <div class="sleep-range" role="group" aria-label="睡眠时段（小时）">
+            <span class="sleep-cap">从</span>
+            <input type="number" id="sleepStart" min="0" max="23" value="1" aria-label="睡眠开始时间（0–23 点）">
+            <span class="sleep-cap">点到</span>
+            <input type="number" id="sleepEnd" min="0" max="23" value="8" aria-label="睡眠结束时间（0–23 点）">
+            <span class="sleep-cap">点</span>
+          </div>
+          <span class="hint">群里只有被 @ / 叫名字才回，也不主动冒泡；私聊不受限制。</span>
+        </div>
+      </div>
 
       <h3 class="section-head">唤醒推荐值 <span class="meta">仅参考，AI 可不遵守</span></h3>
       <div class="form-grid">
@@ -30,7 +39,7 @@
       <div class="form-row pairs"><label>推荐 @ 唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecAt"></div><label>推荐名字唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecName"></div></div>
       <div class="form-row pairs"><label>推荐提问唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecQuestion"></div><label>推荐拍一拍唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecPoke"></div></div>
       <div class="form-grid">
-        <div class="form-row"><label>唤醒推荐提示（给 AI 看的文字，已无潜水概念）</label><div class="ctl"><textarea id="v2WakeHint" rows="2" placeholder="例如：如果你在潜水，推荐 5~120 分钟、普通消息概率 0.05…"></textarea></div></div>
+        <div class="form-row span-all"><label>唤醒推荐提示</label><div class="ctl"><textarea id="v2WakeHint" rows="2" placeholder="例如：如果你在潜水，推荐 5~120 分钟、普通消息概率 0.05…"></textarea></div></div>
       </div>
 
       <h3 class="section-head">唤醒硬限制</h3>
@@ -52,17 +61,15 @@
         <div class="form-row"><label>单条最大字符</label><div class="ctl"><input type="number" id="v2MaxMsgChars" min="1"></div></div>
       </div>
       <div class="form-row pairs"><label>最大条间隔（毫秒，防止过长）</label><div class="ctl"><input type="number" id="v2MaxGapMs" min="100"></div><label>按字数基础间隔（毫秒）</label><div class="ctl"><input type="number" id="v2GapBaseMs" min="0"></div></div>
-      <div class="form-grid">
-        <div class="form-row"><label>每字追加（毫秒）</label><div class="ctl"><input type="number" id="v2GapPerCharMs" min="0"></div></div>
-        <div class="form-row"><label>发送推荐提示（给 AI 看的文字）</label><div class="ctl"><textarea id="v2SendHint" rows="2" placeholder="例如：普通闲聊建议一次 1~3 条，条间 1~3 秒…"></textarea></div></div>
-      </div>
+      <div class="form-row"><label>每字追加（毫秒）</label><div class="ctl"><input type="number" id="v2GapPerCharMs" min="0"></div></div>
+      <div class="form-row"><label>发送推荐提示（给 AI 看的文字）</label><div class="ctl"><textarea id="v2SendHint" rows="2" placeholder="例如：普通闲聊建议一次 1~3 条，条间 1~3 秒…"></textarea></div></div>
 
       <h3 class="section-head">等待工具参数 <span class="meta">qq_wait_for_messages</span></h3>
       <div class="form-row pairs"><label>默认等待（毫秒）</label><div class="ctl"><input type="number" id="v2WaitDefaultMs" min="100"></div><label>最小等待（毫秒）</label><div class="ctl"><input type="number" id="v2WaitMinMs" min="100"></div></div>
       <div class="form-grid">
         <div class="form-row"><label>最大等待（毫秒）</label><div class="ctl"><input type="number" id="v2WaitMaxMs" min="100"></div></div>
       </div>
-      <div class="form-row pairs"><label>默认静默窗口（毫秒）</label><div class="ctl"><input type="number" id="v2WaitDefaultQuietMs" min="0"></div><label>收到新消息后最小静默（毫秒）</label><div class="ctl"><input type="number" id="v2MinQuietAfterNewMs" min="0"> <span class="hint">收到新消息后至少再等这么久（默认 10000ms=10 秒），防止抢话。</span></div></div>
+      <div class="form-row pairs"><label>默认静默窗口（毫秒）</label><div class="ctl"><input type="number" id="v2WaitDefaultQuietMs" min="0"></div><label>新消息后最小静默（毫秒）</label><div class="ctl"><input type="number" id="v2MinQuietAfterNewMs" min="0"> <span class="hint">收到新消息后至少再等这么久（默认 10000ms=10 秒），防止抢话。</span></div></div>
       <div class="form-grid">
         <div class="form-row"><label>回复检查延迟（秒）</label><div class="ctl"><input type="number" id="v2AutoReplyCheckSec" min="1"> <span class="hint">回复检查是 AI 发消息后回来检查是否有人回复的延迟。</span></div></div>
       </div>
@@ -73,7 +80,7 @@
       <div class="meta mt-6">反重复：主动开口别老是同一个圈子。桥接会记住最近几次「AI 主动开的头」，并在下次主动开口时原样摆出来要求换方向；同时明确告诉它「【进行中的话题】记忆只是背景、不是题材来源」。方向池是给它「别的题材」的抓手——<b>默认策略是增加题材，而不是封禁某个话题</b>，所以「别碰的词」默认留空，一般不用填。</div>
       <div class="form-row pairs"><label>记住最近几条主动话题</label><div class="ctl"><input type="number" id="v2ProactiveRememberOpeners" min="0" max="20"></div><label>每次随机点几个方向</label><div class="ctl"><input type="number" id="v2ProactiveSuggestDomains" min="0" max="8"></div></div>
       <div class="form-row"><label>可选方向池（每行一个）</label><div class="ctl"><textarea id="v2ProactiveDomains" rows="3" placeholder="科技 / AI 圈的新东西&#10;生活里的琐事与吐槽"></textarea></div></div>
-      <div class="form-row"><label>主动开话题时别碰的词（每行一个）</label><div class="ctl"><textarea id="v2ProactiveAvoidKeywords" rows="2" placeholder="LOL&#10;英雄联盟"></textarea></div></div>
+      <div class="form-row"><label>避免话题词（每行一个）</label><div class="ctl"><textarea id="v2ProactiveAvoidKeywords" rows="2" placeholder="LOL&#10;英雄联盟"></textarea></div></div>
 
       <h3 class="section-head">机器人自己的资料 <span class="meta">昵称 / 个性签名 / 头像</span></h3>
       <div class="meta mb-8">账号级身份，全群全私聊可见。默认关；打开后也只认管理员上下文。</div>
@@ -107,10 +114,7 @@
       </div>
       <div class="form-row pairs"><label>提示中列出常用表情数</label><div class="ctl"><input type="number" id="v2StickerPromptMax" min="1" max="30"></div><label>在 prompt/唤醒里附带表情摘要</label><div class="ctl"><input type="checkbox" class="switch" id="v2StickerIncludePrompt"> <span class="hint">关闭后 AI 仍可主动调用 qq_list_stickers，只是不主动喂到上下文。</span></div></div>
       <div class="form-row pairs"><label>AI 收藏表情</label><div class="ctl"><input type="checkbox" class="switch" id="v2StickerCollectEnabled"></div><label>每分钟最多收藏</label><div class="ctl"><input type="number" id="v2StickerCollectPerMin" min="0"></div></div>
-      <div class="form-grid">
-        <div class="form-row"><label>每小时最多收藏</label><div class="ctl"><input type="number" id="v2StickerCollectPerHour" min="0"></div></div>
-        <div class="form-row"><label>收藏备注最大字数</label><div class="ctl"><input type="number" id="v2StickerCollectRemarkMax" min="1" max="50"> <span class="hint">AI 收藏别人表情时写的简短备注长度上限。</span></div></div>
-      </div>
+      <div class="form-row pairs"><label>每小时最多收藏</label><div class="ctl"><input type="number" id="v2StickerCollectPerHour" min="0"></div><label>收藏备注最大字数</label><div class="ctl"><input type="number" id="v2StickerCollectRemarkMax" min="1" max="50"> <span class="hint">AI 收藏别人表情时写的简短备注长度上限。</span></div></div>
 
       <h3 class="section-head">表情包时机与选图 <span class="meta">qq_pick_sticker + 唤醒提示里的时机门</span></h3>
       <div class="form-row pairs"><label>启用时机判断</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickEnabled"> <span class="hint">关掉后 qq_pick_sticker 直接拒绝调用。</span></div><label>唤醒提示里带时机</label><div class="ctl"><input type="checkbox" class="switch" id="v2PickHint"> <span class="hint">每轮告诉 AI「此刻适不适合发表情」+ 本地候选。</span></div></div>

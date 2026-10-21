@@ -630,20 +630,21 @@ label > input[type="checkbox"] { vertical-align: -2px; margin-right: 5px; }
 /* 参数表单：左标签右控件，同一张卡片里输入框左边缘对齐 */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 2px 32px;
 }
+.form-grid > .form-row:only-child { grid-column: 1 / -1; }
 .form-row {
   display: grid;
-  grid-template-columns: 172px 1fr;
+  grid-template-columns: 200px minmax(0, 1fr);
   align-items: center;
   gap: 6px 12px;
   padding: 7px 0;
   border-bottom: 1px dashed var(--card-border);
 }
 .form-row:last-child { border-bottom: 0; }
-.form-row.pairs { grid-template-columns: 172px 1fr 172px 1fr; }
+.form-row.pairs { grid-template-columns: 200px minmax(0, 1fr) 200px minmax(0, 1fr); }
 .form-row > label {
   margin: 0;
   font-size: 12.5px;
@@ -658,6 +659,12 @@ label > input[type="checkbox"] { vertical-align: -2px; margin-right: 5px; }
 .form-row .ctl textarea { width: 100%; min-height: 52px; }
 .form-row .ctl .tilde { color: var(--muted); }
 .form-row .ctl .meta { margin: 0; }
+/* 睡眠时段：起止小时连成一句话；宽屏说明同行，窄屏自动换到下一行 */
+.form-row > .ctl.sleep-ctl { gap: 12px; }
+.sleep-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sleep-range input[type="number"] { text-align: center; }
+.sleep-cap { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.form-row > .ctl.sleep-ctl .hint { flex: 1 1 320px; }
 
 /* ── 行 / 工具栏 / 工具类 ─────────────────────────────────────────────── */
 .row, .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1216,6 +1223,18 @@ input[type="checkbox"].switch.saving { opacity: 0.55; cursor: progress; }
 body.sheet-open { overflow: hidden; }
 
 /* ── 响应式 ───────────────────────────────────────────────────────────── */
+/* 笔记本宽度下不再硬塞双列表单；成对字段只在没有说明文字时保持四列，
+   带长说明的成对字段改为上下两行，避免说明被挤成窄条 */
+@media (max-width: 1400px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .form-row.pairs:has(.hint) { grid-template-columns: 200px minmax(0, 1fr); }
+}
+
+/* 再窄一档：四列装不下两个数字输入 + 波浪号时，整对字段改成上下排 */
+@media (max-width: 1200px) {
+  .form-row.pairs { grid-template-columns: 200px minmax(0, 1fr); }
+}
+
 @media (max-width: 1100px) {
   .sidebar { flex-basis: 240px; width: 240px; }
   .main { padding: 22px 22px 44px; }
@@ -1233,7 +1252,7 @@ body.sheet-open { overflow: hidden; }
   .status-badge { max-width: 100%; }
   .grid, .grid.cols-2 { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
-  .form-row, .form-row.pairs { grid-template-columns: minmax(108px, 150px) 1fr; }
+  .form-row, .form-row.pairs { grid-template-columns: minmax(120px, 200px) minmax(0, 1fr); }
   .rag-cols { grid-template-columns: 1fr; }
   .album-modal-body { grid-template-columns: 1fr; }
   .vp-clip { grid-template-columns: 1fr; }
@@ -1401,7 +1420,7 @@ body.sheet-open { overflow: hidden; }
   button.small, .btn-sm { min-height: 36px; }
   .toolbar button.small, .toolbar .btn-sm { min-height: 42px; height: 42px; font-size: 13px; padding: 0 12px; }
   .icon-btn { width: 36px; height: 36px; }
-  .form-row, .form-row.pairs { grid-template-columns: 1fr; gap: 6px; padding: 8px 0; }
+  .form-row, .form-row.pairs, .form-row.pairs:has(.hint) { grid-template-columns: 1fr; gap: 6px; padding: 8px 0; }
   .form-row > .ctl input[type="number"] { width: auto; flex: 1 1 0; min-width: 0; }
   .form-row > .ctl input[type="text"] { width: 100%; }
   .form-row > .ctl { gap: 8px; }

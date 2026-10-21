@@ -165,6 +165,14 @@ function fillForm(view, config) {
       ? config?.tools?.[el.dataset.v2Tool] === true
       : !(config?.tools && config.tools[el.dataset.v2Tool] === false);
   }
+  // 睡眠时段（socialData.sleepHours）：和普通 FIELDS 一起回填，保存后由 loadConfig 刷新
+  const sleep = config?.socialData?.sleepHours;
+  if (Array.isArray(sleep) && sleep.length === 2) {
+    const start = $('#sleepStart', view);
+    const end = $('#sleepEnd', view);
+    if (start) start.value = sleep[0];
+    if (end) end.value = sleep[1];
+  }
   // .value 赋值不触发 input；配置是异步回填的，这里必须补一次自动长高
   resizeTextareas(view);
 }
@@ -892,12 +900,6 @@ export async function mount(root) {
 
   // 保存后回填成服务端实际接受的值（钳制过的），避免界面与配置不一致
   fillForm(view, {});
-  // 回填睡眠时段
-  const cfgNow = state.config?.socialData?.sleepHours;
-  if (Array.isArray(cfgNow) && cfgNow.length === 2) {
-    const st0 = $('#sleepStart', view); if (st0) st0.value = cfgNow[0];
-    const en0 = $('#sleepEnd', view); if (en0) en0.value = cfgNow[1];
-  }
   await loadConfig();
   await loadSelfProfile();
   await refreshActivity();
