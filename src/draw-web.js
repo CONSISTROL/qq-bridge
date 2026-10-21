@@ -34,7 +34,7 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
   let browser;
   try {
     browser = await puppeteer.launch({
-      headless: 'new',
+      headless: false, // 有头模式（配合 xvfb-run）：headless 更容易被判定为机器人
       userDataDir: PROFILE(stateDir),
       args: ['--no-sandbox', '--disable-dev-shm-usage', '--lang=zh-CN', '--window-size=1280,900'],
       defaultViewport: { width: 1280, height: 900 }
@@ -71,7 +71,12 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
       .filter((e) => e.getBoundingClientRect().width > 200)[0], sel);
     await box.asElement()?.click?.();
     await new Promise((r) => setTimeout(r, 300));
-    await page.keyboard.type(text, { delay: 15 });
+    // 真人节奏：逐字 70~140ms，末尾停顿一下再回车（一口气打完会被判定为机器输入）
+    for (const ch of text) {
+      await page.keyboard.type(ch);
+      await new Promise((r) => setTimeout(r, 70 + Math.random() * 70));
+    }
+    await new Promise((r) => setTimeout(r, 800 + Math.random() * 700));
     await page.keyboard.press('Enter');
 
     const deadline = Date.now() + timeoutMs;
@@ -91,6 +96,12 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
         if (cv) { try { return { canvas: cv.toDataURL('image/png') }; } catch { /* 跨域 */ } }
         return null;
       }, baseline).catch(() => null);
+      // 验证码（语义九宫格）：一旦出现就直接报出来，别白等
+      const captcha = await page.evaluate(() => /请选择所有|拖拽到下方|拖拽到这里|验证您|人机验证/.test(document.body.innerText || '')).catch(() => false);
+      if (captcha) {
+        await page.screenshot({ path: path.join(stateDir, 'draw-web-captcha.png') }).catch(() => {});
+        return { ok: false, captcha: true, error: '触发了人机验证（语义九宫格），需要人工过' };
+      }
       if (got?.src) { src = got.src; break; }
       if (got?.canvas) { canvasData = got.canvas; break; }
     }
