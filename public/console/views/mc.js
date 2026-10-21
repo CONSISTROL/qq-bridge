@@ -429,75 +429,6 @@ async function refreshStandby(view) {
   el.className = 'pill ' + (mode === 'standby' ? 'warn' : (mode === 'live' ? 'ok' : ''));
 }
 
-// ———————————————————— 功耗 / 频率策略 ————————————————————
-// 实测：这台 i5-9300H 瓶颈是散热不是功耗（整机 12~16W 就已 70°C），
-// 所以「降 PL1」基本没用，真正降温的是降频率上限。
-// 三档语义：安静 / 平衡 / 增强（字段名与后端 setThermal 一致，可直接透传）
-const THERM_PRESETS = {
-  quiet:    { MAX_MHZ: 2000, PL1_W: 15, PL2_W: 20, GOVERNOR: 'powersave', EPP: 'power' },
-  balanced: { MAX_MHZ: 3200, PL1_W: 30, PL2_W: 38, GOVERNOR: 'powersave', EPP: 'balance_performance' },
-  boost:    { MAX_MHZ: 4100, PL1_W: 45, PL2_W: 45, GOVERNOR: 'powersave', EPP: 'performance' },
-};
-const THERM_PRESET_NAMES = { quiet: '安静', balanced: '平衡', boost: '增强' };
-
-function matchPreset(t) {
-  if (!t?.ok) return '';
-  for (const [k, p] of Object.entries(THERM_PRESETS)) {
-    if (Math.round((t.max_khz || 0) / 1000) === p.MAX_MHZ &&
-        Math.round((t.pl1_uw || 0) / 1e6) === p.PL1_W &&
-        t.epp === p.EPP) return k;
-  }
-  return '';
-}
-
-function renderThermal(view, t) {
-  if (!t?.ok) {
-    $('#mcThermNow', view).textContent = `读取失败：${t?.error || '未知错误'}`;
-    return;
-  }
-  const set = (id, v) => { const el = $(id, view); if (el && v !== undefined && v != null) el.value = v; };
-  set('#mcThermMhz', Math.round((t.max_khz || 0) / 1000));
-  set('#mcThermPl1', Math.round((t.pl1_uw || 0) / 1e6 * 10) / 10);
-  set('#mcThermPl2', Math.round((t.pl2_uw || 0) / 1e6 * 10) / 10);
-  set('#mcThermGov', t.governor);
-  set('#mcThermEpp', t.epp);
-  const curMhz = Math.round((t.cur_khz || 0) / 1000);
-  const hit = matchPreset(t);
-  $('#mcThermNow', view).innerHTML =
-    `当前档位 <b>${hit ? THERM_PRESET_NAMES[hit] : '自定义'}</b>　温度 <b>${esc(t.temp || '?')}</b>` +
-    `　频率上限 <b>${Math.round((t.max_khz || 0) / 1000)}MHz</b>　实时频率 ${curMhz}MHz` +
-    `　PL1 ${Math.round((t.cur_pl1_uw || 0) / 1e6)}W　PL2 ${Math.round((t.cur_pl2_uw || 0) / 1e6)}W` +
-    `　调频器 ${esc(t.cur_governor || '?')}　EPP ${esc(t.cur_epp || '?')}`;
-  $('#mcThermSummary', view).textContent = `${t.temp || ''} @ ${Math.round((t.max_khz || 0) / 1000)}MHz`;
-  // 高亮当前命中的档位（用 style.css 里已有的 button.active；.primary 不存在，别写错）
-  view.querySelectorAll?.('button[data-therm]')?.forEach((b) => {
-    b.classList.toggle('active', b.dataset.therm === hit);
-  });
-}
-
-async function refreshThermal(view) {
-  const t = await api('/api/mc/thermal').catch((e) => ({ ok: false, error: e.message }));
-  renderThermal(view, t);
-}
-
-async function applyThermal(view, fields) {
-  const el = $('#mcThermLog', view);
-  if (el) { el.style.display = 'block'; el.textContent = '应用中…'; }
-  const r = await api('/api/mc/thermal', 'POST', fields).catch((e) => ({ ok: false, error: e.message }));
-  if (el) el.textContent = (r?.detail || r?.error || '').trim() || '(无输出)';
-  toast(r?.ok ? '已应用（重启后仍生效）' : `失败：${r?.error || '未知错误'}`, r?.ok ? 'ok' : 'err');
-  renderThermal(view, r?.ok ? r : await api('/api/mc/thermal').catch(() => null));
-}
-
-function readThermForm(view) {
-  return {
-    MAX_MHZ: Number($('#mcThermMhz', view)?.value),
-    PL1_W: Number($('#mcThermPl1', view)?.value),
-    PL2_W: Number($('#mcThermPl2', view)?.value),
-    GOVERNOR: $('#mcThermGov', view)?.value,
-    EPP: $('#mcThermEpp', view)?.value,
-  };
-}
 
 // ———————————————————————————— 画质配置 ————————————————————————————
 let presetsCache = null;
@@ -614,16 +545,10 @@ export async function mount(root) {
   $('#mcStandbyRefresh', view)?.addEventListener('click', () => refreshStandby(view));
 
   // 功耗 / 频率：档位按钮（事件委托）+ 手动应用
-  $('#mcThermRefresh', view)?.addEventListener('click', () => refreshThermal(view));
-  $('#mcThermApply', view)?.addEventListener('click', () => applyThermal(view, readThermForm(view)));
-  view.querySelectorAll?.('button[data-therm]')?.forEach((btn) => {
-    btn.addEventListener('click', () => applyThermal(view, THERM_PRESETS[btn.dataset.therm] || {}));
-  });
 
   // 首次读一次服务状态、待机模式、功耗策略（不阻塞其它卡片）
   refreshServices(view);
   refreshStandby(view);
-  refreshThermal(view);
 
   return () => { stopA(); stopB(); stopC(); stopD(); };
 }
