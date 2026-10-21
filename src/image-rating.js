@@ -4,7 +4,7 @@
 // - 三档：`safe`（全年龄，默认）、`mild`（允许轻度擦边：水着/黑丝/大腿/巨乳这类标签）、
 //   `r18`（允许 R-18，只有真实 pixiv 源能给出这一档）。档位是阈值：mild 也放行 safe，
 //   r18 放行 safe+mild。
-// - 词表可配：`socialV2.image.ratingWords`（控制台「图片 / 表情来源（含搜图分级）」里改）
+// - 词表可配：`socialData.image.ratingWords`（控制台「图片 / 表情来源（含搜图分级）」里改）
 //   · mild       —— 算擦边、safe 档滤掉的词（可增删）
 //   · tolerated  —— 明确划为全年龄的词，优先于 mild（可增删）
 //   · explicitExtra —— 限制级词（可增删）
@@ -85,7 +85,7 @@ export function normalizeWordList(list, { limit = RATING_WORD_LIMIT, maxLen = RA
 }
 
 /**
- * 把 `config.socialV2.image.ratingWords` 归一化成运行时词表。
+ * 把 `config.socialData.image.ratingWords` 归一化成运行时词表。
  * 语义：**没配（非数组）用默认值；配了就用你配的（显式空数组 = 这个词表为空）**。
  */
 export function normalizeRatingWords(raw) {

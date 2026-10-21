@@ -47,7 +47,7 @@ export async function mount(root) {
   };
 
   const load = async () => {
-    const r = await api('/api/socialV2/autonomy', 'GET').catch(() => null);
+    const r = await api('/api/socialData/autonomy', 'GET').catch(() => null);
     if (!r || !r.ok) { setMsg($('#auMsg', view), '❌ 加载失败'); return; }
     setMsg($('#auMsg', view), '');
     render(r);
@@ -56,14 +56,14 @@ export async function mount(root) {
   delegate(view, 'click', '#auAdd', async () => {
     const text = $('#auText', view).value.trim();
     if (!text) { toast('先写目标内容', 'err'); return; }
-    const r = await api('/api/socialV2/autonomy/goal-add', 'POST', { text, source: 'owner' }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/autonomy/goal-add', 'POST', { text, source: 'owner' }).catch((e) => ({ ok: false, error: e.message }));
     if (!r || !r.ok) { toast('❌ ' + ((r && r.error) || '失败'), 'err'); return; }
     $('#auText', view).value = '';
     toast('已加进它的目标', 'ok');
     await load();
   });
   delegate(view, 'click', '[data-au-done]', async (ev, btn) => {
-    const r = await api('/api/socialV2/autonomy/goal-done', 'POST', { id: btn.dataset.auDone }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/autonomy/goal-done', 'POST', { id: btn.dataset.auDone }).catch((e) => ({ ok: false, error: e.message }));
     if (!r || !r.ok) { toast('❌ ' + ((r && r.error) || '失败'), 'err'); return; }
     await load();
   });

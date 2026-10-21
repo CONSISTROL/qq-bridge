@@ -74,7 +74,7 @@ export function createConsoleCoreRoutes(deps) {
     slangSubmitTimes,
     slangWindows,
     social,
-    socialV2,
+    socialData,
     spawn,
     spendBudget,
     text,
@@ -109,7 +109,7 @@ export function createConsoleCoreRoutes(deps) {
         ownerQQ: cfg.ownerQQ ?? null,
         allowGroups: cfg.allow?.groups ?? [],
         allowPrivate: cfg.allow?.private ?? [],
-        socialV2Paused: socialV2.paused,
+        socialPaused: socialData.paused,
         activity: readActivityTail(100),
       });
       return;
@@ -366,7 +366,7 @@ export function createConsoleCoreRoutes(deps) {
   }
   async function handleMiscAdminRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2ToolEnabled } = routeCtx;
-    if (url.pathname === '/api/socialV2/bili-hot') {
+    if (url.pathname === '/api/socialData/bili-hot') {
       const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 12));
       const now = Date.now();
       if (
@@ -546,9 +546,9 @@ export function createConsoleCoreRoutes(deps) {
       return;
     }
     // ── 档案：跨会话共享的事实型记忆 ──────────────────
-    if (url.pathname === '/api/socialV2/profile' || url.pathname.startsWith('/api/socialV2/profile/')) {
+    if (url.pathname === '/api/socialData/profile' || url.pathname.startsWith('/api/socialData/profile/')) {
       const action =
-        url.pathname === '/api/socialV2/profile' ? '' : url.pathname.slice('/api/socialV2/profile/'.length);
+        url.pathname === '/api/socialData/profile' ? '' : url.pathname.slice('/api/socialData/profile/'.length);
       try {
         if (req.method === 'GET') {
           const key = String(url.searchParams.get('key') ?? '').trim();
@@ -603,10 +603,10 @@ export function createConsoleCoreRoutes(deps) {
       return;
     }
     // ── 自主性（L2）：自己的目标 / 每日自由行动预算 / 行动日志 ──────────
-    if (url.pathname === '/api/socialV2/autonomy' || url.pathname.startsWith('/api/socialV2/autonomy/')) {
+    if (url.pathname === '/api/socialData/autonomy' || url.pathname.startsWith('/api/socialData/autonomy/')) {
       const action =
-        url.pathname === '/api/socialV2/autonomy' ? '' : url.pathname.slice('/api/socialV2/autonomy/'.length);
-      const limit = Math.max(0, Number(cfg.socialV2?.autonomy?.dailyBudget ?? 5));
+        url.pathname === '/api/socialData/autonomy' ? '' : url.pathname.slice('/api/socialData/autonomy/'.length);
+      const limit = Math.max(0, Number(cfg.socialData?.autonomy?.dailyBudget ?? 5));
       try {
         if (req.method === 'GET' && (action === '' || action === 'status')) {
           sendJson({
@@ -637,14 +637,14 @@ export function createConsoleCoreRoutes(deps) {
       return;
     }
     // ── 发 QQ 动态（SnowLuma 的 send_qzone_msg，支持中文、不用手机）──────
-    if (url.pathname === '/api/socialV2/post-moment' || url.pathname === '/api/socialV2/delete-moment') {
+    if (url.pathname === '/api/socialData/post-moment' || url.pathname === '/api/socialData/delete-moment') {
       if (!v2ToolEnabled('postMoment')) {
         sendJson({ ok: false, error: '能力未启用：发动态（控制台 → 插件 → 媒体）' }, 403);
         return;
       }
       const body = await readBody();
       try {
-        if (url.pathname === '/api/socialV2/post-moment') {
+        if (url.pathname === '/api/socialData/post-moment') {
           const content = String(body.content ?? '').trim();
           if (!content) {
             sendJson({ ok: false, error: 'content 不能为空' }, 400);
@@ -717,9 +717,9 @@ export function createConsoleCoreRoutes(deps) {
       wakeConfigUpdatedKeys.delete(key);
       markReadCalledKeys.delete(key);
       wakeConfigMissCount.delete(key);
-      const removedV2 = socialV2.conversations.get(key);
-      if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
-      socialV2.conversations.delete(key);
+      const removedChat = socialData.conversations.get(key);
+      if (removedChat?.agentToken) KNOWN_AGENT_TOKENS.delete(removedChat.agentToken);
+      socialData.conversations.delete(key);
       seenForwardIds.delete(key);
       saveSocialV2State();
       saveState();
@@ -791,10 +791,10 @@ export function createConsoleCoreRoutes(deps) {
       slangSubmitTimes.clear();
       cancelAllSocialTimers();
       clearAllSocialV2Timers();
-      for (const st of socialV2.conversations.values()) {
+      for (const st of socialData.conversations.values()) {
         if (st?.agentToken) KNOWN_AGENT_TOKENS.delete(st.agentToken);
       }
-      socialV2.conversations.clear();
+      socialData.conversations.clear();
       saveSocialV2State();
       deps.state.sessions = {};
       deps.state.sessionPolicies = {};

@@ -135,8 +135,8 @@ async function syncNow() {
   await load();
 }
 
-// ── 补备注的三个设置（socialV2.sticker.autoLabel / autoLabelPerTurn / manualLabelCount）
-// 只提交 sticker 里这几个 key：/api/socialV2/config 对 sticker 是深合并，不会冲掉 collect/pick。
+// ── 补备注的三个设置（socialData.sticker.autoLabel / autoLabelPerTurn / manualLabelCount）
+// 只提交 sticker 里这几个 key：/api/socialData/config 对 sticker 是深合并，不会冲掉 collect/pick。
 const LABEL_LIMITS = { autoLabelPerTurn: [1, 6], manualLabelCount: [1, 10] };
 
 function renderLabelControls() {
@@ -150,7 +150,7 @@ function renderLabelControls() {
 
 async function loadLabelConfig() {
   try {
-    const r = await api('/api/socialV2/config');
+    const r = await api('/api/socialData/config');
     const st = r?.config?.sticker ?? {};
     state.autoLabel = st.autoLabel !== false;
     state.autoLabelPerTurn = Number(st.autoLabelPerTurn) || 2;
@@ -176,7 +176,7 @@ async function saveLabelConfig(patch, okText) {
     clean[k] = Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : state[k];
   }
   try {
-    await api('/api/socialV2/config', 'POST', { sticker: clean });
+    await api('/api/socialData/config', 'POST', { sticker: clean });
     for (const [k, v] of Object.entries(clean)) state[k] = v;
     renderLabelControls();
     renderSummary();

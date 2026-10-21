@@ -199,12 +199,12 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
   source = source.replace('  bot.onPrivateMessage(async (event) => {', `
   return {
     ensureSession, ensureSlangLearnerSession, resolvePresetName, deliverPrompt, drainPromptQueue,
-    sendToQQ, sendStickerV2, handleIncoming, startConsoleServer, cfg, state, api, promptQueues,
+    sendToQQ, sendStickerChat, handleIncoming, startConsoleServer, cfg, state, api, promptQueues,
     // 「会话繁忙」判定：给审计用例用，验证残留忙标记能被识别成卡死（AI 无响应的那类事故）。
-    busyMarkersV2, staleTurnMarkerV2, forceClearBusyV2, v2TurnStartAt, activeWaits, socialV2,
+    busyMarkersChat, staleTurnMarkerChat, forceClearBusyChat, v2TurnStartAt, activeWaits, socialData,
     // 唤醒链路：回合进行中收到新消息必须「暂存待补投」，不能把唤醒丢掉（AI 不回话那类事故）。
-    sendWakePromptV2, scheduleWakeV2, dshSessionIdleNow, pendingWakeKeys,
-    getSocialV2State, takeBootstrapV2, resolveImageBuffer, sendImageV2, imageIdentityKey, recentSentImageKeys,
+    sendWakePromptChat, scheduleWakeChat, dshSessionIdleNow, pendingWakeKeys,
+    getSocialV2State, takeBootstrapChat, resolveImageBuffer, sendImageChat, imageIdentityKey, recentSentImageKeys,
     // 每轮注入的上下文（含「玩梗/闲聊/正经事」三级分流）：用来钉住「玩梗要接梗、不许科普」这条。
     withSlangContext,
     // 主题探索（自主扩展学习）：编排在桥接里，纯逻辑在 src/topic-explore.js。
@@ -219,12 +219,12 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     learnerWaiting() { return [...learnerWaiters.values()].some((a) => a && a.length > 0); },
     // 主动开话题的反重复：记住最近主动开的头，下次要求换方向。
     // 注意 buildProactivePrompt 只是**一代（reserved）**路径；chat 真正生效的是
-    // buildWakePromptV2 + 共用的 buildProactiveTopicBlock，两个都要能测。
-    buildProactivePrompt, buildWakePromptV2, buildProactiveTopicBlock, recordSentMessagesV2, retryPendingWakeV2, agentMessageView, planAnimFrames, animFrameText, deriveSelfSaid,
+    // buildWakePromptChat + 共用的 buildProactiveTopicBlock，两个都要能测。
+    buildProactivePrompt, buildWakePromptChat, buildProactiveTopicBlock, recordSentMessagesChat, retryPendingWakeChat, agentMessageView, planAnimFrames, animFrameText, deriveSelfSaid,
     // 一代批次提示：用来钉住「【管理员】≠群主」的术语只在真的出现管理员消息时注入。
     buildBatchPrompt,
     // 链接分享卡：只发桥接组装的固定形状，链接必须过 validateFetchUrl。
-    sendCardV2, resolveCardConfig, buildNewsCard, confirmMessageLanded,
+    sendCardChat, resolveCardConfig, buildNewsCard, confirmMessageLanded,
     // 黑话库：手动添加要落成候选（用例直接查内存表验证状态，而不是只看接口回执）。
     get slangEntries() { return slangEntries; },
     getSlangEntries() { return slangEntries; },
@@ -276,14 +276,14 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     imageSegmentLabel, segmentsToText, mediaHintFor, appendSocialV2Message,
     // 掉线补拉：断线期间的消息网关不重发，靠这条逻辑补回来（含唤醒闸门）。
     backfillMissedMessages, retireSession, agentTokenOk, anyAgentTokenOk, transcribeMediaAudio,
-    // 出站口播清洗：AI 文本发送的唯一收口就是 sendMessagesV2，这里验证它真的会削。
-    sendMessagesV2,
+    // 出站口播清洗：AI 文本发送的唯一收口就是 sendMessagesChat，这里验证它真的会削。
+    sendMessagesChat,
     // 原样重发闸门：记录「我们发过什么」与「这一批要不要拦」两个内部动作。
     checkTextDupGuard, recordAiTextSend,
     // 假 QQ 的调用记录（发出去的消息文本在 calls.sent 里）。
     calls: __auditCalls,
     // 暂存唤醒意图的补发判据（必须精确匹配自己那条 seq，否则陈旧意图会反复补投）。
-    pendingWakeStillRelevantV2,
+    pendingWakeStillRelevantChat,
     // 聊天视频：段解析、ffmpeg 信息解析、抽帧入口（抽帧本体要真 ffmpeg，测试只钉解析与降级）。
     extractMediaFromSegments, parseVideoInfo, resolveFfmpegPath,
     // 批总量预算：撞上限时先把这张压小塞进去，而不是整张丢掉（合并转发只看到前几张的根因之一）。

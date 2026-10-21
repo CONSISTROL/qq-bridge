@@ -167,7 +167,7 @@ console.log('## 没备注的表情（AI 自己补）');
   // 控制台开关：关掉「AI 空闲时自己补备注」后，提示里连欠账都不提（已写的备注不受影响）
   ok(!buildStickerContext(list, 8, { autoLabel: false }).includes('还没有任何备注'), '关掉后不再催 AI 补备注');
   ok(buildStickerContext(list, 8).includes('还没有任何备注'), '默认（不传）按开启处理');
-  // 一轮补几个可配（socialV2.sticker.autoLabelPerTurn，1~6）：提示里的具体 id 数量要跟着变，
+  // 一轮补几个可配（socialData.sticker.autoLabelPerTurn，1~6）：提示里的具体 id 数量要跟着变，
   // 否则控制台调大/调小都没用——线上「每次只补两个」就是这么来的。
   const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((i) => normalizeStickerEntry({ emoji_id: i, resId: i, url: `https://x/${i}` }));
   const four = buildStickerContext(many, 8, { labelPerTurn: 4 });
@@ -190,14 +190,14 @@ console.log('## 没备注的表情（AI 自己补）');
 console.log('## 配置文件');
 {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
-  const tools = cfg.socialV2?.tools ?? {};
+  const tools = cfg.socialData?.tools ?? {};
   ok(tools.listStickers === true, 'config listStickers=true');
   ok(tools.getStickerImage === true, 'config getStickerImage=true');
   ok(tools.sendSticker === true, 'config sendSticker=true');
   ok(tools.stickerNote === true, 'config stickerNote=true');
   ok(tools.setStickerRemark === false, 'config setStickerRemark=false（默认禁用）');
-  ok(cfg.socialV2?.sticker?.enabled === true, 'config sticker.enabled=true');
-  ok(!('sendCaptionMaxChars' in (cfg.socialV2?.sticker ?? {})), 'config sticker 不再包含 sendCaptionMaxChars');
+  ok(cfg.socialData?.sticker?.enabled === true, 'config sticker.enabled=true');
+  ok(!('sendCaptionMaxChars' in (cfg.socialData?.sticker ?? {})), 'config sticker 不再包含 sendCaptionMaxChars');
 }
 
 console.log('## 图片来源白名单（image-allow 纯函数）');
@@ -255,7 +255,7 @@ console.log('## MCP 工具描述存在性');
 console.log('## bridge 路由/函数存在性');
 {
   const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
-  for (const s of ['/api/socialV2/sticker-list', '/api/socialV2/sticker-image', '/api/socialV2/sticker-note', '/api/socialV2/send-sticker', '/api/socialV2/sticker-remark', '/api/stickers', 'syncStickerLibrary', 'sendStickerV2']) {
+  for (const s of ['/api/socialData/sticker-list', '/api/socialData/sticker-image', '/api/socialData/sticker-note', '/api/socialData/send-sticker', '/api/socialData/sticker-remark', '/api/stickers', 'syncStickerLibrary', 'sendStickerChat']) {
     ok(bridge.includes(s), `bridge 包含 ${s}`);
   }
   ok(bridge.includes('imageAllowRejectHint'), 'bridge 的图片来源被拒时给出可执行提示');

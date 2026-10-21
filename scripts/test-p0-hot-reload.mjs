@@ -15,11 +15,11 @@ const SANDBOX = process.env.P0_SANDBOX || '/tmp/mcp-test';
 const CONFIG = path.join(SANDBOX, 'config.json');
 const SERVER = path.join(SANDBOX, 'src', 'mcp-snowluma-safe.js');
 const TARGET_TOOL = 'qq_get_self_image';
-const FLAG_PATH = ['socialV2', 'tools', 'getSelfImage'];
+const FLAG_PATH = ['socialData', 'tools', 'getSelfImage'];
 
 function readCfg() { return JSON.parse(fs.readFileSync(CONFIG, 'utf8')); }
 function writeCfg(v) { fs.writeFileSync(CONFIG, JSON.stringify(v, null, 2)); return v; }
-function setFlag(v, on) { v.socialV2.tools.getSelfImage = on; return v; }
+function setFlag(v, on) { v.socialData.tools.getSelfImage = on; return v; }
 function has(tools) { return tools.some((t) => t.name === TARGET_TOOL); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

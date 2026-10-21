@@ -104,7 +104,7 @@ ok(classifyImageItem({ tags: ['大腿'] }).rating === 'mild' && classifyImageIte
 ok(filterByRating(TOLERATED_TAGS.map((t, i) => ({ id: `t${i}`, tags: [t] })), 'safe').items.length === TOLERATED_TAGS.length,
   `safe 档不再滤掉这 ${TOLERATED_TAGS.length} 个标签`);
 
-console.log('## 词表可配（socialV2.image.ratingWords）');
+console.log('## 词表可配（socialData.image.ratingWords）');
 ok(DEFAULT_RATING_WORDS.mild.length === MILD_TAGS.length && DEFAULT_RATING_WORDS.tolerated.length === TOLERATED_TAGS.length,
   '默认词表 = 内置词表（配置没写时用默认）', JSON.stringify({ mild: DEFAULT_RATING_WORDS.mild.length, tolerated: DEFAULT_RATING_WORDS.tolerated.length }));
 ok(normalizeRatingWords(undefined).mild.length === MILD_TAGS.length, '字段缺失 → 回退默认（不是空表）');
@@ -268,7 +268,7 @@ const bridge = [
   ...fs.readdirSync(path.join(ROOT, 'src', 'console')).sort().map((f) => fs.readFileSync(path.join(ROOT, 'src', 'console', f), 'utf8'))
 ].join('\n');
 const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
-const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'social2.js'), 'utf8');
+const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'chat.js'), 'utf8');
 ok(/searchPixivByTag/.test(bridge) && /pixivDailyRanking/.test(bridge), 'bridge 引用了 pixiv 搜索模块');
 ok(/pixivArtworkIdFromAnyUrl/.test(bridge) && /pixivThumbUrl/.test(bridge), 'bridge 用「任意 pixiv 地址 → 作品 id」+ 缩略图兜底');
 ok(/fetchBobopicPixivOriginal/.test(bridge), 'bridge 有 bobopic 原图通道');

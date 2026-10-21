@@ -110,12 +110,12 @@ await testWith({ globals: stampFixture }, 'preset refresh keeps the token alread
   assert.equal(h.getSocialV2State('private:123').agentToken, tokenBefore, '令牌保留（否则唤醒提示里的 token 全部失效）');
   assert.equal(h.getSocialV2State('private:123').bootstrapSent, true, 'bootstrap 标记保留（不再重复引导）');
 });
-await test('takeBootstrapV2 only bootstraps a genuinely new conversation', async (h) => {
+await test('takeBootstrapChat only bootstraps a genuinely new conversation', async (h) => {
   const st = h.getSocialV2State('private:123');
-  assert.equal(h.takeBootstrapV2(st), true, '新会话要引导');
+  assert.equal(h.takeBootstrapChat(st), true, '新会话要引导');
   st.bootstrapSent = false;
   st.recentMessages.push({ sender: 'x', text: 'hi' });
-  assert.equal(h.takeBootstrapV2(st), false, '有历史（会话被重建过）就不再引导');
+  assert.equal(h.takeBootstrapChat(st), false, '有历史（会话被重建过）就不再引导');
   assert.equal(st.bootstrapSent, true, '顺手把标记修回去，不会每次唤醒都判定一遍');
 });
 // ── pixiv 取图回退链 ──
@@ -125,7 +125,7 @@ await test('takeBootstrapV2 only bootstraps a genuinely new conversation', async
 // 退回 pixiv.re 又撞上 522；而 bobopic 的「查看原图」通道已经整站退化成 404 占位图，
 // 还差点被当成原图发进群。下面这些桩把新的顺序与保护钉住。
 const PNG12 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true } } }, globals: {
   safeFetch: async (u) => {
     if (String(u).includes('go.bobopic.com')) {
       return { statusCode: 200, url: String(u), body: '<img  id="main-img"  src="https://img01.sogoucdn.com/net/a/04/link?url=a.jpg">' };
@@ -141,7 +141,7 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, glob
   assert.equal(r.via, 'url');
   assert.ok(r.url.includes('sogoucdn'), '用的是 bobopic 原图通道的地址');
 });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true } } }, globals: {
   safeFetch: async () => { throw new Error('原图页挂了'); },
   safeFetchBuffer: async (u, max, opts) => {
     if (String(u).includes('pixiv.re')) {
@@ -154,7 +154,7 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, glob
   const r = await h.resolveImageBuffer('https://i.pixiv.re/91401787.png', {});
   assert.ok(r.url.includes('pixiv.re'));
 });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true } } }, globals: {
   safeFetch: async () => { throw new Error('原图页挂了'); },
   safeFetchBuffer: async (u) => {
     if (String(u).includes('img.pixivdaily.com')) return { url: String(u), statusCode: 200, buffer: PNG12 };
@@ -165,7 +165,7 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, glob
   assert.equal(r.url, 'https://img.pixivdaily.com/small/91401787.jpg-220');
 });
 // bobopic 404 占位图：它是合法图片，格式校验拦不住，必须显式认出来并继续回退
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true } } }, globals: {
   safeFetch: async (u) => ({ statusCode: 200, url: String(u), body: '<img id="main-img" src="http://img.pixivdaily.com/404.jpg">' }),
   safeFetchBuffer: async (u) => ({ url: String(u), statusCode: 200, buffer: PNG12 })
 } }, 'bobopic 404 占位图不会被当原图发出去', async (h) => {
@@ -173,7 +173,7 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, glob
   assert.ok(!String(r.url).includes('404.jpg'), '绝不能把 404 占位图当原图发');
   assert.ok(String(r.url).includes('pixiv.re'), '继续回退到真正的原图源');
 });
-const pixivProxyCfg = { socialV2: { image: { allowRemoteUrl: true, pixiv: { enabled: true, proxy: 'http://127.0.0.1:7897' } } } };
+const pixivProxyCfg = { socialData: { image: { allowRemoteUrl: true, pixiv: { enabled: true, proxy: 'http://127.0.0.1:7897' } } } };
 await testWith({ config: pixivProxyCfg, globals: {
   pixivIllustOriginal: async (id) => ({
     id,
@@ -254,7 +254,7 @@ await testWith({ config: pixivProxyCfg, globals: {
   );
 });
 // ── 防重复发图：同一张图（按 pixiv 作品 id / URL 身份）在窗口内只发一次 ──
-const dedupeCfg = { socialV2: { image: { allowRemoteUrl: true, pixiv: { enabled: true, proxy: 'http://127.0.0.1:7897' } } } };
+const dedupeCfg = { socialData: { image: { allowRemoteUrl: true, pixiv: { enabled: true, proxy: 'http://127.0.0.1:7897' } } } };
 const pngFetch = { safeFetchBuffer: async (u) => ({ url: String(u), statusCode: 200, buffer: PNG12 }) };
 
 // 线上实例（2026-10-13 群 1050666134）：一条「大肥鱼的七宗罪」发了 7 张图，单次上限 5 张，
@@ -300,10 +300,10 @@ await testWith({ config: dedupeCfg, globals: {
   safeFetchBuffer: async (u) => ({ url: String(u), statusCode: 200, buffer: Buffer.concat([PNG12, Buffer.from(String(u))]) })
 } }, '重复发同一张图被拒，换一张能发', async (h) => {
   const first = 'https://i.pximg.net/img-original/img/2021/07/21/22/53/00/91401787_p0.png';
-  await h.sendImageV2('private:123', first, {});
+  await h.sendImageChat('private:123', first, {});
   // 同一个作品、换成 pixiv.re 的地址（不同镜像）也必须算重复
-  await assert.rejects(() => h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {}), /最近发过/);
-  await h.sendImageV2('private:123', 'https://pixiv.re/99999999.png', {});
+  await assert.rejects(() => h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {}), /最近发过/);
+  await h.sendImageChat('private:123', 'https://pixiv.re/99999999.png', {});
   assert.ok(h.recentSentImageKeys('private:123').has('pixiv:91401787'), '发过的图进了防重发集合');
   // 发出去的网络图要在本机留一份（state/sent-images）：不然「群里发过的那张图」本地再也找不回来
   const sentDir = path.join(h.temp, 'state', 'sent-images');
@@ -315,14 +315,14 @@ await testWith({ config: dedupeCfg, globals: {
   assert.match(idx.items[0].origin, /private:123/, '记下是从哪个会话发出去的');
   assert.equal(idx.items.filter((it) => it.artworkId === '91401787').length, 1, '同一张不重复占盘');
 });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, repeatGuardMs: 0, pixiv: { enabled: true } } } }, globals: pngFetch }, 'repeatGuardMs=0 关闭防重发', async (h) => {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, repeatGuardMs: 0, pixiv: { enabled: true } } } }, globals: pngFetch }, 'repeatGuardMs=0 关闭防重发', async (h) => {
   const url = 'https://pixiv.re/91401787.png';
-  await h.sendImageV2('private:123', url, {});
-  await h.sendImageV2('private:123', url, {});
+  await h.sendImageChat('private:123', url, {});
+  await h.sendImageChat('private:123', url, {});
   assert.equal(h.recentSentImageKeys('private:123').size, 0, '窗口为 0 时集合为空');
 });
 
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true } } }, globals: {
   safeFetch: async () => { throw new Error('原图页挂了'); },
   safeFetchBuffer: async (u) => { throw new Error(`请求超时：${new URL(u).hostname}`); }
 } }, '三个源都失败时报出试过哪些（不再只说一句超时）', async (h) => {
@@ -336,52 +336,52 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true } } }, glob
 // 群里没有，AI 却跟群友说「两张都发出去了」。判据用 get_msg：真送达的消息 message_seq>0、
 // 图片段换成 QQ CDN 的 http 地址；被吞掉的停在 message_seq=0 + base64://。
 const UNDELIVERED_MSG = () => ({ message_seq: 0, message: [{ type: 'image', data: { url: 'base64:///9j/4AAQSkZJRgABAQAAAQABAAD' } }] });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch },
   '图片送达确认：QQ 收下了就只发一次', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, true, '确认送达');
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 1, '不重发');
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch },
   'deliverCheckMs=0 时完全跳过送达确认', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, true);
     assert.equal(h.calls.ws.filter((c) => c.action === 'get_msg').length, 0, '不查 get_msg');
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
   'QQ 静默丢图：自动重发一次，仍不行就 delivered=false（不再假成功）', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, false, '如实报未送达');
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 2, '自动重发一次');
     assert.ok(h.calls.ws.filter((c) => c.action === 'get_msg').length >= 2, '两次发送都确认过（每次会按剩余时限轮询）');
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: ((firstId) => (id) => (Number(id) === firstId ? UNDELIVERED_MSG() : { message_seq: 7, message: [{ type: 'image', data: { url: 'https://multimedia.nt.qq.com.cn/download?x=1' } }] }))(1) },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: ((firstId) => (id) => (Number(id) === firstId ? UNDELIVERED_MSG() : { message_seq: 7, message: [{ type: 'image', data: { url: 'https://multimedia.nt.qq.com.cn/download?x=1' } }] }))(1) },
   '第一次没落地、重发落地：算成功', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, true);
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 2);
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 60 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
   '没送达的图不占防重复名额：群友要求补发时还能再试', async (h) => {
     const url = 'https://pixiv.re/91401787.png';
-    const first = await h.sendImageV2('private:123', url, {});
+    const first = await h.sendImageChat('private:123', url, {});
     assert.equal(first.delivered, false);
     assert.equal(h.recentSentImageKeys('private:123').has('pixiv:91401787'), false, '未送达不算「发过」');
-    const again = await h.sendImageV2('private:123', url, {}); // 不被防重复拒绝
+    const again = await h.sendImageChat('private:123', url, {}); // 不被防重复拒绝
     assert.equal(again.delivered, false);
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 4, '两次调用各自动重发一次');
   });
-await testWith({ config: { snowluma: { wsTimeoutMs: 40 }, socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch, hangActions: ['send_private_msg'] },
+await testWith({ config: { snowluma: { wsTimeoutMs: 40 }, socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch, hangActions: ['send_private_msg'] },
   '写类动作 WS 超时：不回退 HTTP 重发（重复发图的根因），如实报「结果不确定」', async (h) => {
     const stopKeepAlive = h.keepLoopAlive();
     const url = 'https://pixiv.re/91401787.png';
-    await assert.rejects(() => h.sendImageV2('private:123', url, {}), (error) => error.uncertain === true && /不确定/.test(error.message));
+    await assert.rejects(() => h.sendImageChat('private:123', url, {}), (error) => error.uncertain === true && /不确定/.test(error.message));
     // 关键断言：只发出了一次 WS 请求，没有 HTTP 兜底（HTTP 会打到同一个 action 上）。
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 1, '没有第二次发送');
     // 结果不确定的图必须被挡住，防止 AI 换个档位再试一张 → 群里两张。
     const identity = h.imageIdentityKey(url);
     assert.ok(h.imageSendUncertainAt('private:123', identity) > 0, '记下「结果不确定」状态');
-    await assert.rejects(() => h.sendImageV2('private:123', url, {}), /不能自动重发|不确定/);
+    await assert.rejects(() => h.sendImageChat('private:123', url, {}), /不能自动重发|不确定/);
     stopKeepAlive();
   });
 
@@ -412,7 +412,7 @@ await testWith(
       h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
-      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      const res = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '在的' }, agentToken: st.agentToken,
       });
       assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -434,7 +434,7 @@ await testWith(
       h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
-      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      const res = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '这条没发出去' }, agentToken: st.agentToken,
       });
       assert.equal(res.status, 500);
@@ -472,7 +472,7 @@ await testWith(
       h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
-      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      const res = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '消息已经发出去了' }, agentToken: st.agentToken,
       });
       assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -499,7 +499,7 @@ await testWith(
       h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
-      const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      const res = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '确实没发出去' }, agentToken: st.agentToken,
       });
       assert.equal(res.status, 500);
@@ -508,7 +508,7 @@ await testWith(
     } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); stopKeepAlive(); }
   }
 );
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch, hangActions: ['send_group_msg'] },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 0 } } }, globals: pngFetch, hangActions: ['send_group_msg'] },
   '读类动作不受影响：写类超时策略不会误伤普通读', async (h) => {
     assert.ok(h.isOneBotWriteAction('send_group_msg') && h.isOneBotWriteAction('set_group_card'));
     assert.equal(h.isOneBotWriteAction('get_msg'), false, 'get_msg 是读类');
@@ -523,21 +523,21 @@ await test('写类动作的 WS 等待上限随 payload 放大（大图不再被�
   assert.ok(big >= 30000, `8MB payload 要放宽到 30s 以上（实际 ${big}）`);
   assert.ok(big <= 180000, '有上限，不会无限等');
 });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 80, deliverCheckFastMs: 20 } } }, globals: pngFetch, failGetMsg: true },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 80, deliverCheckFastMs: 20 } } }, globals: pngFetch, failGetMsg: true },
   '送达探针打不通时绝不重发，且回合不等待（delivered=null 而不是 false）', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, null, '三态：未知，不是「确定没送达」');
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 1, '探针没打通就不重发');
     await h.awaitDeliverChecks();
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 1, '后台确认也不会重发');
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 80, deliverCheckFastMs: 20 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 80, deliverCheckFastMs: 20 } } }, globals: pngFetch, getMsg: UNDELIVERED_MSG },
   '探针确实查到「没送达」时才重发（可判定 vs 不可判定要分开）', async (h) => {
-    const r = await h.sendImageV2('private:123', 'https://pixiv.re/91401787.png', {});
+    const r = await h.sendImageChat('private:123', 'https://pixiv.re/91401787.png', {});
     assert.equal(r.delivered, false);
     assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 2, '可判定没送达 → 重发一次');
   });
-await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverCheckMs: 60, deliverCheckFastMs: 20 } } }, globals: {
+await testWith({ config: { socialData: { image: { allowRemoteUrl: true, deliverCheckMs: 60, deliverCheckFastMs: 20 } } }, globals: {
   safeFetchBuffer: async (u) => ({ url: String(u), statusCode: 200, buffer: Buffer.concat([PNG12, Buffer.from(String(u))]) })
 } }, '发送链按会话隔离：一个会话的发送不会堵住另一个会话', async (h) => {
   // A 会话先排一条发送；B 会话的发送必须能独立完成，不用等 A。
@@ -551,7 +551,7 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverChe
 // 背景：一个 QQ 会话只对应一个 DSH session，而 DSH 一次只跑一个 turn。
 // 慢工具（pixiv 取图链上限 110s）会把整条会话堵住，群里再问什么都得等。
 // 工作车道把长任务放进独立会话，聊天会话立刻恢复可应答。
-const workCfg = { socialV2: { agentPreset: 'qq-chat', work: { enabled: true, maxSessions: 2 } } };
+const workCfg = { socialData: { agentPreset: 'qq-chat', work: { enabled: true, maxSessions: 2 } } };
 await testWith({ config: workCfg }, '工作车道：长任务投给独立会话并立即返回，聊天会话不被占用', async (h) => {
   h.setMode('chat');
   const chatSession = await h.ensureSession('group:456');
@@ -609,7 +609,7 @@ await testWith({ config: workCfg }, '车道数量受 maxSessions 限制，占满
   assert.equal(h.workSessions.size, 2, '工作车道的 DSH 会话数不超过 maxSessions');
   assert.equal(h.calls.created.length, 1 + 2, '聊天会话 1 个 + 工作车道 2 个，没有多余创建');
 });
-await testWith({ config: { socialV2: { agentPreset: 'qq-chat', work: { enabled: false } } } }, 'work.enabled=false 时工作车道完全不生效', async (h) => {
+await testWith({ config: { socialData: { agentPreset: 'qq-chat', work: { enabled: false } } } }, 'work.enabled=false 时工作车道完全不生效', async (h) => {
   h.setMode('chat');
   await h.ensureSession('group:456');
   assert.equal(h.workLaneEnabled(), false);
@@ -629,7 +629,7 @@ await testWith({ config: workCfg }, '聊天会话退役时工作车道一起退�
 
 // ── 唤醒不能丢：回合进行中收到新消息必须暂存、回合结束补投 ──────────────────
 // 线上事故：dshSessionIdleNow 里声明写成 `sessionIdleCache`、用的却是 `sessionIdCache`，
-// 于是这个「DSH 是否空闲」的探针一调用就抛 ReferenceError。它在 sendWakePromptV2 的
+// 于是这个「DSH 是否空闲」的探针一调用就抛 ReferenceError。它在 sendWakePromptChat 的
 // busy 分支里被 await，异常把整个函数打断在 push **之前** —— 结果「回合进行中收到新消息」
 // 这条最常见的路径既不暂存也不补投，唤醒被静默丢掉，表现就是 AI 不回话、看起来卡死。
 await test('DSH 空闲探针不会抛异常（探针炸了也不能把唤醒弄丢）', async (h) => {
@@ -645,12 +645,12 @@ await test('回合进行中收到唤醒：暂存进 pendingWakeReasons（而不�
   const sid = await h.ensureSession('private:123');
   // 造一个「turn 正在跑」的现场：只有 collector/turn 标记，且 turn 起点很新。
   h.v2TurnStartAt.set(sid, Date.now());
-  h.socialV2.conversations.set('private:123', {
-    ...(h.socialV2.conversations.get('private:123') ?? {}),
+  h.socialData.conversations.set('private:123', {
+    ...(h.socialData.conversations.get('private:123') ?? {}),
     lastUnreadSeq: 7,
     unread: [{ seq: 7, text: '在吗' }]
   });
-  await h.sendWakePromptV2('private:123', 'private');
+  await h.sendWakePromptChat('private:123', 'private');
   const st = h.getSocialV2State('private:123');
   assert.ok(Array.isArray(st.pendingWakeReasons) && st.pendingWakeReasons.length === 1, '唤醒被暂存（这一条以前会因为探针抛错而丢失）');
   assert.equal(st.pendingWakeReasons[0].seq, 7, '记下触发它的消息 seq，供回合结束判断是否还需要补投');
@@ -662,8 +662,8 @@ await test('同样情况下若探针异常，也要退化成「暂存」而不�
   h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
-  h.socialV2.conversations.set('private:123', {
-    ...(h.socialV2.conversations.get('private:123') ?? {}),
+  h.socialData.conversations.set('private:123', {
+    ...(h.socialData.conversations.get('private:123') ?? {}),
     lastUnreadSeq: 3, unread: [{ seq: 3, text: 'hi' }]
   });
   // 模拟探针内部炸掉（RPC 挂了 / 变量名又写错）：唤醒仍必须进暂存队列。
@@ -671,29 +671,29 @@ await test('同样情况下若探针异常，也要退化成「暂存」而不�
   const originalList = api.sessions.list;
   api.sessions.list = async () => { throw new Error('session.list 探针挂了'); };
   try {
-    await h.sendWakePromptV2('private:123', 'question');
+    await h.sendWakePromptChat('private:123', 'question');
   } finally { api.sessions.list = originalList; }
   const st = h.getSocialV2State('private:123');
   assert.equal(st.pendingWakeReasons?.length, 1, '探针失败不能吞掉唤醒');
 });
-await test('scheduleWakeV2 繁忙路径同样暂存（正常回合进行中）', async (h) => {
+await test('scheduleWakeChat 繁忙路径同样暂存（正常回合进行中）', async (h) => {
   h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
-  h.scheduleWakeV2('private:123', 'question');
+  h.scheduleWakeChat('private:123', 'question');
   const st = h.getSocialV2State('private:123');
-  assert.equal(st.pendingWakeReasons?.length, 1, 'scheduleWakeV2 繁忙时进暂存队列');
+  assert.equal(st.pendingWakeReasons?.length, 1, 'scheduleWakeChat 繁忙时进暂存队列');
   assert.equal(st.pendingWakeReason, undefined, '没有安排新的合并窗口唤醒');
 });
 await test('暂存的唤醒原因必须落盘（桥接中途重启不能把意图弄丢）', async (h) => {
   h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
-  h.scheduleWakeV2('private:123', 'private');
-  // 落盘 = state/social-v2.json 里能读到这条；不落盘就只活在内存里，重启即失联。
-  const raw = JSON.parse(fs.readFileSync(path.join(h.temp, 'state', 'social-v2.json'), 'utf8'));
+  h.scheduleWakeChat('private:123', 'private');
+  // 落盘 = state/social.json 里能读到这条；不落盘就只活在内存里，重启即失联。
+  const raw = JSON.parse(fs.readFileSync(path.join(h.temp, 'state', 'social.json'), 'utf8'));
   const persisted = (raw.conversations ?? raw)['private:123'];
-  assert.equal(persisted?.pendingWakeReasons?.length, 1, '暂存队列写进了 social-v2.json');
+  assert.equal(persisted?.pendingWakeReasons?.length, 1, '暂存队列写进了 social.json');
   assert.equal(persisted.pendingWakeReasons[0].reason, 'private');
 });
 
@@ -701,14 +701,14 @@ await test('暂存的唤醒原因必须落盘（桥接中途重启不能把意�
 // 改的是全群全私聊可见的身份。默认关；打开后也只认管理员上下文——
 // 否则群友一句「把你名字改成广告」就能间接操控账号。
 const PNG_B64 = 'data:image/png;base64,' + Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
-const profileOn = { socialV2: { profile: { enabled: true, minIntervalMs: 0, maxPerDay: 10 }, tools: { setProfile: true } } };
+const profileOn = { socialData: { profile: { enabled: true, minIntervalMs: 0, maxPerDay: 10 }, tools: { setProfile: true } } };
 const profileGlobals = { safeFetchBuffer: async () => ({ url: 'https://q1.qlogo.cn/x', statusCode: 200, buffer: Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex') }) };
 
-await testWith({ config: { socialV2: { profile: { enabled: true } } } }, '资料：默认关（必须显式打开），且 tools.setProfile 也要开', async (h) => {
-  assert.equal(h.profileCfg().enabled, false, 'socialV2.profile.enabled 缺省即关');
+await testWith({ config: { socialData: { profile: { enabled: true } } } }, '资料：默认关（必须显式打开），且 tools.setProfile 也要开', async (h) => {
+  assert.equal(h.profileCfg().enabled, false, 'socialData.profile.enabled 缺省即关');
   await assert.rejects(() => h.applyProfileChange({ nickname: 'x' }), /未启用/);
 });
-await testWith({ config: { socialV2: { profile: { enabled: false }, tools: { setProfile: true } } } }, '资料：profile.enabled=false 时即使工具开着也不能改', async (h) => {
+await testWith({ config: { socialData: { profile: { enabled: false }, tools: { setProfile: true } } } }, '资料：profile.enabled=false 时即使工具开着也不能改', async (h) => {
   assert.equal(h.profileCfg().enabled, false);
   await assert.rejects(() => h.applyProfileChange({ nickname: 'x' }), /未启用/);
 });
@@ -775,13 +775,13 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：昵称/
   assert.equal(h.calls.ws.filter((c) => c.action === 'set_qq_profile').length, before, '值没变不发多余请求');
 });
 
-await testWith({ config: { socialV2: { profile: { enabled: true, minIntervalMs: 60000, maxPerDay: 10 }, tools: { setProfile: true } } }, globals: profileGlobals },
+await testWith({ config: { socialData: { profile: { enabled: true, minIntervalMs: 60000, maxPerDay: 10 }, tools: { setProfile: true } } }, globals: profileGlobals },
   '资料：限流（间隔 + 每日上限）', async (h) => {
     h.setMode('chat');
     await h.applyProfileChange({ nickname: 'A' });
     await assert.rejects(() => h.applyProfileChange({ nickname: 'B' }), /太频繁/, '间隔没到不能改');
   });
-await testWith({ config: { socialV2: { profile: { enabled: true, minIntervalMs: 0, maxPerDay: 1 }, tools: { setProfile: true } } }, globals: profileGlobals },
+await testWith({ config: { socialData: { profile: { enabled: true, minIntervalMs: 0, maxPerDay: 1 }, tools: { setProfile: true } } }, globals: profileGlobals },
   '资料：每日上限（账号级身份故意收紧）', async (h) => {
     h.setMode('chat');
     await h.applyProfileChange({ nickname: 'A' });
@@ -811,7 +811,7 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：端点�
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
     const token = h.getSocialV2State('group:456').agentToken;
     const post = (key, tk) => new Promise((resolve, reject) => {
-      const request = http.request({ host: '127.0.0.1', port: server.address().port, path: '/api/socialV2/self-profile?token=fixture-console-token', method: 'POST',
+      const request = http.request({ host: '127.0.0.1', port: server.address().port, path: '/api/socialData/self-profile?token=fixture-console-token', method: 'POST',
         headers: { 'content-type': 'application/json', 'x-agent-token': tk } }, (response) => {
         let raw = '';
         response.on('data', (c) => { raw += c; });
@@ -838,7 +838,7 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：端点�
 // 需求：明显在玩梗的消息，AI 要玩回去，不要给正经回复。
 // 风险点很具体：黑话表/知识库刚喂进去一堆梗（探索学来的），模型很容易把「我认识它」
 // 变成「我来讲解它」——那样群里抛梗就换来一段释义，比没接住还破坏气氛。
-await testWith({ config: { socialV2: { taskTriage: true } } }, '每轮注入「玩梗/闲聊/正经事」三级分流，玩梗明确要求接梗、禁止科普', async (h) => {
+await testWith({ config: { socialData: { taskTriage: true } } }, '每轮注入「玩梗/闲聊/正经事」三级分流，玩梗明确要求接梗、禁止科普', async (h) => {
   h.setMode('chat');
   const prompt = await h.withSlangContext('随便一句话', 'private:123');
   assert.match(prompt, /先分清是玩梗、闲聊还是正经事/, '分流段还在');
@@ -1019,7 +1019,7 @@ await testWith({ config: { slang: { enabled: true, explore: { enabled: false } }
 // 线上问题：AI 主动冒泡每次都聊同一个圈子（实测是电竞/赛事）。原因是主动开口时模型能抓的
 // 抓手只有「人格 + 群里最近聊的事 + 它自己写的【进行中的话题】记忆」，人格没写兴趣、
 // 记忆全是那个圈子，于是反复开同一个话题。这里钉住「记住最近开的头 + 要求换方向」。
-await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭', '冷知识'], suggestDomains: 2 } } } },
+await testWith({ config: { socialData: { proactive: { domains: ['科技', '吃饭', '冷知识'], suggestDomains: 2 } } } },
   '主动开话题：提示词里带上最近开的头，并要求换方向', async (h) => {
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
@@ -1035,14 +1035,14 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
     assert.match(prompt, /【这次换个方向】/, '给出随机方向抓手');
     assert.match(prompt, /同一个人物\/战队\/作品\/圈子的后续也算重复/, '把「同圈子后续也算重复」讲清楚');
   });
-await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'], suggestDomains: 2 } } } },
-  '主动开话题（chat 实际路径）：buildWakePromptV2 里带上换方向 + 别拿记忆当题材', async (h) => {
-    // buildProactivePrompt 是一代（reserved）路径；二代真正发出去的是 buildWakePromptV2
+await testWith({ config: { socialData: { proactive: { domains: ['科技', '吃饭'], suggestDomains: 2 } } } },
+  '主动开话题（chat 实际路径）：buildWakePromptChat 里带上换方向 + 别拿记忆当题材', async (h) => {
+    // buildProactivePrompt 是一代（reserved）路径；二代真正发出去的是 buildWakePromptChat
     // 的 proactiveCheck 分支。这条就是为了防止「改错了路径」——线上那次就是栽在这。
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.proactiveOpeners = [{ text: 'S16 赛程漏出来了，凌晨开打', at: Date.now() }];
-    const prompt = h.buildWakePromptV2('group:456', 'proactiveCheck');
+    const prompt = h.buildWakePromptChat('group:456', 'proactiveCheck');
     assert.match(prompt, /【主动机会】group:456/, '是 proactiveCheck 分支');
     assert.match(prompt, /【这次换个方向】/, '带上方向抓手');
     assert.match(prompt, /【别拿记忆和群史当题材】/, '明确记忆只是背景、不是题材来源');
@@ -1053,7 +1053,7 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
     assert.ok(!/追问上次没聊完的事/.test(prompt), '删掉「追问上次没聊完的事」（把人往旧话题上带）');
     assert.ok(!/结合记忆里的群友兴趣/.test(prompt), '删掉「结合记忆里的群友兴趣」（记忆里只有那个圈子）');
   });
-await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭', '冷知识', '摸鱼'], suggestDomains: 2 } } } },
+await testWith({ config: { socialData: { proactive: { domains: ['科技', '吃饭', '冷知识', '摸鱼'], suggestDomains: 2 } } } },
   '主动开话题：方向是随机抽的且数量受限', async (h) => {
     h.setMode('chat');
     const seen = new Set();
@@ -1068,7 +1068,7 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
     }
     assert.ok(seen.size > 1, '多次生成结果不同（确实是随机而不是固定顺序）');
   });
-await testWith({ config: { socialV2: { proactive: { domains: [], suggestDomains: 0 } } } },
+await testWith({ config: { socialData: { proactive: { domains: [], suggestDomains: 0 } } } },
   '主动开话题：没配方向池时只有「别重复」那段，不会崩也不会硬塞方向', async (h) => {
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
@@ -1077,7 +1077,7 @@ await testWith({ config: { socialV2: { proactive: { domains: [], suggestDomains:
     assert.match(prompt, /你最近主动开的头/, '记住的头默认还是要列出来（avoidRepeat 默认开）');
     assert.ok(!/【这次换个方向】/.test(prompt), 'domains 为空时不点方向');
   });
-await testWith({ config: { socialV2: { proactive: { avoidRepeat: false, domains: [] } } } },
+await testWith({ config: { socialData: { proactive: { avoidRepeat: false, domains: [] } } } },
   '主动开话题：avoidRepeat=false 时连「别重复」那段也不注入', async (h) => {
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
@@ -1092,7 +1092,7 @@ await test('主动开话题：默认配置（不填任何新参数）下反重�
   h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastWakeReason = 'proactiveCheck';
-  h.recordSentMessagesV2('group:456', ['默认配置下也要记住这句话']);
+  h.recordSentMessagesChat('group:456', ['默认配置下也要记住这句话']);
   assert.equal(st.proactiveOpeners?.length, 1, '默认 rememberOpeners 生效');
   assert.match(st.proactiveOpeners[0].text, /默认配置下也要记住这句话/, '默认 openerChars 不能把文本切成空串');
   const prompt = h.buildProactiveTopicBlock(h.getSocialV2State('group:456'));
@@ -1132,7 +1132,7 @@ class FakeRepeatEmbedder {
 }
 
 await testWith(
-  { globals: { EmbeddingClient: FakeRepeatEmbedder, scrubFormulaicSpeech, describeScrub }, config: { socialV2: { proactive: { repeatSimThreshold: 0.75, repeatWindowHours: 168 } } } },
+  { globals: { EmbeddingClient: FakeRepeatEmbedder, scrubFormulaicSpeech, describeScrub }, config: { socialData: { proactive: { repeatSimThreshold: 0.75, repeatWindowHours: 168 } } } },
   '主动开口闸门：和两天前的开盘撞题就不发，打回换题；换过之后能发出去',
   async (h) => {
     const stopKeepAlive = h.keepLoopAlive();
@@ -1144,8 +1144,8 @@ await testWith(
       const st = h.getSocialV2State(key);
       st.proactiveOpeners = [{ text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: Date.now() - 2 * 86400000 }];
       // 装闸门：真实路径是在「主动机会检查」唤醒时装的
-      await h.sendWakePromptV2(key, 'proactiveCheck').catch(() => {});
-      const first = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      await h.sendWakePromptChat(key, 'proactiveCheck').catch(() => {});
+      const first = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '一段旋律在我脑子里单曲循环到现在，这叫耳虫' }, agentToken: st.agentToken,
       });
       assert.equal(first.status, 500);
@@ -1154,7 +1154,7 @@ await testWith(
       assert.match(String(first.body.error ?? ''), /几乎一样|换个题/, '要给模型明确的换题指令');
       assert.equal(h.calls.ws.filter((c) => c.action === 'send_group_msg').length, 0, '拦下就不能发出去');
 
-      const second = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+      const second = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
         body: { key, messages: '换个话题：今天食堂的排骨居然不柴' }, agentToken: st.agentToken,
       });
       assert.equal(second.status, 200, JSON.stringify(second.body));
@@ -1177,7 +1177,7 @@ await test('读消息时要能看出「谁在跟谁说话」：aboutYou / replie
     h.appendSocialV2Message(key, 'kafka', '[引用 面包屑🍞：色儿不一样] 我也这么觉得', '[引用 面包屑🍞：色儿不一样] 我也这么觉得', false, false, 710003, [], '1374585879', [], '710002', null, null, false);
     h.appendSocialV2Message(key, 'kafka', '[引用 你：我这条是回他这张图的] 哈哈', '[引用 你：我这条是回他这张图的] 哈哈', true, false, 710004, [], '1374585879', [], '710000', null, null, false);
 
-    const res = await apiRequest(server, `/api/socialV2/recent?token=fixture-console-token&key=${encodeURIComponent(key)}&limit=10`, { method: 'GET', agentToken: st.agentToken });
+    const res = await apiRequest(server, `/api/socialData/recent?token=fixture-console-token&key=${encodeURIComponent(key)}&limit=10`, { method: 'GET', agentToken: st.agentToken });
     assert.equal(res.status, 200);
     const byId = new Map((res.body.messages ?? []).map((m) => [String(m.messageId), m]));
 
@@ -1221,12 +1221,12 @@ await test('动图抽帧：长动图要多抽几帧，且帧说明里必须点�
 
 await test('各种唤醒原因的提示文本都不能出现字面破折号', async (h) => {
   // 规则文本自己用破折号＝在示范这种句式（项目里已有同类测试，这里覆盖到「原因」那一段，
-  // 因为 describeWakeReasonV2 会按原因返回不同文案，之前只在 reason='message' 下被测过）。
+  // 因为 describeWakeReasonChat 会按原因返回不同文案，之前只在 reason='message' 下被测过）。
   h.setMode('chat');
   const key = 'group:456';
   h.getSocialV2State(key);
   for (const reason of ['message', 'atMention', 'nameMention', 'speaker:kafka', 'keyword:大肥鱼', 'proactiveCheck', 'probability', 'replyCheck', 'busyRecovery', 'timeout', 'admin']) {
-    const prompt = h.buildWakePromptV2(key, reason);
+    const prompt = h.buildWakePromptChat(key, reason);
     assert.equal((prompt.match(/——/g) || []).length, 0, '原因 ' + reason + ' 的提示里有字面破折号');
   }
 });
@@ -1235,13 +1235,13 @@ await test('唤醒提示要讲清「是不是在跟你说话」', async (h) => {
   h.setMode('chat');
   const key = 'group:456';
   h.getSocialV2State(key);
-  const bySpeaker = h.buildWakePromptV2(key, 'speaker:kafka');
+  const bySpeaker = h.buildWakePromptChat(key, 'speaker:kafka');
   assert.match(bySpeaker, /不是在跟你说话/, '关注的群友发言不是找你，必须说明');
   assert.match(bySpeaker, /谁在跟谁说话/, '要给指向规则');
   assert.match(bySpeaker, /aboutYou/, '要告诉它看 aboutYou 字段判断');
-  const byAt = h.buildWakePromptV2(key, 'atMention');
+  const byAt = h.buildWakePromptChat(key, 'atMention');
   assert.match(byAt, /这条是对你说的/, '@ 唤醒要明说这条是冲它来的');
-  const byKeyword = h.buildWakePromptV2(key, 'keyword:大肥鱼');
+  const byKeyword = h.buildWakePromptChat(key, 'keyword:大肥鱼');
   assert.match(byKeyword, /不等于在跟你说话/);
 });
 
@@ -1253,13 +1253,13 @@ await test('唤醒频率超限不能丢掉：要暂存，额度恢复后自动�
   const st = h.getSocialV2State(key);
   st.wakeTimes = [Date.now()]; // maxWakePerMinute 默认 1：这一分钟的额度已用掉
   const before = h.calls.prompts.length;
-  await h.sendWakePromptV2(key, 'question');
+  await h.sendWakePromptChat(key, 'question');
   assert.equal(h.calls.prompts.length, before, '超限时确实不该投递');
   assert.equal(st.pendingWakeReasons.length, 1, '必须暂存，不能像以前那样直接丢');
   assert.match(JSON.stringify(st.pendingWakeReasons[0]), /question/, '暂存的是这条唤醒原因');
 
   st.wakeTimes = []; // 额度恢复
-  const delivered = await h.retryPendingWakeV2(key);
+  const delivered = await h.retryPendingWakeChat(key);
   assert.equal(delivered, true, '补投要成功');
   assert.equal(st.pendingWakeReasons.length, 0, '补投后出队');
   assert.ok(h.calls.prompts.length > before, '这一次真的把唤醒投给模型了');
@@ -1294,11 +1294,11 @@ await test('自己说过的话要进记忆：回复里的内容也算（kind=rep
   const key = 'group:456';
   const st = h.getSocialV2State(key);
   st.lastWakeReason = 'speaker:kafka';           // 回复轮
-  h.recordSentMessagesV2(key, ['刷到个视频，有电车车主在服务区排队充电，前面排着179辆车']);
+  h.recordSentMessagesChat(key, ['刷到个视频，有电车车主在服务区排队充电，前面排着179辆车']);
   assert.equal(st.selfSaid.length, 1, '回复里说过的话也要记下来');
   assert.equal(st.selfSaid[0].kind, 'reply', '要区分是回复还是主动开盘');
   st.lastWakeReason = 'proactiveCheck';          // 主动开盘轮
-  h.recordSentMessagesV2(key, ['另外今年多个新变量：高速免费七天']);
+  h.recordSentMessagesChat(key, ['另外今年多个新变量：高速免费七天']);
   assert.equal(st.selfSaid.length, 2);
   assert.equal(st.selfSaid[1].kind, 'opener');
   // 落盘/载入要保留（否则重启后又开始复读）
@@ -1318,8 +1318,8 @@ await testWith(
     // 两天前「回复」里讲过耳虫；主动开盘的记忆里没有它
     st.selfSaid = [{ text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: Date.now() - 2 * 86400000, kind: 'reply' }];
     st.proactiveOpeners = [];
-    await h.sendWakePromptV2(key, 'proactiveCheck').catch(() => {});
-    const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
+    await h.sendWakePromptChat(key, 'proactiveCheck').catch(() => {});
+    const res = await apiRequest(server, '/api/socialData/send-message?token=fixture-console-token', {
       body: { key, messages: '一段旋律在我脑子里单曲循环到现在，这叫耳虫' }, agentToken: st.agentToken,
     });
     assert.equal(res.body.selfRepeat, true, '回复里讲过的同话题开盘要被拦');
@@ -1371,46 +1371,46 @@ await test('主动开话题：不相干的两条开盘不该被误判成重复',
   assert.doesNotMatch(block, /题材也在重复/, '题材不同就不该乱报');
 });
 
-await testWith({ config: { socialV2: { proactive: { avoidKeywords: ['LOL', '英雄联盟'], domains: [] } } } },
+await testWith({ config: { socialData: { proactive: { avoidKeywords: ['LOL', '英雄联盟'], domains: [] } } } },
   '主动开话题：avoidKeywords 会写进提示词', async (h) => {
     h.setMode('chat');
     const prompt = h.buildProactiveTopicBlock(h.getSocialV2State('group:456'));
     assert.match(prompt, /【主动开话题时别碰】LOL \/ 英雄联盟/);
     assert.match(prompt, /除非群里刚有人主动聊起来/, '只在主动开口时约束，群友提起不算');
   });
-await testWith({ config: { socialV2: { proactive: { rememberOpeners: 2, openerChars: 20, domains: [] } } } },
+await testWith({ config: { socialData: { proactive: { rememberOpeners: 2, openerChars: 20, domains: [] } } } },
   '主动开话题：主动回合发出的消息被记成「开的头」，条数/长度受限', async (h) => {
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.lastWakeReason = 'proactiveCheck';
-    h.recordSentMessagesV2('group:456', ['第一条主动话题内容很长很长很长很长很长很长很长很长']);
-    h.recordSentMessagesV2('group:456', ['第二条']);
-    h.recordSentMessagesV2('group:456', ['第三条']);
+    h.recordSentMessagesChat('group:456', ['第一条主动话题内容很长很长很长很长很长很长很长很长']);
+    h.recordSentMessagesChat('group:456', ['第二条']);
+    h.recordSentMessagesChat('group:456', ['第三条']);
     assert.equal(st.proactiveOpeners.length, 2, '按 rememberOpeners 只留最近 2 条');
     assert.ok(st.proactiveOpeners.every((o) => o.text.length <= 20), '每条按 openerChars 截断');
     assert.equal(st.proactiveOpeners.at(-1).text, '第三条');
     // 普通回复回合不记（只有主动开口才需要反重复）
     st.lastWakeReason = 'private';
-    h.recordSentMessagesV2('group:456', ['普通回复']);
+    h.recordSentMessagesChat('group:456', ['普通回复']);
     assert.equal(st.proactiveOpeners.length, 2, '非主动回合不记入');
   });
-await testWith({ config: { socialV2: { proactive: { rememberOpeners: 3, domains: [] } } } },
+await testWith({ config: { socialData: { proactive: { rememberOpeners: 3, domains: [] } } } },
   '主动开话题：记下的头会落盘（重启后仍然反重复）', async (h) => {
     h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.lastWakeReason = 'proactiveCheck';
-    h.recordSentMessagesV2('group:456', ['聊过的老话题']);
-    const raw = JSON.parse(fs.readFileSync(path.join(h.temp, 'state', 'social-v2.json'), 'utf8'));
+    h.recordSentMessagesChat('group:456', ['聊过的老话题']);
+    const raw = JSON.parse(fs.readFileSync(path.join(h.temp, 'state', 'social.json'), 'utf8'));
     const persisted = (raw.conversations ?? raw)['group:456'];
-    assert.equal(persisted?.proactiveOpeners?.length, 1, 'proactiveOpeners 写进了 social-v2.json');
+    assert.equal(persisted?.proactiveOpeners?.length, 1, 'proactiveOpeners 写进了 social.json');
     assert.match(persisted.proactiveOpeners[0].text, /聊过的老话题/);
   });
 
-await testWith({ config: { socialV2: { proactive: { enabled: true, probability: 0.2 } } } },
+await testWith({ config: { socialData: { proactive: { enabled: true, probability: 0.2 } } } },
   '主动开话题：config.json 里已有 proactive 段时，内置方向池仍要保留（深度合并）', async (h) => {
     // 外层 spread 会整段替换 proactive：不显式深度合并的话，用户只写了 enabled/probability
     // 就会把 domains 等新默认值悄悄吃掉 —— 反重复只剩「别聊这些」、没有「聊什么」的抓手。
-    const p = h.cfg.socialV2.proactive;
+    const p = h.cfg.socialData.proactive;
     assert.equal(p.probability, 0.2, '用户配置优先');
     assert.ok(Array.isArray(p.domains) && p.domains.length >= 8, `内置方向池仍在（实际 ${p.domains?.length}）`);
     assert.equal(p.suggestDomains, 3, '新默认值补齐');
@@ -1420,17 +1420,17 @@ await testWith({ config: { socialV2: { proactive: { enabled: true, probability: 
     assert.equal(p.repeatSimThreshold, 0.75);
     assert.equal(p.repeatWindowHours, 168);
   });
-await testWith({ config: { socialV2: { proactive: { domains: ['只留这个'] } } } },
+await testWith({ config: { socialData: { proactive: { domains: ['只留这个'] } } } },
   '主动开话题：用户显式给的 domains 覆盖内置池（不会被悄悄改回去）', async (h) => {
     // 注意：h.cfg 来自 vm 上下文，其数组原型和宿主不同，deepStrictEqual 会因原型不一致而失败，
     // 这里比较序列化结果。
-    assert.equal(JSON.stringify(h.cfg.socialV2.proactive.domains), JSON.stringify(['只留这个']));
+    assert.equal(JSON.stringify(h.cfg.socialData.proactive.domains), JSON.stringify(['只留这个']));
   });
 
 // ── 链接分享卡（qq_send_card）：AI 只给字段，卡片体由桥接组装 ────────────────
 // 安全边界：不接受任意 json/xml（那能伪造「系统通知/红包/群邀请」），链接必须公网 http(s)
 // （否则提示注入能让 AI 发一张指向本机控制台、还带令牌的可点击卡片）。
-const cardCfg = { socialV2: { card: { enabled: true, maxTitleChars: 60, maxDescChars: 90 } } };
+const cardCfg = { socialData: { card: { enabled: true, maxTitleChars: 60, maxDescChars: 90 } } };
 // 出网校验桩：与真实 validateFetchUrl 的判据保持一致（scheme + 内网/本机），但不做 DNS。
 const cardNetStub = { validateFetchUrl: async (u) => {
   const target = new URL(u);
@@ -1451,7 +1451,7 @@ await test('真实的出网校验器会拦掉非 http(s) 与本机地址（卡�
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：只发一个 json 段，app/view 由桥接写死（AI 给不了 JSON）', async (h) => {
   h.setMode('chat');
-  const result = await h.sendCardV2('private:123', { url: 'https://example.com/a?b=1', title: '标题', desc: '摘要' });
+  const result = await h.sendCardChat('private:123', { url: 'https://example.com/a?b=1', title: '标题', desc: '摘要' });
   const segments = h.calls.ws.filter((c) => c.action === 'send_private_msg').at(-1).params.message;
   assert.equal(segments.length, 1, '只有卡片段（一条消息只能是一张卡）');
   assert.equal(segments[0].type, 'json');
@@ -1468,38 +1468,38 @@ await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：只发一个
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：本机/内网/非 http(s) 的链接一律拒发', async (h) => {
   h.setMode('chat');
   for (const bad of ['http://127.0.0.1:3100/?token=secret', 'http://localhost:3100/', 'file:///etc/passwd', 'javascript:alert(1)']) {
-    await assert.rejects(() => h.sendCardV2('private:123', { url: bad, title: 'x' }), /不允许/, `应拒绝 ${bad}`);
+    await assert.rejects(() => h.sendCardChat('private:123', { url: bad, title: 'x' }), /不允许/, `应拒绝 ${bad}`);
   }
   assert.equal(h.calls.ws.filter((c) => c.action === 'send_private_msg').length, 0, '一张卡片都没发出去');
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: 'x', preview: 'http://127.0.0.1:3100/x.png' }), /预览图不允许/);
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://example.com/a', title: 'x', preview: 'http://127.0.0.1:3100/x.png' }), /预览图不允许/);
 });
 
-await testWith({ config: { socialV2: { card: { enabled: true, allowHosts: ['example.com'] } } }, globals: cardNetStub }, '卡片：allowHosts 后缀匹配且带点边界', async (h) => {
+await testWith({ config: { socialData: { card: { enabled: true, allowHosts: ['example.com'] } } }, globals: cardNetStub }, '卡片：allowHosts 后缀匹配且带点边界', async (h) => {
   h.setMode('chat');
-  await h.sendCardV2('private:123', { url: 'https://a.example.com/x', title: 'ok' });
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://evil.com/x', title: 'x' }), /白名单/);
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://evil-example.com/x', title: 'x' }), /白名单/, 'evil-example.com 不能因为叫 example.com 就放行');
+  await h.sendCardChat('private:123', { url: 'https://a.example.com/x', title: 'ok' });
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://evil.com/x', title: 'x' }), /白名单/);
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://evil-example.com/x', title: 'x' }), /白名单/, 'evil-example.com 不能因为叫 example.com 就放行');
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：标题/摘要压控制字符并截断，令牌泄露被拦', async (h) => {
   h.setMode('chat');
-  await h.sendCardV2('private:123', { url: 'https://example.com/a', title: `标题\n\n注入\u0000${'A'.repeat(300)}`, desc: '摘要\r\n换行' });
+  await h.sendCardChat('private:123', { url: 'https://example.com/a', title: `标题\n\n注入\u0000${'A'.repeat(300)}`, desc: '摘要\r\n换行' });
   const card = JSON.parse(h.calls.ws.filter((c) => c.action === 'send_private_msg').at(-1).params.message[0].data.data);
   assert.ok(!/[\n\r\u0000]/.test(card.meta.news.title), '控制字符被压掉');
   assert.ok(card.meta.news.title.length <= 60, `标题被截断（实际 ${card.meta.news.title.length}）`);
   assert.ok(!/[\n\r]/.test(card.meta.news.desc), '摘要里的换行也被压掉');
   const token = h.getSocialV2State('private:123').agentToken;
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: `看这个 ${token}` }), /会话令牌/);
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://example.com/a', title: `看这个 ${token}` }), /会话令牌/);
 });
 
-await testWith({ config: { socialV2: { card: { enabled: false } } }, globals: cardNetStub }, '卡片：开关关掉后直接拒绝', async (h) => {
+await testWith({ config: { socialData: { card: { enabled: false } } }, globals: cardNetStub }, '卡片：开关关掉后直接拒绝', async (h) => {
   h.setMode('chat');
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: 'x' }), /已关闭/);
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://example.com/a', title: 'x' }), /已关闭/);
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：空标题空摘要拒绝（否则是张空卡）', async (h) => {
   h.setMode('chat');
-  await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: '', desc: '' }), /至少要有一个/);
+  await assert.rejects(() => h.sendCardChat('private:123', { url: 'https://example.com/a', title: '', desc: '' }), /至少要有一个/);
 });
 
 await test('图片送达异常提示会劝住「对同一张硬重试」', async (h) => {
@@ -1513,10 +1513,10 @@ await test('图片送达异常提示会劝住「对同一张硬重试」', async
   const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   // 工具描述必须把 delivered 三态和「null 时不要重发」讲清楚（重复图就是从误判重发来的）。
   assert.ok(/delivered 是三态/.test(mcp) && /不要重发同一张/.test(mcp), 'MCP 工具描述同步说明送达三态');
-  const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'social2.js'), 'utf8');
+  const consoleView = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'chat.js'), 'utf8');
   assert.ok(/path: 'deliverCheckMs'/.test(consoleView), '控制台能配送达确认时限');
 });
-await testWith({ config: { socialV2: { presetRefresh: false } }, globals: stampFixture }, 'presetRefresh=false keeps the stale session on purpose', async (h) => {
+await testWith({ config: { socialData: { presetRefresh: false } }, globals: stampFixture }, 'presetRefresh=false keeps the stale session on purpose', async (h) => {
   const first = await h.ensureSession('private:123');
   delete h.state.sessionPresetStamps['private:123'];
   assert.equal(await h.ensureSession('private:123'), first);
@@ -1633,7 +1633,7 @@ await test('malformed HTTP request targets return 400 without hanging', async (h
     validateFetchUrl: async () => { throw new Error('must fetch validated bytes instead of passing a URL'); },
   } });
   try {
-    await h.sendStickerV2('group:456', 'fixture-sticker');
+    await h.sendStickerChat('group:456', 'fixture-sticker');
     // 发送走 OneBot WS（bot.request），所以断言 WS 侧收到的 params，而不是注入的 fetch
     const send = h.calls.ws.find((entry) => entry.action === 'send_group_msg');
     assert.ok(send, 'send_group_msg 必须经 OneBot 通道发出');
@@ -1650,34 +1650,34 @@ await test('malformed HTTP request targets return 400 without hanging', async (h
 // AI 再也不说话（线上实测发生过：用户消息被连着暂存，要等 8 分钟看门狗才自愈）。
 await test('stale turn marker is detected as stuck busy and cleared', async (h) => {
   const key = 'private:123';
-  const st = h.socialV2.conversations.get(key) ?? { wakeConfig: {}, recentMessages: [], unread: [], wakeTimes: [], sendTimes: [] };
-  h.socialV2.conversations.set(key, st);
+  const st = h.socialData.conversations.get(key) ?? { wakeConfig: {}, recentMessages: [], unread: [], wakeTimes: [], sendTimes: [] };
+  h.socialData.conversations.set(key, st);
   const sid = 'session-stale';
   h.state.sessions[key] = sid;
 
   // 没有忙标记 → 不忙
   // 注意：harness 跑在 vm 里，跨 realm 的数组过不了 deepStrictEqual，只能比长度/内容。
-  assert.equal(h.busyMarkersV2(key, st).length, 0, '初始不应有忙标记');
-  assert.equal(h.staleTurnMarkerV2(key, []), '', '无标记时不该判成卡死');
+  assert.equal(h.busyMarkersChat(key, st).length, 0, '初始不应有忙标记');
+  assert.equal(h.staleTurnMarkerChat(key, []), '', '无标记时不该判成卡死');
 
   // 刚开始的 turn → 忙，但不算卡死（可能正在思考/长轮询）
   h.v2TurnStartAt.set(sid, Date.now());
-  const fresh = h.busyMarkersV2(key, st);
+  const fresh = h.busyMarkersChat(key, st);
   assert.ok(fresh.some((m) => m.startsWith('turn(')), '应报告 turn 标记：' + fresh.join('+'));
-  assert.equal(h.staleTurnMarkerV2(key, fresh), '', '刚开始的 turn 不能被误判为卡死');
+  assert.equal(h.staleTurnMarkerChat(key, fresh), '', '刚开始的 turn 不能被误判为卡死');
 
   // 正在 qq_wait_for_messages 长轮询 → 合法的忙，不能打断
   h.activeWaits.add(key);
   h.v2TurnStartAt.set(sid, Date.now() - 60 * 60 * 1000);
-  assert.equal(h.staleTurnMarkerV2(key, h.busyMarkersV2(key, st)), '', '长轮询中的会话不能被强制清标记');
+  assert.equal(h.staleTurnMarkerChat(key, h.busyMarkersChat(key, st)), '', '长轮询中的会话不能被强制清标记');
   h.activeWaits.delete(key);
 
   // 超过 busyRecoveryMs 且不在长轮询 → 判定卡死，并能被清空
-  const stale = h.busyMarkersV2(key, st);
-  assert.ok(h.staleTurnMarkerV2(key, stale), '过期 turn 标记应判为卡死：' + stale.join('+'));
-  h.forceClearBusyV2(key, 'audit');
-  assert.equal(h.busyMarkersV2(key, st).length, 0, 'forceClearBusyV2 之后不应再有忙标记');
-  assert.equal(h.staleTurnMarkerV2(key, []), '', '清空后不再判卡死');
+  const stale = h.busyMarkersChat(key, st);
+  assert.ok(h.staleTurnMarkerChat(key, stale), '过期 turn 标记应判为卡死：' + stale.join('+'));
+  h.forceClearBusyChat(key, 'audit');
+  assert.equal(h.busyMarkersChat(key, st).length, 0, 'forceClearBusyChat 之后不应再有忙标记');
+  assert.equal(h.staleTurnMarkerChat(key, []), '', '清空后不再判卡死');
 });
 
 // 线上事故：模型看到消息带【管理员】（= ownerQQ 桥接管理员）就把该群友当成 QQ 群主，
@@ -1686,7 +1686,7 @@ await test('stale turn marker is detected as stuck busy and cleared', async (h) 
 // ③ 「活跃成员」接口不再输出会被误读成群主的 isOwner，改成 isBridgeAdmin + 真实 groupRole。
 await test('身份术语：二代唤醒提示分清「桥接管理员」与「QQ 群主」', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【「管理员」≠「群主」】/, '每轮钉一次术语');
   assert.match(prompt, /桥接管理员（ownerQQ/, '说明【管理员】= ownerQQ');
   assert.match(prompt, /不是 QQ 群主/, '明确否认「管理员=群主」');
@@ -1711,7 +1711,7 @@ await test('身份术语：一代批次提示只在这批真有管理员消息�
     const result = await new Promise((resolve, reject) => {
       const request = http.request({
         host: '127.0.0.1', port: server.address().port,
-        path: `/api/socialV2/active-members?token=fixture-console-token&key=${encodeURIComponent('group:456')}`,
+        path: `/api/socialData/active-members?token=fixture-console-token&key=${encodeURIComponent('group:456')}`,
         method: 'GET', headers: { 'x-agent-token': st.agentToken }
       }, (response) => {
         let raw = '';
@@ -1830,14 +1830,14 @@ await test('表情包身份随消息一起进入 AI 上下文（label/subType/su
 });
 await test('唤醒提示里带上「表情包可以重复」的行为规则', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【表情包可以重复】/);
   assert.match(prompt, /不要\*\*说「你发过了/);
 });
 
 // 线上事故：群友发消息后一直「会话繁忙，暂存唤醒原因」，AI 好几个小时不吭声。
 // 根因不是 DSH 真在跑回合，而是**恢复机制漏了一条路径**：
-// 暂存唤醒有 sendWakePromptV2 与 scheduleWakeV2 两条入口，群友消息走后者，
+// 暂存唤醒有 sendWakePromptChat 与 scheduleWakeChat 两条入口，群友消息走后者，
 // 而看门狗只认 pendingSince —— 只有前者会写它。于是这个会话永远不被回收。
 await test('真的在跑回合时只暂存，但必须写 pendingSince（看门狗兜底）', async (h) => {
   h.setMode('chat');
@@ -1846,10 +1846,10 @@ await test('真的在跑回合时只暂存，但必须写 pendingSince（看门�
   const sid = 'session-running';
   h.state.sessions[key] = sid;
   h.v2TurnStartAt.set(sid, Date.now() - 20 * 60 * 1000);
-  h.pendingWakeKeys.add(key); // 让 staleTurnMarkerV2 不判定为卡死（还有别的标记在）
+  h.pendingWakeKeys.add(key); // 让 staleTurnMarkerChat 不判定为卡死（还有别的标记在）
   h.api.sessions.list = async () => ({ result: { ok: true, value: { items: [{ sessionId: sid, running: true }] } } });
 
-  h.scheduleWakeV2(key, 'atMention');
+  h.scheduleWakeChat(key, 'atMention');
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.ok(Number(st.pendingSince) > 0, '暂存时必须写 pendingSince，否则看门狗永远不会回收这个会话');
@@ -1863,26 +1863,26 @@ await test('残留 turn 标记 + DSH 空闲：当场清掉并投递，不让群�
   h.v2TurnStartAt.set(sid, Date.now() - 6 * 60 * 60 * 1000);
   h.api.sessions.list = async () => ({ result: { ok: true, value: { items: [{ sessionId: sid, running: false }] } } });
 
-  h.scheduleWakeV2(key, 'atMention');
+  h.scheduleWakeChat(key, 'atMention');
   // 注意：投递时 ensureSession 会新建 fixture 会话，所以只断言「有唤醒真的投出去了」。
   for (let i = 0; i < 100 && h.calls.prompts.length === 0; i++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.ok(h.calls.prompts.length > 0, '残留标记应被就地清掉并投递唤醒');
   assert.equal(h.v2TurnStartAt.has(sid), false, '残留 turn 标记应被清掉');
-  assert.equal((h.socialV2.conversations.get(key)?.pendingWakeReasons ?? []).length, 0, '即时投递后不该再留重复的暂存意图');
+  assert.equal((h.socialData.conversations.get(key)?.pendingWakeReasons ?? []).length, 0, '即时投递后不该再留重复的暂存意图');
 });
 await test('忙标记是 pendingWakeKey 残留时，DSH 报空闲也要能自救', async (h) => {
   h.setMode('chat');
   const key = 'group:456';
   const sid = 'session-stuck2';
   h.state.sessions[key] = sid;
-  // pendingWakeKey 不在 staleTurnMarkerV2 的判定范围里（它是另一类标记），
+  // pendingWakeKey 不在 staleTurnMarkerChat 的判定范围里（它是另一类标记），
   // 只能靠「DSH 明确报告空闲」这条兜底救回来——线上卡死的往往就是这种。
   h.pendingWakeKeys.add(key);
   h.api.sessions.list = async () => ({ result: { ok: true, value: { items: [{ sessionId: sid, running: false }] } } });
 
-  h.scheduleWakeV2(key, 'speaker:玄真');
+  h.scheduleWakeChat(key, 'speaker:玄真');
   for (let i = 0; i < 100 && h.calls.prompts.length === 0; i++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -1892,10 +1892,10 @@ await test('忙标记是 pendingWakeKey 残留时，DSH 报空闲也要能自救
 
 await test('陈旧暂存意图不该被更新的未读消息「顺带」补投', async (h) => {
   const st = { unread: [{ seq: 385 }, { seq: 384 }] };
-  assert.equal(h.pendingWakeStillRelevantV2(st, { reason: 'atMention', seq: 384 }), true, '自己那条还在未读里 → 补投');
-  assert.equal(h.pendingWakeStillRelevantV2(st, { reason: 'speaker:玄真', seq: 361 }), false, '老意图不能因为「有更新的未读」就复活');
-  assert.equal(h.pendingWakeStillRelevantV2({ unread: [] }, { reason: 'x', seq: 1 }), false);
-  assert.equal(h.pendingWakeStillRelevantV2(st, null), false, '旧字符串残留按不补投处理');
+  assert.equal(h.pendingWakeStillRelevantChat(st, { reason: 'atMention', seq: 384 }), true, '自己那条还在未读里 → 补投');
+  assert.equal(h.pendingWakeStillRelevantChat(st, { reason: 'speaker:玄真', seq: 361 }), false, '老意图不能因为「有更新的未读」就复活');
+  assert.equal(h.pendingWakeStillRelevantChat({ unread: [] }, { reason: 'x', seq: 1 }), false);
+  assert.equal(h.pendingWakeStillRelevantChat(st, null), false, '旧字符串残留按不补投处理');
 });
 
 // 线上事故（2026-09-30）：AI 问「你活动在哪个镇」，玄真答「@哦鲸鲸 玉山镇」。
@@ -1903,7 +1903,7 @@ await test('陈旧暂存意图不该被更新的未读消息「顺带」补投',
 // 不在上一次的 newMessages（那时还没到），也不在下一次的（baseline 取了「当前最新 seq」），
 // 却躺在 unread 里——AI 只看 newMessages，收尾再 mark_read，这条就被静默清掉了。
 await testWith(
-  { config: { socialV2: { wait: { minQuietAfterNewMs: 0, minMs: 50, defaultMs: 100, maxMs: 5000 } } } },
+  { config: { socialData: { wait: { minQuietAfterNewMs: 0, minMs: 50, defaultMs: 100, maxMs: 5000 } } } },
   '两次 wait 之间到达的消息不会掉进缝里（玉山镇那次）',
   async (h) => {
     const server = h.startConsoleServer();
@@ -1920,7 +1920,7 @@ await testWith(
       st.lastUnreadSeq = 452;
       st.deliveredSeq = 451;
 
-      const res = await apiRequest(server, '/api/socialV2/wait?token=fixture-console-token', {
+      const res = await apiRequest(server, '/api/socialData/wait?token=fixture-console-token', {
         body: { key, timeoutMs: 800, minNewMessages: 1, quietMs: 0 }, agentToken: st.agentToken
       });
       assert.equal(res.status, 200);
@@ -1942,7 +1942,7 @@ await test('mark_read 不该把从没给 AI 看过的消息静默清掉', async 
     st.lastUnreadSeq = 452;
     st.deliveredSeq = 451; // 从没投给 AI
 
-    const r1 = await apiRequest(server, '/api/socialV2/mark-read?token=fixture-console-token', { body: { key }, agentToken: st.agentToken });
+    const r1 = await apiRequest(server, '/api/socialData/mark-read?token=fixture-console-token', { body: { key }, agentToken: st.agentToken });
     assert.equal(r1.status, 200);
     assert.equal(r1.body.keptUnread, 1, '没看过的消息要保留，不能当作已读');
     assert.equal(st.unread.length, 1, '保留在未读里，下次还能补');
@@ -1950,7 +1950,7 @@ await test('mark_read 不该把从没给 AI 看过的消息静默清掉', async 
 
     // 真看过了（水位推进到 452）就正常清掉
     st.deliveredSeq = 452;
-    const r2 = await apiRequest(server, '/api/socialV2/mark-read?token=fixture-console-token', { body: { key }, agentToken: st.agentToken });
+    const r2 = await apiRequest(server, '/api/socialData/mark-read?token=fixture-console-token', { body: { key }, agentToken: st.agentToken });
     assert.equal(r2.body.markedCount, 1);
     assert.equal(st.unread.length, 0);
     assert.equal(r2.body.keptUnread, undefined, '看过的正常清，不该再保留');
@@ -1985,7 +1985,7 @@ await test('表情包管理接口：本地备注 / QQ 备注 / 置顶 / 删除 /
     assert.equal(noted.status, 200);
     assert.equal(noted.body.sticker.localRemark, '捂耳朵猫');
     assert.ok(!h.calls.ws.some((c) => c.action === 'modify_custom_face'), '改本地备注不该去动 QQ');
-    const forAi = await apiRequest(server, `/api/socialV2/sticker-list?${T}&key=${encodeURIComponent(key)}`, { method: 'GET', agentToken: st.agentToken });
+    const forAi = await apiRequest(server, `/api/socialData/sticker-list?${T}&key=${encodeURIComponent(key)}`, { method: 'GET', agentToken: st.agentToken });
     assert.equal(forAi.status, 200);
     assert.ok(forAi.body.stickers.some((s) => s.localRemark === '捂耳朵猫'), 'AI 的列表里能拿到本地备注');
 
@@ -2094,7 +2094,7 @@ await test('ffmpeg 信息解析：从 -i 的 stderr 抠时长与分辨率', asyn
 });
 // 用 ffmpegPath='none' 显式关掉抽帧，这样用例不依赖「宿主机有没有装 ffmpeg」。
 await testWith(
-  { config: { socialV2: { video: { ffmpegPath: 'none' } } } },
+  { config: { socialData: { video: { ffmpegPath: 'none' } } } },
   '本机没 ffmpeg 时视频工具老实降级（不假装能看）',
   async (h) => {
     const server = h.startConsoleServer();
@@ -2140,7 +2140,7 @@ const videoDownloadFixture = {
 await testWith(
   {
     globals: videoDownloadFixture,
-    config: { socialV2: { video: { ffmpegPath: process.execPath, maxBytes: 12345678, fetchTimeoutMs: 120000 } } },
+    config: { socialData: { video: { ffmpegPath: process.execPath, maxBytes: 12345678, fetchTimeoutMs: 120000 } } },
   },
   '聊天视频边下边落盘：按配置的上限下载，抽不出帧也要降级到封面',
   async (h) => {
@@ -2172,7 +2172,7 @@ const videoTooLargeFixture = {
   safeFetchBuffer: async () => ({ url: 'https://public.invalid/c.jpg', statusCode: 200, buffer: PNG12 }),
 };
 await testWith(
-  { globals: videoTooLargeFixture, config: { socialV2: { video: { ffmpegPath: process.execPath, maxBytes: 12345678 } } } },
+  { globals: videoTooLargeFixture, config: { socialData: { video: { ffmpegPath: process.execPath, maxBytes: 12345678 } } } },
   '视频超过抓取上限时如实说明并降级到封面',
   async (h) => {
     const server = h.startConsoleServer();
@@ -2203,7 +2203,7 @@ await testWith(
 // 所以每轮唤醒提示里必须自带这一条，否则改了 preset 也得等会话重建才生效。
 await test('唤醒提示里给出还嘴口径（默认幽默 + 贴吧老哥风 + 边界）', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /默认幽默/, '默认要幽默，别端着');
   assert.match(prompt, /贴吧老哥/, '真要还嘴时按贴吧老哥那一档');
   assert.match(prompt, /不碰家人、地域、性别、外貌、疾病/, '划出不能碰的靶子');
@@ -2223,7 +2223,7 @@ await test('合并转发图片：分页取、报总数、单次上限可配', as
     const media = Array.from({ length: 12 }, (_, i) => ({ kind: 'image', file: `f${i}.jpg`, url: `https://public.invalid/${i}.jpg`, label: '[图片]' }));
 
     // 取第 6~9 张（offset=5, limit=4）
-    const r1 = await apiRequest(server, `/api/socialV2/forward-media?${T}`, {
+    const r1 = await apiRequest(server, `/api/socialData/forward-media?${T}`, {
       body: { key, media, offset: 5, limit: 4 }, agentToken: st.agentToken
     });
     assert.equal(r1.status, 200);
@@ -2236,7 +2236,7 @@ await test('合并转发图片：分页取、报总数、单次上限可配', as
     assert.equal(r1.body.images.map((x) => x.index).join(','), '6,7,8,9');
 
     // 取最后一窗
-    const r2 = await apiRequest(server, `/api/socialV2/forward-media?${T}`, {
+    const r2 = await apiRequest(server, `/api/socialData/forward-media?${T}`, {
       body: { key, media, offset: 10, limit: 4 }, agentToken: st.agentToken
     });
     assert.equal(r2.body.images.length, 2, '只剩 2 张');
@@ -2245,7 +2245,7 @@ await test('合并转发图片：分页取、报总数、单次上限可配', as
 
     // 单次上限要被压住（默认 maxImageLimit=20），不能一句话把几十张图全塞进上下文
     const many = Array.from({ length: 40 }, (_, i) => ({ kind: 'image', file: `g${i}.jpg`, url: `https://public.invalid/g${i}.jpg`, label: '[图片]' }));
-    const r3 = await apiRequest(server, `/api/socialV2/forward-media?${T}`, {
+    const r3 = await apiRequest(server, `/api/socialData/forward-media?${T}`, {
       body: { key, media: many, offset: 0, limit: 999 }, agentToken: st.agentToken
     });
     assert.equal(r3.body.total, 40);
@@ -2253,7 +2253,7 @@ await test('合并转发图片：分页取、报总数、单次上限可配', as
     assert.equal(r3.body.images.length, 20);
 
     // 没有图片时不能崩
-    const r4 = await apiRequest(server, `/api/socialV2/forward-media?${T}`, { body: { key, media: [] }, agentToken: st.agentToken });
+    const r4 = await apiRequest(server, `/api/socialData/forward-media?${T}`, { body: { key, media: [] }, agentToken: st.agentToken });
     assert.equal(r4.status, 200);
     assert.equal(r4.body.total, 0);
   } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
@@ -2287,7 +2287,7 @@ await test('批总量预算：撞上限先压小塞进去，而不是整张丢�
   assert.equal(await h.fitBatchBudget(big, 10 * 1024 * 1024, 10 * 1024 * 1024 + 10 * 1024), null, '剩余 <40KB 判超限');
 });
 
-// 控制台「表情包」分区的开关：socialV2.sticker.autoLabel。
+// 控制台「表情包」分区的开关：socialData.sticker.autoLabel。
 // 关掉后唤醒提示里连欠账都不提，AI 自然不会再主动补；已经写好的备注不受影响。
 // （提示层测，是因为「AI 会不会补」这件事**只由提示驱动**——线上实测它的推理会绕过弱提示。）
 // source 用 manual：启动同步会清掉「不在 QQ 收藏列表里的 source=qq 条目」，
@@ -2298,16 +2298,16 @@ const UNLABELED_FIXTURE = [
 ];
 await testWith({ stickerState: UNLABELED_FIXTURE }, '自动补备注开关（默认开）：唤醒提示里有欠账与具体 id', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /还没有任何备注/, '默认要报出欠账');
   assert.match(prompt, /本次就补这 2 个/, '要给具体 id，别只给抽象指令');
 });
 await testWith(
-  { stickerState: UNLABELED_FIXTURE, config: { socialV2: { sticker: { autoLabel: false } } } },
+  { stickerState: UNLABELED_FIXTURE, config: { socialData: { sticker: { autoLabel: false } } } },
   '自动补备注开关（关）：唤醒提示里不再催，且不影响其它提示',
   async (h) => {
     h.setMode('chat');
-    const prompt = h.buildWakePromptV2('group:456', 'message');
+    const prompt = h.buildWakePromptChat('group:456', 'message');
     assert.ok(!/还没有任何备注/.test(prompt), '关掉后不该再出现欠账');
     assert.match(prompt, /【可用表情包】/, '常规表情清单照旧');
     assert.match(prompt, /【此刻发表情包】/, '其它表情提示不受影响');
@@ -2359,7 +2359,7 @@ const MANY_UNLABELED_FIXTURE = ['a', 'b', 'c', 'd', 'e'].map((i) => (
   { id: `stk-${i}`, resId: `stk-${i}`, url: `https://x/${i}.jpg`, md5: i.toUpperCase(), desc: '', localRemark: '', localNote: '', tags: [], source: 'manual' }
 ));
 await testWith(
-  { stickerState: MANY_UNLABELED_FIXTURE, config: { socialV2: { sticker: { manualLabelCount: 3 } } } },
+  { stickerState: MANY_UNLABELED_FIXTURE, config: { socialData: { sticker: { manualLabelCount: 3 } } } },
   '手动触发补备注：一次几个由配置决定',
   async (h) => {
     const server = h.startConsoleServer();
@@ -2432,7 +2432,7 @@ await testWith({ forwardFixtures: FORWARD_FIXTURES }, '多层合并转发：递�
     // 让这个 forward id 属于「本会话见过」，否则安全闸门会拒（真实路径也是这样）
     h.appendSocialV2Message(key, '某人', '[转发消息 id=f-outer]', '[转发消息 id=f-outer]', false, false, 500000, [], '10001', ['f-outer'], null, null);
     const T = 'token=fixture-console-token';
-    const url = (extra = '') => `/api/socialV2/forward-message?${T}&key=${encodeURIComponent(key)}&id=f-outer${extra}`;
+    const url = (extra = '') => `/api/socialData/forward-message?${T}&key=${encodeURIComponent(key)}&id=f-outer${extra}`;
 
     const r1 = await apiRequest(server, url(), { method: 'GET', agentToken: st.agentToken });
     assert.equal(r1.status, 200, r1.body?.error || '');
@@ -2466,7 +2466,7 @@ await testWith({ forwardFixtures: FORWARD_FIXTURES }, '多层合并转发：递�
     assert.equal(r3.body.hasMore, false);
 
     // 直接用嵌套 id 查它的完整内容（安全闸门要放行——它被 remember 过）
-    const r4 = await apiRequest(server, `/api/socialV2/forward-message?${T}&key=${encodeURIComponent(key)}&id=f-inner&limit=100`, { method: 'GET', agentToken: st.agentToken });
+    const r4 = await apiRequest(server, `/api/socialData/forward-message?${T}&key=${encodeURIComponent(key)}&id=f-inner&limit=100`, { method: 'GET', agentToken: st.agentToken });
     assert.equal(r4.status, 200, r4.body?.error || '');
     assert.equal(r4.body.total, 18);
     assert.equal(r4.body.messages.length, 18, '按嵌套 id 查能拿到全部 18 条');
@@ -2506,7 +2506,7 @@ await test('图片投喂安全区：超 1.5MB 或 2.5MP 必须重编码（DSH �
 // 这条和「被挑衅可以骂回去」是同类策略（给许可 + 划边界），所以都写在每轮唤醒提示里。
 await test('唤醒提示里明确允许「被整蛊不用老实答」并划了边界', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【被整蛊不用老实答】/, '要给明确许可');
   assert.match(prompt, /不必按字面回答/, '要说清可以不老实答');
   assert.match(prompt, /顺着演、反手整回去/, '给出具体做法');
@@ -2525,7 +2525,7 @@ await test('唤醒提示里明确允许「被整蛊不用老实答」并划了�
 // 顺带：提示文本本身以前也满是破折号（在示范这种句式），已经一起清干净。
 await test('反公式化：唤醒提示点名禁用破折号与发语词，并要求短句', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【别用这些公式化句式】/);
   assert.match(prompt, /不要用破折号/, '破折号要明确禁掉（写法上不能用字面破折号，否则等于在示范）');
   assert.match(prompt, /「行，」「好的，」「所以」「其实，」/, '点名具体发语词');
@@ -2539,7 +2539,7 @@ await test('反公式化：唤醒提示点名禁用破折号与发语词，并�
 // 群里聊得热闹但没自己的事时：发一张贴气氛的表情包冒泡，比硬接一句或直接消失都自然。
 await test('没人理时可以发表情包冒泡（提示里要有这个出口）', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /没人理你时用表情包冒泡|没人理你时可以发张表情包冒泡|发一张\*\*对得上当下气氛\*\*的表情包/, '要给「用表情包冒泡」这个出口');
   assert.match(prompt, /别把情绪配反|别配反情绪/, '选图要贴气氛');
 });
@@ -2547,7 +2547,7 @@ await test('没人理时可以发表情包冒泡（提示里要有这个出口�
 // 有些消息 @ 某个人比引用更合适（答他的问题、cue 他、把话抛给他）。
 await test('回复某个人时可以用 atUserId 点名', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /atUserId/, '要提到点名工具');
   assert.match(prompt, /要回的是某个人/, '说清什么场景该点名');
   assert.match(prompt, /别每条都 @/, '别滥用');
@@ -2556,7 +2556,7 @@ await test('回复某个人时可以用 atUserId 点名', async (h) => {
 // 复读是群聊常见玩法：不该惊讶/质疑，合适时自己也可以跟着复。
 await test('复读是正常玩法：不许惊讶质疑，允许跟着复', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【复读是正常玩法】/);
   assert.match(prompt, /不要惊讶也不要问/, '先禁掉「你们怎么都在复读」这种扫兴反应');
   assert.match(prompt, /也可以跟着复读一句/, '要给「自己也能复读」的许可');
@@ -2566,7 +2566,7 @@ await test('复读是正常玩法：不许惊讶质疑，允许跟着复', async
 // 梗图 / 转发消息的内容常是反串玩梗，不是有人在陈述事实。
 await test('梗图/转发消息要按反串玩梗甄别，别当成待核实事实', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /【梗图\/转发消息多为反串玩梗】/);
   assert.match(prompt, /不是有人在跟你陈述事实/, '说清误判点');
   assert.match(prompt, /不要当成待核实的信息/, '别去求证/纠正');
@@ -2632,7 +2632,7 @@ await test('媒体提示要提醒可能是动图', async (h) => {
 // 多帧是同一个表情的不同瞬间，不是「你发了好几张图」。
 await test('唤醒提示要说清多帧是同一个表情', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /动图会一次给你好几帧/, '要预告多帧');
   assert.match(prompt, /同一个表情/, '要说清多帧属于同一个表情');
   assert.match(prompt, /别只看第一帧就下结论/, '禁止只看第一帧');
@@ -2657,7 +2657,7 @@ function histMsg(seq, text, { userId = 2814656262, id = null } = {}) {
 }
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, maxMessages: 100, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  config: { socialData: { backfill: { enabled: true, maxMessages: 100, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, '断线期间第一条'), histMsg(102, '断线期间第二条'), histMsg(103, '断线期间第三条')] } }
 }, '掉线补拉：断线期间漏掉的消息能补回来', async (h) => {
   h.setMode('chat');
@@ -2686,7 +2686,7 @@ await test('会话重建后旧令牌要有宽限期（否则在跑的那个回�
   const key = 'group:456';  // 用白名单内的群（private:456 不在装置白名单里，唤醒会被跳过）
   const st = h.getSocialV2State(key);
   // 先真建一个会话（retireSession 只对「有会话」的会话做事）
-  await h.sendWakePromptV2(key, 'admin').catch(() => {});
+  await h.sendWakePromptChat(key, 'admin').catch(() => {});
   const oldToken = String(st.agentToken);
   assert.equal(h.agentTokenOk(key, oldToken), true, '当前令牌当然可用');
 
@@ -2706,7 +2706,7 @@ await test('会话重建后旧令牌要有宽限期（否则在跑的那个回�
 // 而旧逻辑用「见过的最大 seq」当水位 → 比它小的新消息被永久过滤掉。
 // 而且 get_*_msg_history 对 message_seq 参数无效（传什么都返回最近 N 条）。所以必须按 message_id + 时间判。
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  config: { socialData: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: {
     private: {
       123: [{
@@ -2740,7 +2740,7 @@ await testWith({
 // 但因为超过 10 分钟闸门「只入库不唤醒」→ AI 从没被叫起来看它，用户看到的就是「没响应」。
 // 私聊是有人直接找它，闸门要放宽（群里刷屏的旧账仍然只入库）。
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  config: { socialData: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: {
     private: {
       123: [{
@@ -2770,7 +2770,7 @@ await testWith({
 // 线上事故（2026-10-15 群 1050666134）：故障窗口里漏了 6 条**比本地最新一条更早**的消息
 // （11:20~13:21），而本地最新一条是 14:03。用「本地最新一条」当时间锚点会永远补不到这种中间缺口。
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, maxAgeMs: 6 * 3600 * 1000 } } },
+  config: { socialData: { backfill: { enabled: true, maxAgeMs: 6 * 3600 * 1000 } } },
   history: {
     group: {
       456: [
@@ -2795,7 +2795,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true } } },
+  config: { socialData: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, 'A'), histMsg(102, 'B')] } }
 }, '掉线补拉：重复调用不会补第二次', async (h) => {
   h.setMode('chat');
@@ -2809,7 +2809,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true } } },
+  config: { socialData: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, '别人发的'), histMsg(102, '机器人自己发的', { userId: BF_BOT })] } }
 }, '掉线补拉：过滤掉机器人自己发的消息', async (h) => {
   h.setMode('chat');
@@ -2821,7 +2821,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
+  config: { socialData: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, '刚漏的一条')] } }
 }, '掉线补拉：少且新 → 唤醒 AI', async (h) => {
   h.setMode('chat');
@@ -2834,7 +2834,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 2, wakeMaxAgeMs: 600000 } } },
+  config: { socialData: { backfill: { enabled: true, wakeMaxMessages: 2, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, 'a'), histMsg(102, 'b'), histMsg(103, 'c'), histMsg(104, 'd')] } }
 }, '掉线补拉：补回太多 → 只入库不唤醒（别对旧账刷屏）', async (h) => {
   h.setMode('chat');
@@ -2846,7 +2846,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 60000 } } },
+  config: { socialData: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 60000 } } },
   history: { group: { 456: [
     { ...histMsg(101, '很久以前漏的'), time: Math.floor(Date.now() / 1000) - 7200 }
   ] } }
@@ -2860,7 +2860,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: true } } },
+  config: { socialData: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, 'A', { id: 'known-1' }), histMsg(102, 'B'), histMsg(103, 'C')] } }
 }, '掉线补拉：基线播种（重启后也能补）', async (h) => {
   h.setMode('chat');
@@ -2875,7 +2875,7 @@ await testWith({
 });
 
 await testWith({
-  config: { socialV2: { backfill: { enabled: false } } },
+  config: { socialData: { backfill: { enabled: false } } },
   history: { group: { 456: [histMsg(101, 'A')] } }
 }, '掉线补拉：开关关闭时什么都不做', async (h) => {
   h.setMode('chat');
@@ -2891,7 +2891,7 @@ await testWith({
 // 线上实测「别老用」被模型读成「偶尔用没关系」，规则挂了一轮「行，」照样一天出现两次。
 await test('反公式化：发语词与总结标签要绝对禁，不能写成「别老用」', async (h) => {
   h.setMode('chat');
-  const prompt = h.buildWakePromptV2('group:456', 'message');
+  const prompt = h.buildWakePromptChat('group:456', 'message');
   assert.match(prompt, /下列写法一个都不要用/, '要写成绝对禁止');
   assert.ok(!/开场别老用/.test(prompt), '不能再留「别老用」这种软措辞');
   assert.match(prompt, /「行，」「好的，」「所以」/, '点名具体发语词');
@@ -2902,17 +2902,17 @@ await test('反公式化：发语词与总结标签要绝对禁，不能写成�
 // 发送收口必须真的会削——提示词压不住的确定性字符串，靠这层兜底。
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '发送收口会削掉「行，」「总结：」（提示词兜底）', async (h) => {
   h.setMode('chat');
-  // sendMessagesV2 返回的就是「实际发出去的那几条」，直接断言它。
-  const texts = await h.sendMessagesV2('group:456', ['行，我先按S31那个价位看，谢了', '总结：加钱才有那一档体验', '普通一句话'], []);
+  // sendMessagesChat 返回的就是「实际发出去的那几条」，直接断言它。
+  const texts = await h.sendMessagesChat('group:456', ['行，我先按S31那个价位看，谢了', '总结：加钱才有那一档体验', '普通一句话'], []);
   assert.ok(texts.includes('我先按S31那个价位看，谢了'), `「行，」没被削：${JSON.stringify(texts)}`);
   assert.ok(texts.includes('加钱才有那一档体验'), `「总结：」没被削：${JSON.stringify(texts)}`);
   assert.ok(texts.includes('普通一句话'), '正常消息必须原样发出');
 });
 
 // 开关关掉时不能再削（有人就想要原样）
-await testWith({ config: { socialV2: { style: { scrubFormulaic: false } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '口播清洗可以关掉', async (h) => {
+await testWith({ config: { socialData: { style: { scrubFormulaic: false } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '口播清洗可以关掉', async (h) => {
   h.setMode('chat');
-  const texts = await h.sendMessagesV2('group:456', ['行，我先按S31那个价位看'], []);
+  const texts = await h.sendMessagesChat('group:456', ['行，我先按S31那个价位看'], []);
   assert.ok(texts.includes('行，我先按S31那个价位看'), `关掉后不该削：${JSON.stringify(texts)}`);
 });
 
@@ -3007,7 +3007,7 @@ await test('跨会话读文件：任一有效会话令牌都该放行（写操�
   assert.equal(h.agentTokenOk('group:456', tokenB), false, '写操作不能被别的会话令牌放行');
   // 宽限期内的旧令牌同样算有效
   const old = String(b.agentToken);
-  await h.sendWakePromptV2('private:1472298635', 'admin').catch(() => {});
+  await h.sendWakePromptChat('private:1472298635', 'admin').catch(() => {});
   h.retireSession('private:1472298635');
   assert.equal(h.anyAgentTokenOk(old), true, '宽限期内的旧令牌也放行读操作');
 });
@@ -3015,7 +3015,7 @@ await test('跨会话读文件：任一有效会话令牌都该放行（写操�
 // 视频语音转写（ASR）：桥接负责用本机 ffmpeg 抽 16k 单声道音轨，POST 给外部服务。
 // 本机（2 核/460MB）跑不动模型，服务实际跑在另一台机器上，所以这里 stub 掉网络。
 await testWith({
-  config: { socialV2: { video: { asr: { enabled: true, url: 'http://asr.test/transcribe', token: 'tok-123', maxSeconds: 30, timeoutMs: 5000 } } } },
+  config: { socialData: { video: { asr: { enabled: true, url: 'http://asr.test/transcribe', token: 'tok-123', maxSeconds: 30, timeoutMs: 5000 } } } },
   globals: {
     // 假 ffmpeg：往 stdout 吐一段「wav」（内容不重要，只要非空）
     spawn: () => {
@@ -3063,7 +3063,7 @@ await testWith({
 // 发语音条：文本 → TTS 服务 → QQ record 段。本机不跑 TTS/RVC（在 tzd 上），用 stub。
 let capturedTts = null;
 await testWith({
-  config: { socialV2: { tts: { enabled: true, url: 'http://tts.test/tts', token: 'tts-tok', maxChars: 10, cooldownMs: 60000, model: 'aiyi' } } },
+  config: { socialData: { tts: { enabled: true, url: 'http://tts.test/tts', token: 'tts-tok', maxChars: 10, cooldownMs: 60000, model: 'aiyi' } } },
   globals: {
     fetch: async (url, init) => {
       capturedTts = { url: String(url), headers: init?.headers, body: JSON.parse(init?.body ?? '{}') };
@@ -3082,7 +3082,7 @@ await testWith({
     h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
-    const base = `/api/socialV2/send-voice?token=fixture-console-token`;
+    const base = `/api/socialData/send-voice?token=fixture-console-token`;
     const ok = await apiRequest(server, base, { method: 'POST', agentToken: st.agentToken, body: { key, text: '你好呀' } });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.equal(capturedTts.url, 'http://tts.test/tts', '要调到 TTS 服务');
@@ -3114,7 +3114,7 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重�
   assert.equal(dup.status, 'uncertain');
   assert.match(dup.reason, /可能已经发到群里/, dup.reason);
   // 真发一次：必须被拦下，而且一条都没发出去
-  const err = await h.sendMessagesV2('group:456', ['一天念那么多字，电费你出啊'], []).then(() => null, (e) => e);
+  const err = await h.sendMessagesChat('group:456', ['一天念那么多字，电费你出啊'], []).then(() => null, (e) => e);
   assert.ok(err && err.duplicateGuard === true, `应当被闸门拦下，实际：${err?.message}`);
 });
 
@@ -3146,7 +3146,7 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重�
   assert.ok(h.checkTextDupGuard('group:456', ['一天念那么多字， 电费你出啊'.replace('， ', '，')]), '归一化后仍应命中');
 });
 
-await testWith({ config: { socialV2: { send: { dupGuard: { enabled: false } } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门可以关掉', async (h) => {
+await testWith({ config: { socialData: { send: { dupGuard: { enabled: false } } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门可以关掉', async (h) => {
   h.setMode('chat');
   h.recordAiTextSend('group:456', '同一句', 'uncertain');
   assert.equal(h.checkTextDupGuard('group:456', ['同一句']), null, '关掉后不拦');

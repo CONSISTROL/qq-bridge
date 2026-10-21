@@ -10,7 +10,7 @@ import { $, autoGrowTextareas } from './core/dom.js';
 import { iconElement } from './core/icons.js';
 
 import * as overview from './views/overview.js';
-import * as social2 from './views/social2.js';
+import * as chat from './views/chat.js';
 import * as memorydb from './views/memorydb.js';
 import * as album from './views/album.js';
 import * as voicepack from './views/voicepack.js';
@@ -23,13 +23,13 @@ import * as plugins from './views/plugins.js';
 import * as capabilities from './views/capabilities.js';
 import * as mc from './views/mc.js';
 
-const VIEWS = [overview, social2, memorydb, album, voicepack, persona, autonomy, security, ops, tools, capabilities, plugins, mc];
+const VIEWS = [overview, chat, memorydb, album, voicepack, persona, autonomy, security, ops, tools, capabilities, plugins, mc];
 const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 // 手机底栏只放最常用的四个分区；其余进「更多」抽屉。
 const MOBILE_PRIMARY = [
   ['overview', '总览'],
-  ['social2', '聊天'],
+  ['chat', '聊天'],
   ['memorydb', '记忆'],
   ['album', '相册']
 ];

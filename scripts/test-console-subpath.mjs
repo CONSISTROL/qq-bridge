@@ -65,8 +65,8 @@ check('反代：已被改写的 <前缀>/api/restart 原样使用（不双前缀
   assert.notEqual(resolve(rewritten, PROXY), `${PREFIX}${PREFIX}/api/restart`);
 });
 check('反代：带 query 的改写地址同样不双前缀', () => {
-  const rewritten = `${PREFIX}/api/socialV2/tool-log?limit=200`;
-  assert.equal(resolve(rewritten, PROXY), `${PREFIX}/api/socialV2/tool-log`);
+  const rewritten = `${PREFIX}/api/socialData/tool-log?limit=200`;
+  assert.equal(resolve(rewritten, PROXY), `${PREFIX}/api/socialData/tool-log`);
   assert.equal(new URL(relativeUrl(rewritten), PROXY).search, '?limit=200');
 });
 check('反代：恰好等于前缀（无尾斜杠）时原样使用', () => {

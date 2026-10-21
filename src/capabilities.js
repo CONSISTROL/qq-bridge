@@ -7,7 +7,7 @@
 //   · 具体怎么实现（刷 B站用到搜索、字幕、抽帧、直播状态…）**不暴露给用户**，都收在能力后面。
 //
 // 一个能力可以覆盖多个底层 flag（flags 数组）：能力开 = 这些 flag 全开；能力关 = 全关。
-// 状态仍存 config.socialV2.plugins，判定入口 capabilityEnabled(plugins, flag)。
+// 状态仍存 config.socialData.plugins，判定入口 capabilityEnabled(plugins, flag)。
 export const PLUGINS = [
   {
     id: 'chat',

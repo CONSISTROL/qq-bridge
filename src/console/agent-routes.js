@@ -17,7 +17,7 @@ export function createAgentRoutes(deps) {
     anyAgentTokenOk,
     appendActivity,
     appendFeedbackEntry,
-    appendMemoryV2,
+    appendMemoryChat,
     archiveStatsOf,
     atomicWriteJson,
     bot,
@@ -31,7 +31,7 @@ export function createAgentRoutes(deps) {
     fitMediaBuffer,
     formatForwardResponse,
     formatMemberRemarkList,
-    formatMemoryV2,
+    formatMemoryChat,
     fs,
     getDoubaoChannel,
     getSocialV2State,
@@ -62,7 +62,7 @@ export function createAgentRoutes(deps) {
     readFeedbackEntries,
     readJsonSafe,
     readToolLog,
-    recordSentMessagesV2,
+    recordSentMessagesChat,
     redactKnownTokensOnly,
     reloadMemoryState,
     removeClip,
@@ -72,31 +72,31 @@ export function createAgentRoutes(deps) {
     resolveGroupMemberName,
     resolveGroupRoles,
     resolveReplyInfo,
-    resolveReplyTargetV2,
+    resolveReplyTargetChat,
     safeFetchToFile,
     saveMemberStoreSafe,
     saveSocialV2State,
     scanPlugins,
-    scheduleReplyCheckV2,
+    scheduleReplyCheckChat,
     searchArchive,
     seenForwardIds,
-    sendMessagesV2,
+    sendMessagesChat,
     setMemberRemark,
     sharp,
     shouldBlockSilentReply,
-    socialV2,
+    socialData,
     spawn,
     unquoteJsonString,
   } = deps;
 
   async function handleActivityRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/tool-log') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/tool-log') {
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200));
       sendJson({ ok: true, entries: readToolLog(limit) });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/tool-log/clear') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/tool-log/clear') {
       if (req.headers['x-agent-token']) {
         sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
         return;
@@ -109,11 +109,11 @@ export function createAgentRoutes(deps) {
       return;
     }
     // ── 反馈 / 自己消息 / 消息详情 / 活跃成员 ────────────────────────────
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/feedback') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/feedback') {
       sendJson({ ok: true, entries: readFeedbackEntries() });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/feedback-clear') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/feedback-clear') {
       if (req.headers['x-agent-token']) {
         sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
         return;
@@ -123,7 +123,7 @@ export function createAgentRoutes(deps) {
       sendJson({ ok: true });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/feedback') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/feedback') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const level = body.level === 'warning' || body.level === 'error' ? body.level : 'info';
@@ -155,7 +155,7 @@ export function createAgentRoutes(deps) {
       }
       fTimes.push(fNow);
       feedbackTimes.set(key, fTimes.slice(-100));
-      const maxLength = Math.max(1, Number(cfg.socialV2?.feedback?.maxLength) || 500);
+      const maxLength = Math.max(1, Number(cfg.socialData?.feedback?.maxLength) || 500);
       const message = rawMessage.slice(0, maxLength);
       appendFeedbackEntry({
         id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
@@ -166,13 +166,13 @@ export function createAgentRoutes(deps) {
       });
       log(`[chat] AI 反馈 (${key}) [${level}]: ${message.slice(0, 80)}`);
       appendActivity(`${key} [chat] AI 反馈 [${level}]：${message.slice(0, 80)}`);
-      if (cfg.socialV2?.feedback?.notifyOwnerOnError && level === 'error' && cfg.ownerQQ) {
+      if (cfg.socialData?.feedback?.notifyOwnerOnError && level === 'error' && cfg.ownerQQ) {
         log(`[chat] 错误级反馈，可通知 owner ${cfg.ownerQQ}（当前仅记录日志）`);
       }
       sendJson({ ok: true, key, level, message });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/my-recent') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/my-recent') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
       if (!key) {
@@ -196,12 +196,12 @@ export function createAgentRoutes(deps) {
       sendJson({ ok: true, key, messages: mine });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/record-sent') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/record-sent') {
       // 内部接口不对外开放：防止持有会话 token 的调用方伪造“我说过…”的历史记录。
       sendJson({ ok: false, error: '该接口仅桥接内部使用，不接受外部调用' }, 403);
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/message-detail') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/message-detail') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const messageId = String(url.searchParams.get('messageId') ?? '').trim();
       if (!key || !messageId) {
@@ -273,7 +273,7 @@ export function createAgentRoutes(deps) {
   }
   async function handleForwardRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2ToolEnabled, v2SessionAllowed } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/forward-message') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/forward-message') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const id = String(url.searchParams.get('id') ?? '').trim();
       const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
@@ -320,7 +320,7 @@ export function createAgentRoutes(deps) {
         return;
       }
       try {
-        const fwdCfg = cfg.socialV2?.forward ?? {};
+        const fwdCfg = cfg.socialData?.forward ?? {};
         const clampNum = (v, dflt, min, max) => {
           // 注意：URLSearchParams.get() 缺参数时返回的是 **null**，而 Number(null) === 0，
           // 会被当成「显式传了 0」压到下限，线上表现就是「没传 limit 时本层只给 1 条」。
@@ -419,7 +419,7 @@ export function createAgentRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/forward-media') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/forward-media') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const media = Array.isArray(body.media) ? body.media : [];
@@ -443,7 +443,7 @@ export function createAgentRoutes(deps) {
         sendJson({ ok: false, error: '转发媒体读取仅 chat 模式可用' }, 403);
         return;
       }
-      const fwdCfg = cfg.socialV2?.forward ?? {};
+      const fwdCfg = cfg.socialData?.forward ?? {};
       const maxLimit = Math.max(1, Math.min(64, Number(fwdCfg.maxImageLimit) || 20));
       const offset = Math.max(0, Math.min(500, Number(body.offset) || 0));
       const limit = Math.max(1, Math.min(maxLimit, Number(body.limit) || Number(fwdCfg.imageLimit) || 8));
@@ -477,7 +477,7 @@ export function createAgentRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/active-members') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/active-members') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit')) || 10));
       if (!key) {
@@ -540,7 +540,7 @@ export function createAgentRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-append') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/memory-append') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const category = String(body.category ?? '').trim();
@@ -571,11 +571,11 @@ export function createAgentRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      appendMemoryV2(st, category, content, extra);
-      sendJson({ ok: true, key, category, content, memory: formatMemoryV2(st) });
+      appendMemoryChat(st, category, content, extra);
+      sendJson({ ok: true, key, category, content, memory: formatMemoryChat(st) });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-update') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/memory-update') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const category = String(body.category ?? '').trim();
@@ -673,10 +673,10 @@ export function createAgentRoutes(deps) {
         st.memberImpressions[newTarget] = im;
       }
       saveSocialV2State();
-      sendJson({ ok: true, key, category, memory: formatMemoryV2(st) });
+      sendJson({ ok: true, key, category, memory: formatMemoryChat(st) });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/memory') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/memory') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const category = String(url.searchParams.get('category') ?? '').trim();
       if (!key) {
@@ -713,19 +713,19 @@ export function createAgentRoutes(deps) {
         raw.activeTopics = [];
         raw.pendingThoughts = [];
       }
-      // 成员备注单独返回：它不在 social-v2 状态里，但控制台的「记忆」面板要一起显示。
+      // 成员备注单独返回：它不在 social 状态里，但控制台的「记忆」面板要一起显示。
       const remarkList = listMemberRemarks(deps.memberStore, key, { limit: MEMBER_REMARKS_PER_KEY_MAX });
       sendJson({
         ok: true,
         key,
         category,
-        formatted: formatMemoryV2({ ...st, ...raw }),
+        formatted: formatMemoryChat({ ...st, ...raw }),
         raw,
         memberRemarks: remarkList.entries,
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-remove') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/memory-remove') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const category = String(body.category ?? '').trim();
@@ -772,10 +772,10 @@ export function createAgentRoutes(deps) {
         delete st.memberImpressions[target];
       }
       saveSocialV2State();
-      sendJson({ ok: true, key, category, memory: formatMemoryV2(st) });
+      sendJson({ ok: true, key, category, memory: formatMemoryChat(st) });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-clear') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/memory-clear') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const category = String(body.category ?? '').trim();
@@ -804,13 +804,13 @@ export function createAgentRoutes(deps) {
       if (!category || category === 'pendingThought') st.pendingThoughts = [];
       if (!category || category === 'memberImpression') st.memberImpressions = {};
       saveSocialV2State();
-      sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryV2(st) });
+      sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryChat(st) });
       return;
     }
   }
   async function handleMemberRemarkRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/member-remarks') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/member-remarks') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const q = String(url.searchParams.get('q') ?? '').trim();
       const limit = Math.min(MEMBER_REMARKS_PER_KEY_MAX, Math.max(1, Number(url.searchParams.get('limit')) || 100));
@@ -846,7 +846,7 @@ export function createAgentRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/member-remark') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/member-remark') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const userId = String(body.userId ?? body.qq ?? '').trim();
@@ -918,7 +918,7 @@ export function createAgentRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/member-remark-remove') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/member-remark-remove') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const userId = String(body.userId ?? body.qq ?? '').trim();
@@ -954,7 +954,7 @@ export function createAgentRoutes(deps) {
     }
     // 真·QQ 群名片（set_group_card）：默认关闭，需要机器人是管理员/群主，且全群可见。
     // 这是写操作，只适合做「正名」，不该拿来当 AI 的私有记忆，私有记忆走上面的备注库。
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/set-member-card') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/set-member-card') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const userId = String(body.userId ?? body.qq ?? '').trim();
@@ -977,9 +977,9 @@ export function createAgentRoutes(deps) {
         sendJson({ ok: false, error: '群名片只能在群聊会话里设置' }, 400);
         return;
       }
-      // 默认关闭：必须由管理员在控制台显式打开 socialV2.tools.setMemberCard。
-      if (cfg.socialV2?.tools?.setMemberCard !== true) {
-        sendJson({ ok: false, error: '该工具未启用（需要在控制台打开 socialV2.tools.setMemberCard）' }, 403);
+      // 默认关闭：必须由管理员在控制台显式打开 socialData.tools.setMemberCard。
+      if (cfg.socialData?.tools?.setMemberCard !== true) {
+        sendJson({ ok: false, error: '该工具未启用（需要在控制台打开 socialData.tools.setMemberCard）' }, 403);
         return;
       }
       if (req.headers['x-agent-token']) {
@@ -995,7 +995,7 @@ export function createAgentRoutes(deps) {
           sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
           return;
         }
-        if (socialV2.paused) {
+        if (socialData.paused) {
           sendJson({ ok: false, error: 'AI 已暂停，不能改群名片' }, 403);
           return;
         }
@@ -1050,7 +1050,7 @@ export function createAgentRoutes(deps) {
       const replyToMessageId = isReply ? body.replyToMessageId : body.replyToMessageId;
       const atUserId = body.atUserId ?? null;
       const key = isPrivate ? `private:${targetId}` : `group:${targetId}`;
-      if (socialV2.paused && token) {
+      if (socialData.paused && token) {
         sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行发送工具' }, 403);
         return;
       }
@@ -1110,7 +1110,7 @@ export function createAgentRoutes(deps) {
       let actualReplyToMessageId = replyToMessageId;
       if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
         const stForReply = getSocialV2State(key);
-        const resolved = await resolveReplyTargetV2(stForReply, kind, id, String(replyToMessageId).trim());
+        const resolved = await resolveReplyTargetChat(stForReply, kind, id, String(replyToMessageId).trim());
         if (!resolved) {
           sendJson(
             {
@@ -1124,7 +1124,7 @@ export function createAgentRoutes(deps) {
         quotedInfo = resolved.info;
         actualReplyToMessageId = resolved.messageId;
       }
-      const sendCfg = cfg.socialV2?.send ?? {};
+      const sendCfg = cfg.socialData?.send ?? {};
       const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
       if (message.length > maxChars) {
         sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400);
@@ -1149,19 +1149,19 @@ export function createAgentRoutes(deps) {
         }
         st.sendTimes.push(now);
         if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-        const sentMessages = await sendMessagesV2(key, [message], [], actualReplyToMessageId, atUserId);
-        recordSentMessagesV2(key, sentMessages);
+        const sentMessages = await sendMessagesChat(key, [message], [], actualReplyToMessageId, atUserId);
+        recordSentMessagesChat(key, sentMessages);
         st.lastAiReplyAt = now;
         st.lastActionAt = now;
         st.wakeConfig.noActionCount = 0;
         saveSocialV2State();
         log(`[send] ${url.pathname} ${key}: 成功 ${sentMessages.length}/1 条`);
         appendActivity(`${key} [send] 成功 ${sentMessages.length}/1 条：${message.slice(0, 80)}`);
-        if (sentMessages.length > 0) scheduleReplyCheckV2(key);
+        if (sentMessages.length > 0) scheduleReplyCheckChat(key);
         sendJson({ ok: true, key, sent: sentMessages.length, failed: sentMessages.length ? 0 : 1, quoted: quotedInfo });
       } catch (error) {
         if (error?.sent?.length) {
-          recordSentMessagesV2(key, error.sent);
+          recordSentMessagesChat(key, error.sent);
           log(`[send] ${url.pathname} ${key} 部分成功 ${error.sent.length}/1 条，已记录已发消息`);
         }
         // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -1197,7 +1197,7 @@ export function createAgentRoutes(deps) {
   }
   async function handleShareMediaRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-media') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-media') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const kind = String(body.kind ?? 'music') === 'video' ? 'video' : 'music';
@@ -1225,7 +1225,7 @@ export function createAgentRoutes(deps) {
           km[1] === 'group'
             ? await bot.raw('send_group_msg', { group_id: gid, message: seg })
             : await bot.raw('send_private_msg', { user_id: gid, message: seg });
-        recordSentMessagesV2(key, [textOf()]);
+        recordSentMessagesChat(key, [textOf()]);
         return r?.data?.message_id ?? r?.message_id ?? null;
       };
       const tmp = path.join(STATE_DIR, `media-${Date.now()}.bin`);
@@ -1255,7 +1255,7 @@ export function createAgentRoutes(deps) {
           reason = String(error?.message ?? error).slice(0, 120);
         }
         if (ok) {
-          recordSentMessagesV2(key, [`[${kind === 'video' ? '视频' : '音频'}] ${title || mediaUrl}`]);
+          recordSentMessagesChat(key, [`[${kind === 'video' ? '视频' : '音频'}] ${title || mediaUrl}`]);
           log(`[media] 已发${kind === 'video' ? '视频' : '音频'} ${key}（${Math.round(got.bytes / 1024)}KB）`);
           sendJson({ ok: true, key, messageId: mid, kind, bytes: got.bytes, fallback: false });
           return;
@@ -1298,7 +1298,7 @@ export function createAgentRoutes(deps) {
   }
   async function handleMemoryApiRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody } = routeCtx;
-    if (url.pathname === '/api/socialV2/memory') {
+    if (url.pathname === '/api/socialData/memory') {
       const body = req.method === 'POST' ? await readBody() : {};
       const key = String(body.key ?? url.searchParams.get('key') ?? '').trim();
       const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
@@ -1386,7 +1386,7 @@ export function createAgentRoutes(deps) {
             .split(',')
             .map((k) => k.trim())
             .filter((k) => /^(group|private):\d+$/.test(k));
-          sendJson(memoryPreview(keys.length ? keys : [...socialV2.conversations.keys()]));
+          sendJson(memoryPreview(keys.length ? keys : [...socialData.conversations.keys()]));
           return;
         }
         if (req.method !== 'POST') {
@@ -1397,7 +1397,7 @@ export function createAgentRoutes(deps) {
         if (action === 'reload') {
           // 手改了 state/*.json（或从备份里抠回一条）之后，让运行中的桥接重新读一遍，
           // 免得「文件是对的、页面上还是旧的」，也省掉一次为读盘而重启。
-          reloadMemoryState(['social-v2.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json']);
+          reloadMemoryState(['social.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json']);
           log('控制台：AI 记忆已从磁盘重新读入');
           sendJson({ ok: true, inventory: memoryAdmin.inventory() });
           return;
@@ -1834,7 +1834,7 @@ export function createAgentRoutes(deps) {
               ? await bot.raw('send_group_msg', { group_id: id, message: seg })
               : await bot.raw('send_private_msg', { user_id: id, message: seg });
           const mid = resp?.data?.message_id ?? resp?.message_id ?? null;
-          recordSentMessagesV2(key, [`[语音包] ${String(body.pack)}/${String(body.clip)}`]);
+          recordSentMessagesChat(key, [`[语音包] ${String(body.pack)}/${String(body.clip)}`]);
           log(`[voicepack] 已发 ${key}：${body.pack}/${body.clip}（${Math.round(buf.length / 1024)}KB）`);
           sendJson({ ok: true, key, messageId: mid, bytes: buf.length });
           return;
@@ -2024,7 +2024,7 @@ export function createAgentRoutes(deps) {
                 ? await bot.raw('send_group_msg', { group_id: gid, message: seg })
                 : await bot.raw('send_private_msg', { user_id: gid, message: seg });
             const mid = r?.message_id ?? r?.data?.message_id ?? null;
-            recordSentMessagesV2(sendKey, ['[手机截图]']);
+            recordSentMessagesChat(sendKey, ['[手机截图]']);
             log(`[phone] 已发截图 ${sendKey}（${Math.round(raw.length / 1024)}KB）`);
             sendJson({
               ok: true,

@@ -222,7 +222,7 @@ export function buildStickerContext(entries, max = 8, { autoLabel = true, labelP
   // **挂到闲置回合上**（群里没人等你、准备潜水收尾时先补一个再走），并**明说成本可忽略**，
   // 免得它替我们省 token 而一直拖着。
   const unlabeledList = list.filter(stickerNeedsRemark);
-  // 一轮补几个由 socialV2.sticker.autoLabelPerTurn 决定（默认 2，上限 6）：
+  // 一轮补几个由 socialData.sticker.autoLabelPerTurn 决定（默认 2，上限 6）：
   // 每张表情图都要进上下文，所以默认压得小；嫌慢可以在控制台调大。
   const perTurn = Math.max(1, Math.min(6, Number(labelPerTurn) || 2));
   const sample = unlabeledList.slice(0, perTurn).map((e) => e.id);

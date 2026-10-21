@@ -1,6 +1,6 @@
 // qq_pick_sticker 端到端测试（隔离实例 + 假 OneBot HTTP 服务）。
 //
-// 链路：POST /api/socialV2/pick-sticker（挑图）
+// 链路：POST /api/socialData/pick-sticker（挑图）
 //   → 拿本地图库候选 id
 //   → 再 POST 带 send.id（真发）
 //   → 断言假 OneBot 收到 send_private_msg，且 image 段是 base64 图片
@@ -50,9 +50,9 @@ cfg.consolePort = BRIDGE_PORT;
 cfg.consoleToken = E2E_TOKEN;
 cfg.snowluma = { ...(cfg.snowluma ?? {}), wsUrl: 'ws://127.0.0.1:1/', httpUrl: `http://127.0.0.1:${PORT}` };
 cfg.dsh = { ...(cfg.dsh ?? {}), baseUrl: 'http://127.0.0.1:1' };
-cfg.socialV2.sticker.pick.minIntervalMs = 0;        // 测试里不受冷却影响
-cfg.socialV2.sticker.pick.onlineFallback = false;   // 默认不出网
-cfg.socialV2.image.libraryDir = LIB;
+cfg.socialData.sticker.pick.minIntervalMs = 0;        // 测试里不受冷却影响
+cfg.socialData.sticker.pick.onlineFallback = false;   // 默认不出网
+cfg.socialData.image.libraryDir = LIB;
 fs.writeFileSync(path.join(TMP, 'config.json'), JSON.stringify(cfg, null, 2));
 if (!fs.existsSync(path.join(TMP, 'config.json'))) throw new Error('测试配置写入失败');
 
@@ -100,7 +100,7 @@ try {
   let up = false;
   for (let i = 0; i < 40 && !up; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/socialV2/config`, { headers: { 'x-console-token': E2E_TOKEN } });
+      const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/socialData/config`, { headers: { 'x-console-token': E2E_TOKEN } });
       up = res.ok;
     } catch { /* 还没起来 */ }
     if (!up) await sleep(500);
@@ -108,7 +108,7 @@ try {
   ok('隔离实例已启动', up);
 
   console.log('\n[1] 挑图（本地池）');
-  const pick = await api('/api/socialV2/pick-sticker', { key: KEY, context: '哈哈哈哈笑死我了，这也太离谱' });
+  const pick = await api('/api/socialData/pick-sticker', { key: KEY, context: '哈哈哈哈笑死我了，这也太离谱' });
   ok('接口 200', pick.status === 200 && pick.json?.ok === true, JSON.stringify(pick.json).slice(0, 200));
   ok('时机门放行', pick.json?.moment?.allowed === true, JSON.stringify(pick.json?.moment));
   ok('识别出笑点意图', (pick.json?.intent || []).includes('laugh'), JSON.stringify(pick.json?.intent));
@@ -119,14 +119,14 @@ try {
   ok('没有出网搜索', pick.json?.onlineUsed === false);
 
   console.log('\n[2] 严肃语境被拦住');
-  const serious = await api('/api/socialV2/pick-sticker', { key: KEY, context: '他奶奶住院了，我这几天都在医院' });
+  const serious = await api('/api/socialData/pick-sticker', { key: KEY, context: '他奶奶住院了，我这几天都在医院' });
   ok('时机门拦住', serious.json?.moment?.allowed === false, serious.json?.moment?.reason);
-  const blocked = await api('/api/socialV2/pick-sticker', { key: KEY, context: '他奶奶住院了', send: { id: top?.id } });
+  const blocked = await api('/api/socialData/pick-sticker', { key: KEY, context: '他奶奶住院了', send: { id: top?.id } });
   ok('带 send 也拒绝发送（409）', blocked.status === 409, `status=${blocked.status}`);
   ok('没有真的发出消息', received.length === 0, JSON.stringify(received));
 
   console.log('\n[3] 真的发出去（send.id → 本地图库图片）');
-  const sent = await api('/api/socialV2/pick-sticker', { key: KEY, context: '哈哈笑死，接个梗', send: { id: top?.id } });
+  const sent = await api('/api/socialData/pick-sticker', { key: KEY, context: '哈哈笑死，接个梗', send: { id: top?.id } });
   ok('发送接口 200', sent.status === 200 && sent.json?.ok === true, JSON.stringify(sent.json).slice(0, 300));
   ok('走图库图片通道', sent.json?.via === 'library', sent.json?.via);
   const msg = received.find((r) => r.action === 'send_private_msg');
@@ -138,12 +138,12 @@ try {
   ok('目标 QQ 正确', String(msg?.body?.user_id) === '10001', String(msg?.body?.user_id));
 
   console.log('\n[4] 同一轮不能再发一张（每轮上限）');
-  const again = await api('/api/socialV2/pick-sticker', { key: KEY, context: '哈哈哈哈', send: { id: top?.id } });
+  const again = await api('/api/socialData/pick-sticker', { key: KEY, context: '哈哈哈哈', send: { id: top?.id } });
   ok('被拦（409 或 ok:false）', again.status === 409 || again.json?.ok === false, JSON.stringify(again.json).slice(0, 200));
   ok('没有多发出第二条', received.filter((r) => r.action === 'send_private_msg').length === 1, String(received.length));
 
   console.log('\n[5] 候选之外的 id 不能发');
-  const bad = await api('/api/socialV2/pick-sticker', { key: KEY, context: '哈哈', searchOnline: false, send: { id: 'not-a-real-sticker' } });
+  const bad = await api('/api/socialData/pick-sticker', { key: KEY, context: '哈哈', searchOnline: false, send: { id: 'not-a-real-sticker' } });
   ok('拒绝未知 id', bad.status >= 400, `status=${bad.status} ${JSON.stringify(bad.json).slice(0, 160)}`);
 
   console.log(`\n结果：${pass} 项通过 / ${fail} 项失败`);

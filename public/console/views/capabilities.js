@@ -72,7 +72,7 @@ export async function mount(root) {
   };
 
   const load = async () => {
-    const r = await api('/api/socialV2/plugins', 'GET').catch(() => null);
+    const r = await api('/api/socialData/plugins', 'GET').catch(() => null);
     if (!r || !r.ok) {
       const box = $('#capList', view);
       if (box) box.innerHTML = '<div class="empty">插件清单加载失败<br>刷新页面或检查桥接日志。</div>';
@@ -88,7 +88,7 @@ export async function mount(root) {
   };
 
   const setPlugin = async (plugin, capability, enabled) => {
-    const r = await api('/api/socialV2/plugins', 'POST', { plugin, capability: capability || '', enabled }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/plugins', 'POST', { plugin, capability: capability || '', enabled }).catch((e) => ({ ok: false, error: e.message }));
     if (!r || !r.ok) { toast('❌ ' + ((r && r.error) || '保存失败'), 'err'); return; }
     render(r.plugins || []);
     const info = $('#capCounts', view);
@@ -96,13 +96,13 @@ export async function mount(root) {
   };
 
   delegate(view, 'click', '#capAllOn', async () => {
-    const r = await api('/api/socialV2/plugins', 'POST', { bulk: 'all', enabled: true }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/plugins', 'POST', { bulk: 'all', enabled: true }).catch((e) => ({ ok: false, error: e.message }));
     if (!r || !r.ok) { toast('❌ ' + ((r && r.error) || '保存失败'), 'err'); return; }
     render(r.plugins || []);
     toast('已启用全部插件能力（高危项仍保持关闭）', 'ok');
   });
   delegate(view, 'click', '#capAllOff', async () => {
-    const r = await api('/api/socialV2/plugins', 'POST', { bulk: 'all', enabled: false }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/plugins', 'POST', { bulk: 'all', enabled: false }).catch((e) => ({ ok: false, error: e.message }));
     if (!r || !r.ok) { toast('❌ ' + ((r && r.error) || '保存失败'), 'err'); return; }
     render(r.plugins || []);
     toast('已禁用全部插件能力', 'ok');

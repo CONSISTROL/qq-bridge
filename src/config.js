@@ -198,7 +198,7 @@ export function loadConfig(root = ROOT) {
       longGapMaxMs: 5000,             // 长间隔上限（当前控制台保存值）
       ...(file.social ?? {})
     },
-    socialV2: {
+    socialData: {
       enabled: true,
       autoReplyCheckMs: 30000,
       agentPreset: 'qq-chat',
@@ -212,21 +212,21 @@ export function loadConfig(root = ROOT) {
       // 所以补一层机械清洗（只做删除，不改写；见 src/speech-style.js）。
       style: {
         scrubFormulaic: true,
-        ...(file.socialV2?.style ?? {})
+        ...(file.socialData?.style ?? {})
       },
       backfill: {
         enabled: true,
         maxMessages: 100,             // 每个会话单次最多补多少条
         wakeMaxMessages: 15,          // 补回来的条数 ≤ 这个值才唤醒 AI
         wakeMaxAgeMs: 10 * 60 * 1000, // 且最早那条不超过这么久才唤醒
-        ...(file.socialV2?.backfill ?? {})
+        ...(file.socialData?.backfill ?? {})
       },
       // 工作车道：把一个 QQ 会话的长任务投给独立 DSH 会话跑，聊天会话不被慢工具堵住。
       // maxSessions 是「同时并行几个长任务」的上限，占满后新任务排队（仍然不阻塞聊天）。
       work: {
         enabled: true,
         maxSessions: 2,
-        ...(file.socialV2?.work ?? {})
+        ...(file.socialData?.work ?? {})
       },
       // 机器人自己的资料（昵称 / 个性签名 / 头像）。
       // **默认关闭**：这改的是账号级身份，全群全私聊可见，群友一句「把你名字改成XXX」
@@ -240,7 +240,7 @@ export function loadConfig(root = ROOT) {
         maxPerDay: 3,                    // 每天最多改几次（账号级身份，收紧）
         allowLinks: false,               // 昵称/签名里是否允许链接（默认不允许：广告位滥用）
         maxAvatarBytes: 5 * 1024 * 1024,
-        ...(file.socialV2?.profile ?? {})
+        ...(file.socialData?.profile ?? {})
       },
       // 链接分享卡（qq_send_card）：AI 只能填标题/摘要/链接/预览图，卡片体由桥接组装。
       // 不做任意 json/xml 透传，卡片能被用来伪造「系统通知/红包/群邀请」，风险比纯文本高。
@@ -257,7 +257,7 @@ export function loadConfig(root = ROOT) {
         // 空 = 允许任何**公网** http(s) 主机（内网/本机地址始终被 validateFetchUrl 挡掉）。
         // 填了就只允许这些 host（域名后缀匹配，例如 example.com 也放行 a.example.com）。
         allowHosts: [],
-        ...(file.socialV2?.card ?? {})
+        ...(file.socialData?.card ?? {})
       },
       tools: {
         getPrompt: true,
@@ -291,7 +291,7 @@ export function loadConfig(root = ROOT) {
         sendImage: true,
         listImageLibrary: true,
         searchImages: true,
-        // 注：工具开关真正生效的深度合并在下面 cfg.socialV2.tools 那一块（新开关加在那里）。
+        // 注：工具开关真正生效的深度合并在下面 cfg.socialData.tools 那一块（新开关加在那里）。
       video: true,             // B站视频：搜视频 / 读字幕（一个工具两个用法）
       videoFrames: true,       // 按时间点取画面（进度条预览帧）
         getMessageVideo: true,   // 聊天里的 QQ 视频：抽帧给视觉模型看
@@ -380,7 +380,7 @@ export function loadConfig(root = ROOT) {
           enabled: true,
           uncertainWindowMs: 300000, // 上一条回执不确定：5 分钟内不许原样重发（它可能已经在群里）
           sentWindowMs: 5000,        // 上一条确认送达：只挡 5 秒内的恶性重复调用
-          ...(file.socialV2?.send?.dupGuard ?? {})
+          ...(file.socialData?.send?.dupGuard ?? {})
         }
       },
       wait: {
@@ -531,13 +531,13 @@ export function loadConfig(root = ROOT) {
         unreadLimit: 30,
         contextWindow: 20
       },
-      ...(file.socialV2 ?? {})
+      ...(file.socialData ?? {})
     }
   };
 
-  // socialV2.tools 需要与默认值深度合并：旧 config.json 若缺少新增工具开关，
+  // socialData.tools 需要与默认值深度合并：旧 config.json 若缺少新增工具开关，
   // 不能因为外层 spread 覆盖而丢失默认开关。
-  cfg.socialV2.tools = {
+  cfg.socialData.tools = {
     getPrompt: true,
     getUnread: true,
     getRecent: true,
@@ -579,15 +579,15 @@ export function loadConfig(root = ROOT) {
     // 所以默认不给 AI 用；管理员可以在控制台 ⚙ 里打开自测（控制台路径不受这个开关限制）。
     sendCard: false,
     // 工作车道：把长任务投给独立会话跑，聊天会话不被慢工具堵住（这一步是真正生效的深度合并，
-    // 上面 tools 默认块里的同名项会被这里的 ...(cfg.socialV2.tools ?? {}) 覆盖）。
+    // 上面 tools 默认块里的同名项会被这里的 ...(cfg.socialData.tools ?? {}) 覆盖）。
     runTask: true,
-    ...(cfg.socialV2.tools ?? {})
+    ...(cfg.socialData.tools ?? {})
   };
 
-  // socialV2.proactive 同样要深度合并：config.json 里只要存在 proactive 段（哪怕只写了
+  // socialData.proactive 同样要深度合并：config.json 里只要存在 proactive 段（哪怕只写了
   // enabled/probability），外层 spread 就会把**整段**替换掉，新增的默认值会静默消失，
   // 实测踩过：domains 方向池被吃掉，反重复只记住了「别聊这些」却没有「可以聊什么」的抓手。
-  cfg.socialV2.proactive = {
+  cfg.socialData.proactive = {
     enabled: true,
     checkIntervalMinMs: 30 * 60 * 1000,
     checkIntervalMaxMs: 90 * 60 * 1000,
@@ -604,15 +604,15 @@ export function loadConfig(root = ROOT) {
     avoidRepeat: true,
     avoidKeywords: [],
     domains: [...DEFAULT_PROACTIVE_DOMAINS],
-    ...(cfg.socialV2.proactive ?? {})
+    ...(cfg.socialData.proactive ?? {})
   };
 
-  // socialV2.wake 深度合并：config.json 里的 wake 是历史全量快照，缺键会把代码默认值弄丢
+  // socialData.wake 深度合并：config.json 里的 wake 是历史全量快照，缺键会把代码默认值弄丢
   // （线上踩过：快照把 recommendedProbability 钉死在 0.05，改代码默认值也不生效）。
-  cfg.socialV2.wake = { ...DEFAULT_WAKE_CONFIG, ...(cfg.socialV2.wake ?? {}) };
+  cfg.socialData.wake = { ...DEFAULT_WAKE_CONFIG, ...(cfg.socialData.wake ?? {}) };
 
-  // socialV2.sticker.collect 也需要深度合并，避免旧配置缺失 collect 子项时丢默认值。
-  cfg.socialV2.sticker = {
+  // socialData.sticker.collect 也需要深度合并，避免旧配置缺失 collect 子项时丢默认值。
+  cfg.socialData.sticker = {
     enabled: true,
     syncTtlMs: 60000,
     maxListCount: 100,
@@ -631,15 +631,15 @@ export function loadConfig(root = ROOT) {
       maxPerMinute: 2,
       maxPerHour: 10,
       maxRemarkChars: 20,
-      ...((cfg.socialV2?.sticker?.collect) ?? {})
+      ...((cfg.socialData?.sticker?.collect) ?? {})
     },
-    ...(cfg.socialV2?.sticker ?? {}),
+    ...(cfg.socialData?.sticker ?? {}),
     collect: {
       enabled: true,
       maxPerMinute: 2,
       maxPerHour: 10,
       maxRemarkChars: 20,
-      ...((cfg.socialV2?.sticker?.collect) ?? {})
+      ...((cfg.socialData?.sticker?.collect) ?? {})
     }
   };
 
@@ -657,7 +657,7 @@ export function loadConfig(root = ROOT) {
  * 于是它一遍遍开同一个话题（线上表现：每次主动冒泡都是电竞/赛事）。
  * 这里给一批互相拉开距离的方向，随机点几个，逼它换抓手。
  */
-// 主动唤醒配置（socialV2.wake）的默认值。
+// 主动唤醒配置（socialData.wake）的默认值。
 // 为什么提成常量：config.json 里存的是**历史全量快照**，浅合并会让「快照里没有的键」直接丢掉默认值，
 // 深度合并又需要一份权威默认值。线上踩过：快照把 recommendedProbability 钉死在 0.05，改代码默认值也不生效，
 // 机器人就一路潜水到 0.02，群友以为它死了。

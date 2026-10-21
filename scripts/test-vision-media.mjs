@@ -37,7 +37,7 @@ function check(name, cond, extra = '') {
 const MULTIMODAL_MODELS = ['deepseek-flash', 'deepseek-v4-flash-vision-exp'];
 check('config.dsh.model 为多模态模型', MULTIMODAL_MODELS.includes(config.dsh?.model), `当前 ${config.dsh?.model}`);
 check('config.dsh.reasoningEffort 为 max', config.dsh?.reasoningEffort === 'max', `当前 ${config.dsh?.reasoningEffort}`);
-check('config.socialV2.tools.getImages 默认开启', config.socialV2?.tools?.getImages !== false);
+check('config.socialData.tools.getImages 默认开启', config.socialData?.tools?.getImages !== false);
 
 // 2. safe-fetch SSRF
 try {
@@ -49,11 +49,11 @@ try {
 
 // 3. 桥接端点（可选）
 const consoleTokenFile = path.join(ROOT, 'state', 'console-token');
-const socialV2File = path.join(ROOT, 'state', 'social-v2.json');
-if (fs.existsSync(consoleTokenFile) && fs.existsSync(socialV2File)) {
+const socialFile = path.join(ROOT, 'state', 'social.json');
+if (fs.existsSync(consoleTokenFile) && fs.existsSync(socialFile)) {
   try {
     const consoleToken = fs.readFileSync(consoleTokenFile, 'utf8').trim();
-    const social = JSON.parse(fs.readFileSync(socialV2File, 'utf8'));
+    const social = JSON.parse(fs.readFileSync(socialFile, 'utf8'));
     const conv = social?.conversations ? Object.entries(social.conversations)[0] : null;
     if (conv) {
       const [key, st] = conv;
@@ -72,7 +72,7 @@ if (fs.existsSync(consoleTokenFile) && fs.existsSync(socialV2File)) {
     console.log(`⚠️ 桥接端点检查跳过：${error?.message ?? error}`);
   }
 } else {
-  console.log('⚠️ 跳过桥接端点检查：缺少 state/console-token 或 state/social-v2.json');
+  console.log('⚠️ 跳过桥接端点检查：缺少 state/console-token 或 state/social.json');
 }
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);

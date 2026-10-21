@@ -2,12 +2,12 @@
 // 清单 / 增删改查 / 自然遗忘 / 备份回滚 接口，供控制台的「AI 记忆」分区使用。
 //
 // 为什么需要它：AI 的记忆不是一个文件，而是七类东西——
-//   1. 轻量记忆   state/social-v2.json   进行中的话题 / 想说没说的话 / 对群友的印象（会注入提示词）
+//   1. 轻量记忆   state/social.json   进行中的话题 / 想说没说的话 / 对群友的印象（会注入提示词）
 //   2. 成员备注   state/member-remarks.json  按 会话+QQ 号 索引的「谁是谁」（AI 主动查，不注入）
 //   3. 黑话库     state/slang.json       词 → 含义（确认后进提示词/检索）
 //   4. 群知识库   state/knowledge.json   问题 → 答案（按需检索注入）
 //   5. 表情笔记   state/stickers.json    收藏表情的含义/用法（选表情时参考）
-//   6. 对话上下文 state/social-v2.json 的 recentMessages/unread + ~/.dsh 会话转录（真正的聊天原文）
+//   6. 对话上下文 state/social.json 的 recentMessages/unread + ~/.dsh 会话转录（真正的聊天原文）
 //   7. 长期记忆   ~/.dsh/AGENTS.md 等文件（AI 自己读写，桥接不代管，只在此登记位置）
 // 以前它们各管各的：清记忆只有 forget-user.sh 一条路（要停桥接、清整个会话），
 // 网页控制台只能看到第 1、2 类的一部分。这个模块把它们统一起来，并补上三件缺的事：
@@ -42,7 +42,7 @@ export const MEMORY_KIND = Object.freeze({
 export const MEMORY_KINDS = Object.freeze(Object.values(MEMORY_KIND));
 
 // 「自然遗忘」的三条默认规则（都可被请求覆盖）：
-// 想法默认 2h 过期（appendMemoryV2 的默认值）、话题 24h 没被提起算搁置、
+// 想法默认 2h 过期（appendMemoryChat 的默认值）、话题 24h 没被提起算搁置、
 // 收藏表情 90 天没发过就当只是囤着。阈值都偏保守：宁可少清，不要错杀。
 export const FORGET_DEFAULTS = Object.freeze({
   thoughtTtlMs: 2 * 60 * 60 * 1000,
@@ -55,9 +55,9 @@ const PIN_MAX = 5000;
 const PIN_REASON_MAX = 60;
 const BACKUP_KEEP_MAX = 30;
 const BACKUP_NAME_RE = /^memory-[0-9]{8}-[0-9]{6}(-[0-9]+)?$/;
-const SNAPSHOT_FILES = ['social-v2.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json'];
+const SNAPSHOT_FILES = ['social.json', 'member-remarks.json', 'slang.json', 'knowledge.json', 'stickers.json'];
 const SNAPSHOT_LABEL = {
-  'social-v2.json': '轻量记忆 + 对话上下文',
+  'social.json': '轻量记忆 + 对话上下文',
   'member-remarks.json': '群成员备注',
   'slang.json': '黑话库',
   'knowledge.json': '群知识库',
@@ -187,7 +187,7 @@ export function loadPins(file) {
  *
  * @param {object} deps
  * @param {string} deps.stateDir            state 目录（备份、钉住表都放这里）
- * @param {string} deps.socialFile          social-v2.json 路径（备份用）
+ * @param {string} deps.socialFile          social.json 路径（备份用）
  * @param {string} deps.memberRemarksFile   member-remarks.json 路径
  * @param {string} deps.slangFile           slang.json 路径
  * @param {string} deps.knowledgeFile       knowledge.json 路径
@@ -195,7 +195,7 @@ export function loadPins(file) {
  * @param {string} [deps.agentsFile]        ~/.dsh/AGENTS.md（只登记位置，不代管）
  * @param {object} deps.social              { conversations: Map, paused }
  * @param {object} deps.memberStore         { conversations: { key: { qq: entry } } }
- * @param {Function} deps.saveSocial        () => void  落盘 social-v2.json
+ * @param {Function} deps.saveSocial        () => void  落盘 social.json
  * @param {Function} deps.saveMembers       () => void  落盘 member-remarks.json
  * @param {Function} deps.getSlang          () => slangEntry[]
  * @param {Function} deps.setSlang          (entries) => void  落盘黑话库

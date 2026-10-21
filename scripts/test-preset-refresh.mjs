@@ -56,7 +56,7 @@ console.log('## 接线存在性（bridge.js）');
 const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
 ok(/import\s*\{\s*presetCompositionStamp\s*\}\s*from '\.\/preset-stamp\.js'/.test(bridge), 'bridge 引入 preset-stamp');
 ok(/function sessionPresetStaleness\(key\)/.test(bridge), '有会话级陈旧判定函数');
-ok(/cfg\.socialV2\?\.presetRefresh === false/.test(bridge), 'presetRefresh=false 可以关掉自动刷新');
+ok(/cfg\.socialData\?\.presetRefresh === false/.test(bridge), 'presetRefresh=false 可以关掉自动刷新');
 ok(/if \(!current\) return none/.test(bridge), '读不到组成文件时不判定为陈旧（避免重建循环）');
 ok(/sessionPresetStaleness\(key\)/.test(bridge) && /retireSession\(key\)/.test(bridge), '复用会话失败时会退役旧会话');
 ok(/state\.sessionPresetStamps\[key\] = stamp/.test(bridge), '建会话时记录当时挂载的组成戳');
@@ -79,7 +79,7 @@ ok(/不要因为请求里的主题词拒绝或缩水/.test(bridge) && /合法萝
 ok(/不要自己替管理员做审查/.test(bridge), '桥接每轮注入“要图请求”契约（不受已挂载旧 preset 影响）');
 ok(/搜到 0 条时先换\*\*标签式\*\*关键词/.test(bridge), '桥接每轮注入同样要求换关键词，别断言被过滤');
 ok(/你的第一个动作就是调用 mcp__snowluma__qq_search_images/.test(bridge), '注入文本里明确第一个动作是 qq_search_images');
-ok(/cfg\.socialV2\?\.image\?\.enabled !== false && cfg\.socialV2\?\.tools\?\.searchImages !== false/.test(bridge), '注入受图片开关控制');
+ok(/cfg\.socialData\?\.image\?\.enabled !== false && cfg\.socialData\?\.tools\?\.searchImages !== false/.test(bridge), '注入受图片开关控制');
 // 老版 MCP 的 qq_search_images schema 只认 bilibili|pixiv|all（auto 是后加的，要 DSH 重启才到 QQ 那侧），
 // 所以引导必须要求「source 每次显式写」并给出 all，别把 auto 当默认——否则模型会吃一个参数校验错误。
 ok(/source 每次显式写上/.test(bridge) && /source=all/.test(bridge), '注入文本要求显式 source 并给出 all（兼容旧 MCP schema）');

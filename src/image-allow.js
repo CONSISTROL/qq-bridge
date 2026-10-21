@@ -16,7 +16,7 @@ export const DEFAULT_REFERER_ALLOW = Object.freeze([
   'https://i1.hdslb.com',
   'https://i2.hdslb.com',
   // pixiv 原图 CDN：必须带 Referer: https://www.pixiv.net/（见 bridge 的 resolveImageBuffer），
-  // 且本机直连不通，要走 socialV2.image.pixiv.proxy。
+  // 且本机直连不通，要走 socialData.image.pixiv.proxy。
   'https://i.pximg.net',
   'https://multimedia.nt.qq.com.cn',
   'https://multimedia.qpic.cn',
@@ -66,7 +66,7 @@ export function isQqImageCdnHost(hostname) {
 }
 
 /**
- * 把 config.socialV2.image 归一化成运行时参数（纯函数，文件系统相关的 libraryDir 由调用方补）。
+ * 把 config.socialData.image 归一化成运行时参数（纯函数，文件系统相关的 libraryDir 由调用方补）。
  * 注意：refererAllow 缺省时用 DEFAULT_REFERER_ALLOW，而不是空数组——
  * 空数组在旧语义里是「不限制站点」，当默认值会把白名单直接失效。
  */
@@ -102,5 +102,5 @@ export function isPlaceholderImageUrl(url) {
 export function imageAllowRejectHint(hostname) {
   return isQqImageCdnHost(hostname)
     ? `；这是 QQ 聊天图片的 CDN 链接，收藏会话里的原图请改用 qq_collect_sticker(messageId=消息id)，它由网关直接取字节，不受此白名单限制`
-    : `；如需允许该站点，请把它加进 config.json 的 socialV2.image.refererAllow`;
+    : `；如需允许该站点，请把它加进 config.json 的 socialData.image.refererAllow`;
 }

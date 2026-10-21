@@ -42,7 +42,7 @@ async function consoleApi(pathname, body, method = 'POST') {
 }
 
 async function saveSticker(image, extra = {}) {
-  return consoleApi('/api/socialV2/save-sticker', { key: KEY, image, ...extra });
+  return consoleApi('/api/socialData/save-sticker', { key: KEY, image, ...extra });
 }
 
 async function oneBot(action, params) {
@@ -86,7 +86,7 @@ try {
   if (ok.json?.emojiId) created.push(String(ok.json.emojiId));
 
   // 7) 打开远程开关后，内网地址必须被 SSRF 防护拦掉
-  await consoleApi('/api/socialV2/config', { image: { allowRemoteUrl: true } });
+  await consoleApi('/api/socialData/config', { image: { allowRemoteUrl: true } });
   const ssrf = await saveSticker('http://127.0.0.1:3100/');
   check('开启远程后仍拒绝内网地址', ssrf.json?.ok === false, errText(ssrf));
 
@@ -98,14 +98,14 @@ try {
   // 7c) 未列出的站点仍被拒，且提示要加白名单
   const stranger = await saveSticker('https://example.com/not-allowed.png', { source: 'url' });
   check('未列出的站点仍被拒', stranger.json?.ok === false && /不在 refererAllow 白名单内/.test(errText(stranger)), errText(stranger));
-  await consoleApi('/api/socialV2/config', { image: { allowRemoteUrl: false } });
+  await consoleApi('/api/socialData/config', { image: { allowRemoteUrl: false } });
 
   // 8) 限流：把每分钟上限压到 1，再存第二张应当 429
-  await consoleApi('/api/socialV2/config', { image: { maxPerMinute: 1 } });
+  await consoleApi('/api/socialData/config', { image: { maxPerMinute: 1 } });
   const second = await saveSticker(TEST_IMG, { source: 'library', remark: 'P1限流' });
   check('超过每分钟上限返回 429', second.status === 429, `status=${second.status} ${errText(second)}`);
   if (second.json?.emojiId) created.push(String(second.json.emojiId));
-  await consoleApi('/api/socialV2/config', { image: { maxPerMinute: 5 } });
+  await consoleApi('/api/socialData/config', { image: { maxPerMinute: 5 } });
 } catch (error) {
   check('测试执行', false, String(error?.message ?? error));
 } finally {
@@ -119,7 +119,7 @@ try {
     }
   }
   try { fs.unlinkSync(path.join(STICKER_DIR, NOT_IMG)); } catch {}
-  const image = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')).socialV2?.image ?? {};
+  const image = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')).socialData?.image ?? {};
   console.log(`   [cleanup] 当前 image 配置：allowRemoteUrl=${image.allowRemoteUrl} maxPerMinute=${image.maxPerMinute} maxBytes=${image.maxBytes}`);
 }
 

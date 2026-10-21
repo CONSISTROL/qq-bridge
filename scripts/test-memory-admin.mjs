@@ -35,7 +35,7 @@ const DAY = 24 * HOUR;
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-memory-'));
   const files = {
-    social: path.join(dir, 'social-v2.json'),
+    social: path.join(dir, 'social.json'),
     remarks: path.join(dir, 'member-remarks.json'),
     slang: path.join(dir, 'slang.json'),
     knowledge: path.join(dir, 'knowledge.json'),
@@ -279,7 +279,7 @@ console.log('— 备份与回滚 —');
   fs.writeFileSync(fx.files.remarks, JSON.stringify(fx.memberStore, null, 2));
   const backup = fx.admin.backup({ reason: '单测' });
   eq(backup.ok, true, '打一份备份');
-  ok(backup.backup.files.includes('social-v2.json'), '备份包含轻量记忆');
+  ok(backup.backup.files.includes('social.json'), '备份包含轻量记忆');
   const list = fx.admin.listBackups();
   ok(list.length >= 1, '备份列表非空');
   ok(list[0].managed && list[0].restorable, '自己建的备份标记为可回滚');
@@ -333,7 +333,7 @@ if (process.argv.includes('--e2e')) {
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(path.join(stateDir, 'console-token'), token, 'utf8');
   const now = Date.now();
-  fs.writeFileSync(path.join(stateDir, 'social-v2.json'), JSON.stringify({
+  fs.writeFileSync(path.join(stateDir, 'social.json'), JSON.stringify({
     paused: false,
     conversations: {
       'group:555': {
@@ -444,7 +444,7 @@ if (process.argv.includes('--e2e')) {
       eq(del.json.removed, 1, 'e2e：逐条忘掉生效（pinId 定位）');
       eq((await call('GET', '/api/memory/items?kind=lightTopic')).json.total, 0, 'e2e：删完列表为空');
       // 手改 state 文件后必须能重新读盘，否则「文件对了、页面还是旧的」
-      const socialPath = path.join(stateDir, 'social-v2.json');
+      const socialPath = path.join(stateDir, 'social.json');
       const raw = JSON.parse(fs.readFileSync(socialPath, 'utf8'));
       raw.conversations['group:555'].activeTopics = [{ text: '手改回来的话题', lastMentionAt: Date.now() }];
       fs.writeFileSync(socialPath, JSON.stringify(raw, null, 2));

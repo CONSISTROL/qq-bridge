@@ -48,7 +48,7 @@ ok('外壳匿名访问被拒（401）', anon.status === 401, `HTTP ${anon.status
 const VIEWS = [
   ['overview', ['运行模式', '活动日志']],
   ['persona', ['人格（角色扮演）', '静默开关']],
-  ['social2', ['基础配置', '工具调用日志', '轻量记忆']],
+  ['chat', ['基础配置', '工具调用日志', '轻量记忆']],
   ['memorydb', ['mdSearch', 'mdTabs']],
   ['album', ['albumTabs', 'albumGrid']],
   ['voicepack', ['vpList', 'vpCreate']],

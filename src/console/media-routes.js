@@ -20,18 +20,18 @@ export function createMediaRoutes(deps) {
     albumStats,
     anyAgentTokenOk,
     appendActivity,
-    applyStickerNoteV2,
+    applyStickerNoteChat,
     atomicWriteJson,
     attachPixivOriginals,
     biliStatus,
     bot,
     buildStickerPickPreviews,
-    buildStickerPickResultV2,
+    buildStickerPickResultChat,
     cfg,
     classifyFile,
     collectAlbumItems,
     collectStickerItems,
-    collectStickerV2,
+    collectStickerChat,
     createBiliClient,
     embedder,
     emptyTrash,
@@ -66,12 +66,12 @@ export function createMediaRoutes(deps) {
     readJsonSafe,
     readPickConfig,
     recentSentImageKeys,
-    recordSentMessagesV2,
+    recordSentMessagesChat,
     removeSticker,
     repeatGuardWindowMs,
     resolveFfmpegPath,
     resolveImageConfig,
-    resolveReplyTargetV2,
+    resolveReplyTargetChat,
     restoreTrash,
     safeFetchBuffer,
     safeFetchToFile,
@@ -79,17 +79,17 @@ export function createMediaRoutes(deps) {
     saveSlangStore,
     saveSocialV2State,
     saveStickerStoreSafe,
-    saveStickerV2,
-    scheduleReplyCheckV2,
+    saveStickerChat,
+    scheduleReplyCheckChat,
     scoreEntries,
     searchPixivByTag,
     searchPixivWeb,
-    sendImageV2,
-    sendPickedStickerV2,
-    sendStickerV2,
+    sendImageChat,
+    sendPickedStickerChat,
+    sendStickerChat,
     sentBackfill,
     sentImageUrlCandidates,
-    setStickerRemarkV2,
+    setStickerRemarkChat,
     sharp,
     shouldBlockSilentReply,
     spawn,
@@ -97,7 +97,7 @@ export function createMediaRoutes(deps) {
     stickerEnabled,
     stickerNeedsRemark,
     syncStickerLibrary,
-    synthesizeVoiceV2,
+    synthesizeVoiceChat,
     transcribeMediaAudio,
     trashPath,
     updateAlbumMeta,
@@ -106,7 +106,7 @@ export function createMediaRoutes(deps) {
 
   async function handleStickerV2Routes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/sticker-image') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/sticker-image') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -163,7 +163,7 @@ export function createMediaRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/self-image') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/self-image') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       if (!key) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
@@ -195,7 +195,7 @@ export function createMediaRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/sticker-note') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -236,7 +236,7 @@ export function createMediaRoutes(deps) {
         body.localRemark !== undefined && body.localRemark !== null
           ? String(body.localRemark).trim().slice(0, 40)
           : undefined;
-      const entry = applyStickerNoteV2(stickerId, note, tags, usage, localRemark);
+      const entry = applyStickerNoteChat(stickerId, note, tags, usage, localRemark);
       if (!entry) {
         sendJson({ ok: false, error: `找不到表情 ${stickerId}` }, 404);
         return;
@@ -245,7 +245,7 @@ export function createMediaRoutes(deps) {
       sendJson({ ok: true, key, sticker: entry });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-remark') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/sticker-remark') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -270,7 +270,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       try {
-        const entry = await setStickerRemarkV2(stickerId, String(body.remark ?? ''));
+        const entry = await setStickerRemarkChat(stickerId, String(body.remark ?? ''));
         log(`[sticker] 修改 QQ 收藏表情备注 ${key}: ${entry.id} -> ${entry.desc}`);
         sendJson({ ok: true, key, sticker: entry });
       } catch (error) {
@@ -279,15 +279,15 @@ export function createMediaRoutes(deps) {
       return;
     }
     // 发语音条：文本 → tzd 的 TTS 服务（edge-tts + RVC 变声）→ QQ record 段。
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-voice') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-voice') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const text = String(body.text ?? '').trim();
       const replyToMessageId = body.replyToMessageId;
       const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
-      const ttsCfg = cfg.socialV2?.tts ?? {};
+      const ttsCfg = cfg.socialData?.tts ?? {};
       if (ttsCfg.enabled === false) {
-        sendJson({ ok: false, error: '语音合成已关闭（socialV2.tts.enabled）' }, 403);
+        sendJson({ ok: false, error: '语音合成已关闭（socialData.tts.enabled）' }, 403);
         return;
       }
       const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -333,7 +333,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       try {
-        const voice = await synthesizeVoiceV2(speakText, ttsCfg);
+        const voice = await synthesizeVoiceChat(speakText, ttsCfg);
         const b64 = voice.buffer.toString('base64');
         const segment = [{ type: 'record', data: { file: 'base64://' + b64 } }];
         const resp =
@@ -343,7 +343,7 @@ export function createMediaRoutes(deps) {
         const messageId = resp?.data?.message_id ?? resp?.message_id ?? null;
         stV.lastVoiceAt = Date.now();
         stV.lastActionAt = stV.lastVoiceAt;
-        recordSentMessagesV2(key, [`[语音] ${speakText}`]);
+        recordSentMessagesChat(key, [`[语音] ${speakText}`]);
         log(
           `[tts] 发语音 ${key}：${speakText.length} 字${voice.fallback ? '（RVC 降级为纯 TTS）' : `（${ttsCfg.model || 'aiyi'} 音色）`}${speakText.length < text.length ? '（超长已截断）' : ''}`,
         );
@@ -362,7 +362,7 @@ export function createMediaRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-sticker') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-sticker') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -441,7 +441,7 @@ export function createMediaRoutes(deps) {
       let actualReplyToMessageId = replyToMessageId;
       if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
         const stForReply = getSocialV2State(key);
-        const resolved = await resolveReplyTargetV2(stForReply, kind, id, String(replyToMessageId).trim());
+        const resolved = await resolveReplyTargetChat(stForReply, kind, id, String(replyToMessageId).trim());
         if (!resolved) {
           sendJson(
             {
@@ -455,7 +455,7 @@ export function createMediaRoutes(deps) {
         quotedInfo = resolved.info;
         actualReplyToMessageId = resolved.messageId;
       }
-      const sendCfg = cfg.socialV2?.send ?? {};
+      const sendCfg = cfg.socialData?.send ?? {};
       const now = Date.now();
       try {
         const st = getSocialV2State(key);
@@ -469,7 +469,7 @@ export function createMediaRoutes(deps) {
         }
         st.sendTimes.push(now);
         if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-        const sent = await sendStickerV2(key, stickerId, {
+        const sent = await sendStickerChat(key, stickerId, {
           replyToMessageId: actualReplyToMessageId,
           atUserId,
         });
@@ -496,7 +496,7 @@ export function createMediaRoutes(deps) {
           },
           time: Date.now(),
         });
-        const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
+        const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
         if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
         st.lastAiReplyAt = now;
         st.lastActionAt = now;
@@ -505,7 +505,7 @@ export function createMediaRoutes(deps) {
         st.preSleepWaitObservedAt = 0;
         st.preSleepWaitAccumMs = 0;
         saveSocialV2State();
-        scheduleReplyCheckV2(key);
+        scheduleReplyCheckChat(key);
         log(`[sticker] 工具发送表情 ${key}: ${sent.entry?.id || stickerId}`);
         appendActivity(`${key} [sticker] 工具发送表情：${label}`);
         sendJson({ ok: true, key, sticker: sent.entry, sent: 1, failed: 0, quoted: quotedInfo });
@@ -523,7 +523,7 @@ export function createMediaRoutes(deps) {
   }
   async function handleStickerPickRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/pick-sticker') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/pick-sticker') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -569,7 +569,7 @@ export function createMediaRoutes(deps) {
       const now = Date.now();
       // 只有「真的要出网找图」才吃 image.maxPerMinute 额度；纯本地查询不吃。
       const willSearchOnline = searchOnline === true || (searchOnline === undefined && pickCfg.onlineFallback);
-      const maxPerMinute = Math.max(0, Number(cfg.socialV2?.image?.maxPerMinute) || 0);
+      const maxPerMinute = Math.max(0, Number(cfg.socialData?.image?.maxPerMinute) || 0);
       const recentMinute = (st.imageSearchTimes || []).filter((t) => now - t < 60000).length;
       if (willSearchOnline && !sendSpec && maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) {
         sendJson({ ok: false, error: '找图太频繁了，请过一会儿再试（也可以先用本地候选）' }, 429);
@@ -582,7 +582,7 @@ export function createMediaRoutes(deps) {
         if (st.imageSearchTimes.length > 500) st.imageSearchTimes = st.imageSearchTimes.slice(-500);
       }
       try {
-        const result = await buildStickerPickResultV2(key, { context, topic, minScore, limit, searchOnline });
+        const result = await buildStickerPickResultChat(key, { context, topic, minScore, limit, searchOnline });
         if (reservedSearch && !result.onlineUsed) {
           st.imageSearchTimes = st.imageSearchTimes.filter((t) => t !== now);
         }
@@ -593,7 +593,7 @@ export function createMediaRoutes(deps) {
             return;
           }
           // 发出去也走统一的发送限频（与 qq_send_sticker / qq_send_message 同一档额度）
-          const sendCfg = cfg.socialV2?.send ?? {};
+          const sendCfg = cfg.socialData?.send ?? {};
           const sendMaxMin = Math.max(0, Number(sendCfg.maxSendPerMinute) || 0);
           const sendMaxHour = Math.max(0, Number(sendCfg.maxSendPerHour) || 0);
           const sentMin = (st.sendTimes || []).filter((t) => now - t < 60000).length;
@@ -606,11 +606,11 @@ export function createMediaRoutes(deps) {
           st.sendTimes.push(now);
           if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
           try {
-            const sent = await sendPickedStickerV2(key, sendSpec, {
+            const sent = await sendPickedStickerChat(key, sendSpec, {
               candidates: result.candidates,
               online: result.online,
             });
-            scheduleReplyCheckV2(key);
+            scheduleReplyCheckChat(key);
             sendJson({ ...sent, moment: result.moment, label: sent.sticker?.label || sent.sticker?.title || '' });
           } catch (error) {
             st.sendTimes = st.sendTimes.filter((t) => t !== now);
@@ -667,7 +667,7 @@ export function createMediaRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/collect-sticker') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/collect-sticker') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -698,7 +698,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      const collectCfg = cfg.socialV2?.sticker?.collect ?? {};
+      const collectCfg = cfg.socialData?.sticker?.collect ?? {};
       if (collectCfg.enabled === false) {
         sendJson({ ok: false, error: 'AI 收藏表情功能已关闭' }, 403);
         return;
@@ -717,7 +717,7 @@ export function createMediaRoutes(deps) {
       st.stickerCollectTimes.push(now);
       if (st.stickerCollectTimes.length > 500) st.stickerCollectTimes = st.stickerCollectTimes.slice(-500);
       try {
-        const result = await collectStickerV2(key, messageRef, remark);
+        const result = await collectStickerChat(key, messageRef, remark);
         saveSocialV2State();
         log(`[sticker] AI 收藏表情 ${key}: ${result.emojiId}${result.remark ? '（备注：' + result.remark + '）' : ''}`);
         appendActivity(`${key} [sticker] AI 收藏表情：${result.remark || result.emojiId}`);
@@ -733,12 +733,12 @@ export function createMediaRoutes(deps) {
       return;
     }
     // 从外部来源保存表情（qq_save_sticker）：本地图库 / base64 / 远程 URL（需开启）
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/save-sticker') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/save-sticker') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
       }
-      if (cfg.socialV2?.image?.enabled === false) {
+      if (cfg.socialData?.image?.enabled === false) {
         sendJson({ ok: false, error: '图片保存功能已关闭' }, 403);
         return;
       }
@@ -767,7 +767,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      const imgCfg = cfg.socialV2?.image ?? {};
+      const imgCfg = cfg.socialData?.image ?? {};
       const now = Date.now();
       const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
       const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
@@ -782,7 +782,7 @@ export function createMediaRoutes(deps) {
       st.stickerSaveTimes.push(now);
       if (st.stickerSaveTimes.length > 500) st.stickerSaveTimes = st.stickerSaveTimes.slice(-500);
       try {
-        const result = await saveStickerV2(key, image, {
+        const result = await saveStickerChat(key, image, {
           source: String(body.source ?? 'auto'),
           remark: body.remark,
         });
@@ -799,8 +799,8 @@ export function createMediaRoutes(deps) {
       return;
     }
     // 直接发送一张图片（qq_send_image）：本地图库 / base64 / 远程 URL（需开启）
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-image') {
-      if (cfg.socialV2?.image?.enabled === false) {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-image') {
+      if (cfg.socialData?.image?.enabled === false) {
         sendJson({ ok: false, error: '图片功能已关闭' }, 403);
         return;
       }
@@ -829,7 +829,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      const imgCfg = cfg.socialV2?.image ?? {};
+      const imgCfg = cfg.socialData?.image ?? {};
       const now = Date.now();
       const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
       const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
@@ -843,7 +843,7 @@ export function createMediaRoutes(deps) {
       st.imageSendTimes.push(now);
       if (st.imageSendTimes.length > 500) st.imageSendTimes = st.imageSendTimes.slice(-500);
       try {
-        const result = await sendImageV2(key, image, {
+        const result = await sendImageChat(key, image, {
           source: String(body.source ?? 'auto'),
           replyToMessageId: body.replyToMessageId,
           atUserId: body.atUserId,
@@ -927,7 +927,7 @@ export function createMediaRoutes(deps) {
     const { req, res, url, sendJson, readBody, SECURITY_HEADERS } = routeCtx;
     if (req.method === 'GET' && url.pathname === '/api/stickers') {
       const query = String(url.searchParams.get('query') ?? '').trim();
-      const maxCount = Math.max(1, Number(cfg.socialV2?.sticker?.maxListCount) || 100);
+      const maxCount = Math.max(1, Number(cfg.socialData?.sticker?.maxListCount) || 100);
       const count = Math.min(500, Math.max(1, Math.min(Number(url.searchParams.get('count')) || 48, maxCount)));
       const force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
       const onlyUnlabeled = ['1', 'true', 'yes'].includes(
@@ -970,7 +970,7 @@ export function createMediaRoutes(deps) {
       // 这是「叫人干活」的按钮：连点只会往队列里塞重复任务，所以留个冷却。
       const cooldownMs = Math.max(
         5000,
-        Math.min(300000, Number(cfg.socialV2?.sticker?.manualLabelCooldownMs) || 30000),
+        Math.min(300000, Number(cfg.socialData?.sticker?.manualLabelCooldownMs) || 30000),
       );
       if (now - deps.lastStickerLabelNudgeAt < cooldownMs) {
         sendJson(
@@ -984,7 +984,7 @@ export function createMediaRoutes(deps) {
       }
       const wantCount = Math.max(
         1,
-        Math.min(10, Number(body.count) || Number(cfg.socialV2?.sticker?.manualLabelCount) || 5),
+        Math.min(10, Number(body.count) || Number(cfg.socialData?.sticker?.manualLabelCount) || 5),
       );
       const pickTarget = () => {
         for (const g of (cfg.allow?.groups ?? []).map(String)) {
@@ -1061,7 +1061,7 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: 'stickerId 不能为空' }, 400);
         return;
       }
-      const entry = applyStickerNoteV2(stickerId, note, tags, usage, localRemark);
+      const entry = applyStickerNoteChat(stickerId, note, tags, usage, localRemark);
       if (!entry) {
         sendJson({ ok: false, error: `找不到表情 ${stickerId}` }, 404);
         return;
@@ -1077,7 +1077,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       try {
-        const entry = await setStickerRemarkV2(stickerId, String(body.remark ?? ''));
+        const entry = await setStickerRemarkChat(stickerId, String(body.remark ?? ''));
         sendJson({ ok: true, sticker: entry });
       } catch (error) {
         sendJson({ ok: false, error: `修改备注失败：${error?.message ?? error}` }, 500);
@@ -1164,8 +1164,8 @@ export function createMediaRoutes(deps) {
   }
   async function handleImageSearchRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/search-images') {
-      if (cfg.socialV2?.image?.enabled === false) {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/search-images') {
+      if (cfg.socialData?.image?.enabled === false) {
         sendJson({ ok: false, error: '图片功能已关闭' }, 403);
         return;
       }
@@ -1203,7 +1203,7 @@ export function createMediaRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      const imgCfg = cfg.socialV2?.image ?? {};
+      const imgCfg = cfg.socialData?.image ?? {};
       const now = Date.now();
       const maxPerMinute = Math.max(0, Number(imgCfg.maxPerMinute) || 0);
       const maxPerHour = Math.max(0, Number(imgCfg.maxPerHour) || 0);
@@ -1397,9 +1397,9 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_get_message_file' }, 403);
         return;
       }
-      const fcfg = cfg.socialV2?.file ?? {};
+      const fcfg = cfg.socialData?.file ?? {};
       if (fcfg.enabled === false) {
-        sendJson({ ok: false, error: '文件读取未启用（socialV2.file.enabled）' }, 403);
+        sendJson({ ok: false, error: '文件读取未启用（socialData.file.enabled）' }, 403);
         return;
       }
       // 分页参数：maxChars=0（默认）＝不限，返回全文；工具侧会按 harness 的修剪阈值分块取。
@@ -1590,7 +1590,7 @@ export function createMediaRoutes(deps) {
       const nextOffset = Math.min(total, imageOffset + loaded);
       // 相册：把这次读到的图落一份到 state/album-inbox（来源＝聊天），控制台统一管理。
       // 以前这些图只下载到临时目录、看完就删；现在相册里能翻到「谁在哪条消息里发的」。
-      if (cfg.socialV2?.album?.enabled !== false && images.length) {
+      if (cfg.socialData?.album?.enabled !== false && images.length) {
         try {
           const albumCtx = { root: process.cwd(), stateDir: STATE_DIR };
           for (const img of images) {
@@ -1667,11 +1667,11 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_get_message_video' }, 403);
         return;
       }
-      if (cfg.socialV2?.video?.enabled === false) {
-        sendJson({ ok: false, error: 'QQ 视频理解已关闭（socialV2.video.enabled=false）' }, 403);
+      if (cfg.socialData?.video?.enabled === false) {
+        sendJson({ ok: false, error: 'QQ 视频理解已关闭（socialData.video.enabled=false）' }, 403);
         return;
       }
-      const cfgV = cfg.socialV2?.video ?? {};
+      const cfgV = cfg.socialData?.video ?? {};
       // 找这条消息里的视频段（缓存优先，老消息走 get_msg 兜底）。
       let media = findMessageMedia(key, messageId).filter((m) => m && m.kind === 'video');
       if (!media.length) media = (await fetchMediaFromOneBot(messageId)).filter((m) => m && m.kind === 'video');
@@ -1715,7 +1715,7 @@ export function createMediaRoutes(deps) {
           meta.bytes = fetched.bytes;
           // 语音转写与抽帧互不影响：转写失败只降级成"只有画面"
           try {
-            const asrCfg = cfg.socialV2?.video?.asr ?? {};
+            const asrCfg = cfg.socialData?.video?.asr ?? {};
             if (asrCfg.enabled !== false && asrCfg.url) {
               transcript = await transcribeMediaAudio(videoFile, asrCfg);
             }
@@ -1740,7 +1740,7 @@ export function createMediaRoutes(deps) {
         }
       } else if (!hasFfmpeg) {
         note =
-          '本机没装 ffmpeg（抽帧需要它），只能给视频封面。装法：apt-get install -y ffmpeg，或在 config.json 里把 socialV2.video.ffmpegPath 指到 ffmpeg 可执行文件。';
+          '本机没装 ffmpeg（抽帧需要它），只能给视频封面。装法：apt-get install -y ffmpeg，或在 config.json 里把 socialData.video.ffmpegPath 指到 ffmpeg 可执行文件。';
       } else {
         note = '这条视频没有可下载的直链，只能给封面。';
       }
@@ -1861,7 +1861,7 @@ export function createMediaRoutes(deps) {
     }
     // 按需「学梗」：本地黑话库 → B 站（视频标题/简介 + 高赞评论）→ 存为候选词条
     // ── B站视频理解：搜索 / 元数据 / 字幕（JSON） ──────────────────────
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-video') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/bili-video') {
       if (cfg.bili?.enabled === false) {
         sendJson({ ok: false, error: 'B站能力已关闭（bili.enabled=false）' }, 403);
         return;
@@ -1883,7 +1883,7 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: `工具未启用：${needFlag}` }, 403);
         return;
       }
-      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'chat') {
+      if (cfg.socialData?.enabled === false || deps.currentMode !== 'chat') {
         sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
@@ -1954,7 +1954,7 @@ export function createMediaRoutes(deps) {
   }
   async function handleBiliFrameRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-frames') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/bili-frames') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const token = String(body.token ?? '').trim();
@@ -1970,7 +1970,7 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：videoFrames' }, 403);
         return;
       }
-      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'chat') {
+      if (cfg.socialData?.enabled === false || deps.currentMode !== 'chat') {
         sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
@@ -2001,7 +2001,7 @@ export function createMediaRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/lookup-meme') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/lookup-meme') {
       if (cfg.slang?.enabled === false) {
         sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400);
         return;
@@ -2481,7 +2481,7 @@ export function createMediaRoutes(deps) {
             }
             const next = updateAlbumMeta(readMeta(), itemId('sticker', file), { notes: body.notes, tags: body.tags });
             atomicWriteJson(metaFile, next);
-            const entry = applyStickerNoteV2(file, body.notes, body.tags, undefined, body.notes);
+            const entry = applyStickerNoteChat(file, body.notes, body.tags, undefined, body.notes);
             const saved = next[itemId('sticker', file)] || {};
             sendJson({
               ok: true,

@@ -24,7 +24,7 @@ export function createSlangKnowledgeRoutes(deps) {
     buildSlangContext,
     cfg,
     confirmedKnowledgeList,
-    confirmedSlangListV2,
+    confirmedSlangListChat,
     createKnowledgeEntry,
     createSlangEntry,
     embedder,
@@ -101,7 +101,7 @@ export function createSlangKnowledgeRoutes(deps) {
         sources: Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean) : [],
         // 手动添加默认落到**候选**：已确认的条目会被注入提示词、被 AI 当成事实使用，
         // 所以「刚敲进去、还没复核」的词条不该直接变成已确认，AI 自己提交的词也走
-        // 同一条候选→确认的复核路径（见 /api/socialV2/slang/submit）。
+        // 同一条候选→确认的复核路径（见 /api/socialData/slang/submit）。
         // 只有显式传 confirmed 才直接入库为已确认（例如从别处导入一批已核实的词）。
         status: body.status === SLANG_STATUS.CONFIRMED ? SLANG_STATUS.CONFIRMED : SLANG_STATUS.CANDIDATE,
         source: 'manual',
@@ -800,7 +800,7 @@ export function createSlangKnowledgeRoutes(deps) {
   }
   async function handleSlangAiRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/slang/query') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/slang/query') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const q = String(url.searchParams.get('q') ?? '')
         .trim()
@@ -821,7 +821,7 @@ export function createSlangKnowledgeRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_slang_query' }, 403);
         return;
       }
-      const list = confirmedSlangListV2(q ? 2000 : 60).filter((e) => {
+      const list = confirmedSlangListChat(q ? 2000 : 60).filter((e) => {
         if (!q) return true;
         return (
           e.content.toLowerCase().includes(q) ||
@@ -867,7 +867,7 @@ export function createSlangKnowledgeRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/slang/submit') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/slang/submit') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const token = String(body.token ?? '').trim();
@@ -955,7 +955,7 @@ export function createSlangKnowledgeRoutes(deps) {
   }
   async function handleKnowledgeAiRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/knowledge/query') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/knowledge/query') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const q = String(url.searchParams.get('q') ?? '').trim();
       const kind = String(url.searchParams.get('kind') ?? '')
@@ -1083,7 +1083,7 @@ export function createSlangKnowledgeRoutes(deps) {
       return;
     }
     // ── 群知识库：AI 沉淀答案（全自动写入，可人工删改） ──────────────────
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/knowledge/submit') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/knowledge/submit') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const question = String(body.question ?? '').trim();

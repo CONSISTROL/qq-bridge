@@ -12,7 +12,7 @@ import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
 import { iconSvg } from '../core/icons.js';
 
-export const id = 'social2';
+export const id = 'chat';
 export const title = '聊天模式';
 export const desc = 'AI 工具开关、唤醒/发送/等待参数、工具日志、轻量记忆、工具级配置';
 export const icon = 'chat';
@@ -192,7 +192,7 @@ function readForm(view) {
     if (f.unit && f.unit !== 1) setPath(body, f.path, Math.round(n * f.unit));
     else setPath(body, f.path, fractional ? Math.round(n * 100) / 100 : n);
   }
-  // 工具开关已改成「插件 → 能力」（/api/socialV2/plugins 即时保存），这里不再收集旧的扁平 tools，
+  // 工具开关已改成「插件 → 能力」（/api/socialData/plugins 即时保存），这里不再收集旧的扁平 tools，
   // 否则会用空表覆盖掉旧配置。
   return body;
 }
@@ -328,7 +328,7 @@ function renderMemory(view, data) {
     html += `<div class="mem-row"><span class="mem-ico">${iconSvg('user', { size: 15 })}</span><span class="mem-text">${esc(name)}：${traits.length ? esc(traits.join('、')) : '暂无记录'}（互动 ${Number(im.interactionCount) || 0} 次）</span><span class="mem-actions"><button class="small" data-action="edit" data-cat="memberImpression" data-target="${esc(name)}" data-traits="${esc(traits.join(', '))}">编辑</button><button class="small danger-ghost" data-action="remove" data-cat="memberImpression" data-target="${esc(name)}">删除</button></span></div>`;
   }
   html += '</div>';
-  // 成员备注存在 state/member-remarks.json（不属于 social-v2 状态），单独列一段。
+  // 成员备注存在 state/member-remarks.json（不属于 social 状态），单独列一段。
   const remarks = Array.isArray(data.memberRemarks) ? data.memberRemarks : [];
   html += '<div class="memory-section"><div class="mem-head"><b>成员备注（本地记忆，不动 QQ）</b></div>';
   if (!remarks.length) html += '<div class="empty compact">暂无记录</div>';
@@ -726,10 +726,10 @@ function renderToolCfg(view, section) {
 }
 
 export async function mount(root) {
-  const view = await mountFragment(root, 'social2');
+  const view = await mountFragment(root, 'chat');
 
   const loadConfig = async () => {
-    const r = await api('/api/socialV2/config').catch(() => null);
+    const r = await api('/api/socialData/config').catch(() => null);
     if (!r) return null;
     state.config = r.config || {};
     fillForm(view, state.config);
@@ -737,7 +737,7 @@ export async function mount(root) {
   };
 
   const refreshActivity = async () => {
-    const r = await api('/api/socialV2/activity').catch(() => null);
+    const r = await api('/api/socialData/activity').catch(() => null);
     if (!r) return;
     const el = $('#v2ActivityStatus', view);
     el.textContent = r.paused ? '已暂停' : '运行中';
@@ -745,7 +745,7 @@ export async function mount(root) {
   };
 
   const saveConfig = async () => {
-    const r = await api('/api/socialV2/config', 'POST', readForm(view))
+    const r = await api('/api/socialData/config', 'POST', readForm(view))
       .catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已保存' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) await loadConfig();
@@ -756,7 +756,7 @@ export async function mount(root) {
   // 失败就把开关拨回去——界面不能显示一个其实没生效的状态。
   const saveSwitch = async (el, patch) => {
     el.classList.add('saving');
-    const r = await api('/api/socialV2/config', 'POST', patch).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/config', 'POST', patch).catch((e) => ({ ok: false, error: e.message }));
     el.classList.remove('saving');
     if (!r.ok) {
       el.checked = !el.checked;
@@ -772,7 +772,7 @@ export async function mount(root) {
 
 
   const loadToolLog = async () => {
-    const r = await api('/api/socialV2/tool-log?limit=200').catch(() => null);
+    const r = await api('/api/socialData/tool-log?limit=200').catch(() => null);
     renderToolLog(view, r?.entries || []);
   };
 
@@ -781,7 +781,7 @@ export async function mount(root) {
     const msg = $('#v2MemoryMsg', view);
     if (!key) { setMsg(msg, '请输入会话 key', false); return; }
     setMsg(msg, '加载中…', true);
-    const r = await api('/api/socialV2/memory?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/memory?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
     renderMemory(view, r);
     setMsg(msg, r.ok ? '✅ 已加载' : ('❌ ' + (r.error || '失败')), r.ok);
   };
@@ -791,7 +791,7 @@ export async function mount(root) {
     const msg = $('#v2WakeStatusMsg', view);
     if (!key) { setMsg(msg, '请输入会话 key', false); return; }
     setMsg(msg, '加载中…', true);
-    const r = await api('/api/socialV2/state?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/state?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
     $('#v2WakeStatusOutput', view).innerHTML = formatWakeStatus(r);
     setMsg(msg, r.ok ? '✅ 已加载' : ('❌ ' + (r.error || '失败')), r.ok);
   };
@@ -817,7 +817,7 @@ export async function mount(root) {
   // ── 机器人自己的资料（昵称/签名/头像）────────────────────────────────
   // 账号级身份：这里同时是「人工改」和「查看 AI 改过什么 / 一键回滚」的入口。
   const loadSelfProfile = async () => {
-    const r = await api('/api/socialV2/self-profile').catch(() => null);
+    const r = await api('/api/socialData/self-profile').catch(() => null);
     const summary = $('#profileSummary', view);
     if (!r?.ok) { if (summary) summary.textContent = '读取失败'; return; }
     state.selfProfile = r;
@@ -857,7 +857,7 @@ export async function mount(root) {
     const avatar = $('#profileAvatarSrc', view).value.trim();
     if (!nickname && !personalNote && !avatar) { profileMsg('昵称/签名/头像至少填一个', false); return; }
     profileMsg('保存中…');
-    const r = await api('/api/socialV2/self-profile', 'POST', {
+    const r = await api('/api/socialData/self-profile', 'POST', {
       ...(nickname ? { nickname } : {}),
       ...(personalNote ? { personalNote } : {}),
       ...(avatar ? { avatar } : {}),
@@ -875,7 +875,7 @@ export async function mount(root) {
     $('#' + id, view)?.addEventListener('click', async () => {
       if (!confirmDanger(`确定回滚${field === 'avatar' ? '头像' : (field === 'personalNote' ? '签名' : '昵称')}到上一个值？`)) return;
       profileMsg('回滚中…');
-      const r = await api('/api/socialV2/self-profile-revert', 'POST', { field }).catch((e) => ({ ok: false, error: e.message }));
+      const r = await api('/api/socialData/self-profile-revert', 'POST', { field }).catch((e) => ({ ok: false, error: e.message }));
       if (r.ok) { profileMsg(`✅ ${(r.changed ?? []).join('、')}`); await loadSelfProfile(); }
       else profileMsg('❌ ' + (r.error || '失败'), false);
     });
@@ -921,16 +921,16 @@ export async function mount(root) {
   });
 
   $('#v2PauseBtn', view).addEventListener('click', async () => {
-    await api('/api/socialV2/activity', 'POST', { paused: true }).catch(() => {});
+    await api('/api/socialData/activity', 'POST', { paused: true }).catch(() => {});
     refreshActivity();
   });
   $('#v2ResumeBtn', view).addEventListener('click', async () => {
-    await api('/api/socialV2/activity', 'POST', { paused: false }).catch(() => {});
+    await api('/api/socialData/activity', 'POST', { paused: false }).catch(() => {});
     refreshActivity();
   });
   $('#v2ResetBtn', view).addEventListener('click', async () => {
     if (!confirmDanger('确定重置聊天模式 AI 状态？\n将清空所有聊天会话、唤醒配置、未读消息和定时器；工具调用日志会保留。')) return;
-    const r = await api('/api/socialV2/reset', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/reset', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已重置聊天模式状态' : ('❌ ' + (r.error || '失败')), r.ok);
     $('#v2AllStatesOutput', view).textContent = '（全部会话状态：空）';
     $('#v2StateOutput', view).textContent = '（空）';
@@ -939,27 +939,27 @@ export async function mount(root) {
   $('#v2StateView', view).addEventListener('click', async () => {
     const key = $('#v2StateKey', view).value.trim();
     if (!key) { toast('请输入会话 key', 'err'); return; }
-    const r = await api('/api/socialV2/state?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/state?key=' + encodeURIComponent(key)).catch((e) => ({ ok: false, error: e.message }));
     $('#v2StateOutput', view).textContent = JSON.stringify(r, null, 2);
   });
   $('#v2ForceWake', view).addEventListener('click', async () => {
     const key = $('#v2StateKey', view).value.trim();
     if (!key) { toast('请输入会话 key', 'err'); return; }
-    const r = await api('/api/socialV2/wake', 'POST', { key, reason: 'admin' }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/wake', 'POST', { key, reason: 'admin' }).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2ConfigMsg', view), r.ok ? '✅ 已发送唤醒' : ('❌ ' + (r.error || '失败')), r.ok);
   });
   $('#v2StatesList', view).addEventListener('click', async () => {
-    const r = await api('/api/socialV2/states').catch(() => null);
+    const r = await api('/api/socialData/states').catch(() => null);
     $('#v2AllStatesOutput', view).textContent = JSON.stringify(r?.conversations || [], null, 2);
   });
 
   $('#v2FeedbackLoad', view).addEventListener('click', async () => {
-    const r = await api('/api/socialV2/feedback').catch(() => null);
+    const r = await api('/api/socialData/feedback').catch(() => null);
     $('#v2FeedbackOutput', view).textContent = JSON.stringify(r?.entries || [], null, 2);
   });
   $('#v2FeedbackClear', view).addEventListener('click', async () => {
     if (!confirmDanger('确定清空全部 AI 反馈？')) return;
-    const r = await api('/api/socialV2/feedback-clear', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/feedback-clear', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2FeedbackMsg', view), r.ok ? '✅ 已清空' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) $('#v2FeedbackOutput', view).textContent = '（空）';
   });
@@ -967,7 +967,7 @@ export async function mount(root) {
   $('#v2ToolLogLoad', view).addEventListener('click', () => { setMsg($('#v2ToolLogMsg', view), '', true); loadToolLog(); });
   $('#v2ToolLogClear', view).addEventListener('click', async () => {
     if (!confirmDanger('确定清空全部工具调用日志？')) return;
-    const r = await api('/api/socialV2/tool-log/clear', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/tool-log/clear', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
     setMsg($('#v2ToolLogMsg', view), r.ok ? '✅ 已清空' : ('❌ ' + (r.error || '失败')), r.ok);
     renderToolLog(view, []);
   });
@@ -989,7 +989,7 @@ export async function mount(root) {
     const msg = $('#v2MemoryMsg', view);
     if (!key) { setMsg(msg, '请输入会话 key', false); return; }
     if (!confirmDanger('确定清空该会话全部轻量记忆？')) return;
-    const r = await api('/api/socialV2/memory-clear', 'POST', { key, category: '' }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/memory-clear', 'POST', { key, category: '' }).catch((e) => ({ ok: false, error: e.message }));
     setMsg(msg, r.ok ? '✅ 已清空全部记忆' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) loadMemory();
   });
@@ -1007,21 +1007,21 @@ export async function mount(root) {
       const idx = input.indexOf('|');
       const remark = (idx >= 0 ? input.slice(0, idx) : input).trim();
       const note = idx >= 0 ? input.slice(idx + 1).trim() : '';
-      r = await api('/api/socialV2/member-remark', 'POST', { key, userId: btn.dataset.user, remark, note });
+      r = await api('/api/socialData/member-remark', 'POST', { key, userId: btn.dataset.user, remark, note });
     } else if (btn.dataset.action === 'remark-remove') {
       if (!confirmDanger(`确定删除 QQ ${btn.dataset.user} 的成员备注？`)) return;
-      r = await api('/api/socialV2/member-remark-remove', 'POST', { key, userId: btn.dataset.user });
+      r = await api('/api/socialData/member-remark-remove', 'POST', { key, userId: btn.dataset.user });
     } else if (btn.dataset.action === 'clear') {
-      r = await api('/api/socialV2/memory-clear', 'POST', { key, category: cat });
+      r = await api('/api/socialData/memory-clear', 'POST', { key, category: cat });
     } else if (btn.dataset.action === 'edit') {
       const label = cat === 'memberImpression' ? `编辑对 ${btn.dataset.target} 的印象特质（逗号分隔）：` : `编辑${cat === 'activeTopic' ? '话题' : '想法'}内容：`;
       const input = prompt(label, cat === 'memberImpression' ? (btn.dataset.traits || '') : (btn.dataset.content || ''));
       if (input === null) return;
-      r = await api('/api/socialV2/memory-update', 'POST', {
+      r = await api('/api/socialData/memory-update', 'POST', {
         key, category: cat, oldContent: btn.dataset.content || '', target: btn.dataset.target || '', newContent: input, newExtra: {}
       });
     } else {
-      r = await api('/api/socialV2/memory-remove', 'POST', { key, category: cat, content: btn.dataset.content || '', target: btn.dataset.target || '' });
+      r = await api('/api/socialData/memory-remove', 'POST', { key, category: cat, content: btn.dataset.content || '', target: btn.dataset.target || '' });
     }
     setMsg(msg, r.ok ? '✅ 已更新' : ('❌ ' + (r.error || '失败')), r.ok);
     if (r.ok) loadMemory();
@@ -1130,7 +1130,7 @@ export async function mount(root) {
     setMsg(msg, '保存中…', true);
     try {
       // 服务端按分区合并，这里只提交当前分区的 patch
-      await api('/api/socialV2/config', 'POST', { [state.cfgSection]: patch });
+      await api('/api/socialData/config', 'POST', { [state.cfgSection]: patch });
       setMsg(msg, '已保存 ✓', true);
       await loadConfig();
       renderToolCfg(view, state.cfgSection);

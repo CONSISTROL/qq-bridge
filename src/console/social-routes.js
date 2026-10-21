@@ -10,7 +10,7 @@ export function createSocialRoutes(deps) {
     PLUGINS,
     ROOT,
     SENSITIVE_RE,
-    SOCIAL_V2_FILE,
+    SOCIAL_FILE,
     activeWaits,
     agentMessageView,
     agentTokenOk,
@@ -21,21 +21,21 @@ export function createSocialRoutes(deps) {
     bot,
     buildSlangContext,
     buildStickerContext,
-    buildStickerMomentLineV2,
+    buildStickerMomentLineChat,
     buildStickerStrategyHint,
-    cancelReplyCheckV2,
+    cancelReplyCheckChat,
     cfg,
     clearAllPendingWakeLeases,
     clearAllSocialV2Timers,
     collectors,
-    computeGapsV2,
-    computeWakeSafetyV2,
-    confirmedSlangListV2,
+    computeGapsChat,
+    computeWakeSafetyChat,
+    confirmedSlangListChat,
     currentRoleHint,
-    currentRoleHintV2,
+    currentRoleHintChat,
     deliverWorkTask,
     drainAllPromptQueues,
-    ensureWakeableV2,
+    ensureWakeableChat,
     enterActive,
     evaluateMoment,
     exploreCfg,
@@ -43,8 +43,8 @@ export function createSocialRoutes(deps) {
     findSplitBoundaryWarning,
     flushSummaries,
     formatJobProgress,
-    formatMemoryV2,
-    formatParticipationV2,
+    formatMemoryChat,
+    formatParticipationChat,
     formatProfileState,
     formatStickerList,
     fs,
@@ -53,17 +53,17 @@ export function createSocialRoutes(deps) {
     groupAvatarUrl,
     isActiveStatus,
     isAdminProfileContext,
-    isSleepingConfigV2,
+    isSleepingConfigChat,
     knowledgeEnabled,
     knowledgeRemindMinAskers,
     knowledgeRemindThreshold,
-    lastIncomingTextV2,
+    lastIncomingTextChat,
     leaveActive,
     listKnowledgeConflicts,
     log,
     looksLikeImageBuffer,
     looksLikeUnfinished,
-    markDeliveredV2,
+    markDeliveredChat,
     markReadCalledKeys,
     memberAvatarUrl,
     migrateLegacyTools,
@@ -71,49 +71,49 @@ export function createSocialRoutes(deps) {
     modeAllowed,
     normalizeImageRating,
     normalizeRatingWords,
-    normalizeSpeakerIdsV2,
+    normalizeSpeakerIdsChat,
     notifyAiSession,
     path,
     pendingSendToolCalls,
     pendingWakeKeys,
-    pickContextTextV2,
+    pickContextTextChat,
     pluginCatalog,
     postOneBot,
-    preSleepWaitBlockedV2,
+    preSleepWaitBlockedChat,
     previousValueFor,
     profileCfg,
     readJsonSafe,
     readPickConfig,
     readRoleState,
-    recordSentMessagesV2,
-    refreshAllDefaultWakeConfigsV2,
+    recordSentMessagesChat,
+    refreshAllDefaultWakeConfigsChat,
     resolveCardConfig,
     resolveImageConfig,
-    resolveReplyTargetV2,
+    resolveReplyTargetChat,
     reverse,
     revertProfile,
     safeFetchBuffer,
     saveSocialV2State,
-    scheduleProactiveCheckV2,
-    scheduleReplyCheckV2,
-    scheduleWakeV2,
+    scheduleProactiveCheckChat,
+    scheduleReplyCheckChat,
+    scheduleWakeChat,
     seenForwardIds,
-    sendCardV2,
-    sendMessagesV2,
+    sendCardChat,
+    sendMessagesChat,
     sendToolSucceededSessions,
-    sendWakePromptV2,
+    sendWakePromptChat,
     sessionPromises,
-    setupSleepTimerV2,
+    setupSleepTimerChat,
     shouldBlockSilentReply,
     shouldRemindRepeat,
     sleep,
     social,
-    socialV2,
+    socialData,
     startTopicExploration,
     stickerEnabled,
     stickerLibraryItems,
     stopTopicExploration,
-    suggestQuietMsV2,
+    suggestQuietMsChat,
     syncStickerLibrary,
     toolCallNames,
     v2TurnStartAt,
@@ -278,17 +278,17 @@ export function createSocialRoutes(deps) {
   }
   async function handleSocialV2ConfigRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/config') {
-      // knowledge 一并返回：social2 的工具开关面板里带了它的齿轮配置弹窗，
+    if (req.method === 'GET' && url.pathname === '/api/socialData/config') {
+      // knowledge 一并返回：chat 的工具开关面板里带了它的齿轮配置弹窗，
       // 那里的 CFG_SCHEMA 读 state.config[section]，少了这一段会渲染成空面板。
-      sendJson({ ok: true, config: { ...(cfg.socialV2 ?? {}), knowledge: cfg.knowledge ?? {} } });
+      sendJson({ ok: true, config: { ...(cfg.socialData ?? {}), knowledge: cfg.knowledge ?? {} } });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/config') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/config') {
       const body = await readBody();
       const configFile = path.join(ROOT, 'config.json');
       const file = readJsonSafe(configFile, null, true);
-      const current = file.socialV2 ?? {};
+      const current = file.socialData ?? {};
       const merged = { ...current, ...body };
       // 子对象必须是非 null 对象；null/数组/基本类型会覆盖默认值导致工具开关被绕过，这里直接保留当前值。
       for (const sub of [
@@ -763,9 +763,9 @@ export function createSocialRoutes(deps) {
       if (merged.provideRecommendations !== undefined)
         merged.provideRecommendations = merged.provideRecommendations === true;
       if (merged.agentPreset !== undefined) merged.agentPreset = String(merged.agentPreset ?? '');
-      file.socialV2 = merged;
+      file.socialData = merged;
       atomicWriteJson(configFile, file);
-      cfg.socialV2 = { ...(cfg.socialV2 ?? {}), ...merged };
+      cfg.socialData = { ...(cfg.socialData ?? {}), ...merged };
       // 仅当“会影响默认唤醒配置”的字段变化时，才同步到仍使用默认配置的现有会话。
       // 避免只改发送/等待/工具开关时，意外重置正在等待的潜水/唤醒计划。
       const WAKE_DEFAULT_KEYS = [
@@ -787,39 +787,39 @@ export function createSocialRoutes(deps) {
         body.wake &&
         typeof body.wake === 'object' &&
         WAKE_DEFAULT_KEYS.some((k) => Object.prototype.hasOwnProperty.call(body.wake, k));
-      if (wakeDefaultChanged) refreshAllDefaultWakeConfigsV2();
+      if (wakeDefaultChanged) refreshAllDefaultWakeConfigsChat();
       log('控制台：聊天模式配置已更新');
-      sendJson({ ok: true, config: cfg.socialV2 });
+      sendJson({ ok: true, config: cfg.socialData });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/activity') {
-      sendJson({ ok: true, paused: socialV2.paused });
+    if (req.method === 'GET' && url.pathname === '/api/socialData/activity') {
+      sendJson({ ok: true, paused: socialData.paused });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/activity') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/activity') {
       const body = await readBody();
       const paused = body.paused === true;
-      socialV2.paused = paused;
+      socialData.paused = paused;
       if (paused) {
         clearAllSocialV2Timers();
         log('控制台：AI 已暂停（唤醒/等待任务已停止）');
       } else {
         log('控制台：AI 已恢复');
-        for (const key of socialV2.conversations.keys()) {
-          setupSleepTimerV2(key);
-          scheduleProactiveCheckV2(key);
+        for (const key of socialData.conversations.keys()) {
+          setupSleepTimerChat(key);
+          scheduleProactiveCheckChat(key);
         }
       }
       saveSocialV2State();
-      sendJson({ ok: true, paused: socialV2.paused });
+      sendJson({ ok: true, paused: socialData.paused });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/reset') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/reset') {
       deps.sessionEpoch++;
       sessionPromises.clear();
       clearAllSocialV2Timers();
       drainAllPromptQueues('状态已重置');
-      for (const key of [...socialV2.conversations.keys()]) {
+      for (const key of [...socialData.conversations.keys()]) {
         const sid = deps.state.sessions[key];
         if (sid) {
           delete deps.state.sessions[key];
@@ -830,9 +830,9 @@ export function createSocialRoutes(deps) {
           pendingSendToolCalls.delete(sid);
           sendToolSucceededSessions.delete(sid);
         }
-        const removedV2 = socialV2.conversations.get(key);
-        if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
-        socialV2.conversations.delete(key);
+        const removedChat = socialData.conversations.get(key);
+        if (removedChat?.agentToken) KNOWN_AGENT_TOKENS.delete(removedChat.agentToken);
+        socialData.conversations.delete(key);
         seenForwardIds.delete(key);
       }
       pendingWakeKeys.clear();
@@ -840,9 +840,9 @@ export function createSocialRoutes(deps) {
       wakeConfigUpdatedKeys.clear();
       markReadCalledKeys.clear();
       wakeConfigMissCount.clear();
-      socialV2.paused = false;
+      socialData.paused = false;
       try {
-        atomicWriteJson(SOCIAL_V2_FILE, { conversations: {} });
+        atomicWriteJson(SOCIAL_FILE, { conversations: {} });
       } catch (error) {
         log('重置状态：写空状态文件失败:', error?.message ?? error);
       }
@@ -850,7 +850,7 @@ export function createSocialRoutes(deps) {
       sendJson({ ok: true });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/state') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/state') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       if (!key) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
@@ -876,7 +876,7 @@ export function createSocialRoutes(deps) {
         ok: true,
         key,
         wakeConfig: st.wakeConfig,
-        wakeSafety: computeWakeSafetyV2(st.wakeConfig),
+        wakeSafety: computeWakeSafetyChat(st.wakeConfig),
         unreadCount: st.unread.length,
         recentCount: st.recentMessages.length,
         lastWakeReason: st.lastWakeReason,
@@ -884,7 +884,7 @@ export function createSocialRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/prompt') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/prompt') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       if (!key) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
@@ -904,7 +904,7 @@ export function createSocialRoutes(deps) {
       }
       const st = getSocialV2State(key);
       // 让 prompt 里的表情摘要尽量新鲜：按 TTL 同步一次 QQ 收藏表情（失败不阻塞）。
-      if (cfg.socialV2?.sticker?.enabled !== false) {
+      if (cfg.socialData?.sticker?.enabled !== false) {
         try {
           await syncStickerLibrary(false);
         } catch {}
@@ -958,7 +958,7 @@ export function createSocialRoutes(deps) {
         memberRemark: 'qq_get_member_remarks / qq_set_member_remark / qq_remove_member_remark',
         setMemberCard: 'qq_set_member_card',
       };
-      const tools = cfg.socialV2?.tools ?? {};
+      const tools = cfg.socialData?.tools ?? {};
       const stickerToolFlags = new Set([
         'listStickers',
         'getStickerImage',
@@ -982,23 +982,23 @@ export function createSocialRoutes(deps) {
         time: new Date().toISOString(),
         role: {
           name: roleState.role ?? null,
-          hint: deps.currentMode === 'chat' ? currentRoleHintV2() : currentRoleHint(),
+          hint: deps.currentMode === 'chat' ? currentRoleHintChat() : currentRoleHint(),
         },
         recommended:
-          cfg.socialV2?.provideRecommendations === false
+          cfg.socialData?.provideRecommendations === false
             ? null
             : {
-                wake: cfg.socialV2?.wake ?? {},
-                send: cfg.socialV2?.send ?? {},
-                wait: cfg.socialV2?.wait ?? {},
-                proactive: cfg.socialV2?.proactive ?? {},
+                wake: cfg.socialData?.wake ?? {},
+                send: cfg.socialData?.send ?? {},
+                wait: cfg.socialData?.wait ?? {},
+                proactive: cfg.socialData?.proactive ?? {},
               },
         enabledTools,
         unreadCount: st.unread.length,
         recentCount: st.recentMessages.length,
         currentWakeConfig: st.wakeConfig,
-        wakeSafety: computeWakeSafetyV2(st.wakeConfig),
-        memory: formatMemoryV2(st),
+        wakeSafety: computeWakeSafetyChat(st.wakeConfig),
+        memory: formatMemoryChat(st),
         knowledge: {
           enabled: knowledgeEnabled(),
           total: deps.knowledgeEntries.filter((e) => isActiveStatus(e.status) && e.question && e.answer).length,
@@ -1021,24 +1021,24 @@ export function createSocialRoutes(deps) {
             })),
           conflicts: listKnowledgeConflicts().slice(0, 10),
         },
-        participation: formatParticipationV2(st),
+        participation: formatParticipationChat(st),
         slang: {
           enabled: cfg.slang?.enabled !== false,
-          entries: confirmedSlangListV2(),
+          entries: confirmedSlangListChat(),
           block: buildSlangContext(deps.slangEntries, cfg.slang?.injectMax ?? 8),
         },
         stickers: {
-          enabled: cfg.socialV2?.sticker?.enabled !== false,
+          enabled: cfg.socialData?.sticker?.enabled !== false,
           total: deps.stickerEntries.length,
           context:
-            cfg.socialV2?.sticker?.includeInPrompt !== false
-              ? buildStickerContext(deps.stickerEntries, cfg.socialV2?.sticker?.promptMaxStickers ?? 8, {
-                  autoLabel: cfg.socialV2?.sticker?.autoLabel !== false,
-                  labelPerTurn: cfg.socialV2?.sticker?.autoLabelPerTurn ?? 2,
+            cfg.socialData?.sticker?.includeInPrompt !== false
+              ? buildStickerContext(deps.stickerEntries, cfg.socialData?.sticker?.promptMaxStickers ?? 8, {
+                  autoLabel: cfg.socialData?.sticker?.autoLabel !== false,
+                  labelPerTurn: cfg.socialData?.sticker?.autoLabelPerTurn ?? 2,
                 })
               : '',
-          strategy: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerStrategyHint() : '',
-          moment: buildStickerMomentLineV2(key, st),
+          strategy: cfg.socialData?.sticker?.includeInPrompt !== false ? buildStickerStrategyHint() : '',
+          moment: buildStickerMomentLineChat(key, st),
           library: {
             enabled: readPickConfig().includeLibrary,
             total: readPickConfig().includeLibrary ? stickerLibraryItems().length : 0,
@@ -1047,7 +1047,7 @@ export function createSocialRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/unread') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/unread') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
       if (!key) {
@@ -1069,11 +1069,11 @@ export function createSocialRoutes(deps) {
       const st = getSocialV2State(key);
       const messages = st.unread.slice(-limit).map(agentMessageView);
       // 这些消息已经真正给过 AI 了，推进投递水位（让 wait 不再重复投递）。
-      markDeliveredV2(st, messages);
+      markDeliveredChat(st, messages);
       sendJson({ ok: true, key, unreadCount: st.unread.length, messages });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/recent') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/recent') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 20));
       const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
@@ -1097,11 +1097,11 @@ export function createSocialRoutes(deps) {
       const start = Math.max(0, st.recentMessages.length - offset - limit);
       const end = Math.max(0, st.recentMessages.length - offset);
       const messages = st.recentMessages.slice(start, end).map(agentMessageView);
-      markDeliveredV2(st, messages);
+      markDeliveredChat(st, messages);
       sendJson({ ok: true, key, messages });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/mark-read') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/mark-read') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       if (!key) {
@@ -1123,8 +1123,8 @@ export function createSocialRoutes(deps) {
       const st = getSocialV2State(key);
       // 如果当前已经是“潜水”唤醒配置，且最近还有对话/刚被唤醒，不允许用 mark_read 直接回到潜水；
       // 必须先等够沉睡前观察窗口，避免“聊两句又去潜水”。
-      if (isSleepingConfigV2(st.wakeConfig) && preSleepWaitBlockedV2(st)) {
-        const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
+      if (isSleepingConfigChat(st.wakeConfig) && preSleepWaitBlockedChat(st)) {
+        const preSleepMs = Math.max(0, Number(cfg.socialData?.wake?.preSleepWaitMs) || 300000);
         const remaining = Math.max(0, preSleepMs - (st.lastIncomingAt || 0 ? Date.now() - st.lastIncomingAt : 0));
         const remainMin = Math.ceil(remaining / 60000);
         sendJson(
@@ -1152,7 +1152,7 @@ export function createSocialRoutes(deps) {
       if (!st.wakeConfig.infinite && !st.wakeConfig.sleepUntil) {
         st.wakeConfig.infinite = true;
       }
-      ensureWakeableV2(st, { key });
+      ensureWakeableChat(st, { key });
       st.wakeConfig.confirmedAt = Date.now();
       st.wakeConfig.confirmedBy = 'mark_read';
       markReadCalledKeys.add(key);
@@ -1171,22 +1171,22 @@ export function createSocialRoutes(deps) {
               note: `有 ${unseen.length} 条消息你还没看过（例如 ${String(unseen[0]?.sender ?? '')}：${String(unseen[0]?.text ?? '').slice(0, 40)}），已保留在未读里；请先 qq_get_unread_messages 看一遍再决定要不回复，不要当作没发生。`,
             }
           : {}),
-        wakeGuaranteed: computeWakeSafetyV2(st.wakeConfig).guaranteed,
-        wakeSafety: computeWakeSafetyV2(st.wakeConfig),
+        wakeGuaranteed: computeWakeSafetyChat(st.wakeConfig).guaranteed,
+        wakeSafety: computeWakeSafetyChat(st.wakeConfig),
         wakeConfig: st.wakeConfig,
       });
       // 有没看过的消息时，主动补一次唤醒，别让它们只有等下一条消息才有机会被看到。
       // 10 分钟护栏：万一 AI 反复 mark_read 却不看，也不会变成唤醒风暴。
       if (unseen.length && (!st.unseenNudgeAt || Date.now() - st.unseenNudgeAt > 10 * 60 * 1000)) {
         st.unseenNudgeAt = Date.now();
-        scheduleWakeV2(key, 'unseenBacklog');
+        scheduleWakeChat(key, 'unseenBacklog');
       }
       return;
     }
   }
   async function handleSocialV2ProfileRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled, persistConfig } = routeCtx;
-    if (url.pathname === '/api/socialV2/user-profile') {
+    if (url.pathname === '/api/socialData/user-profile') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const userId = String(url.searchParams.get('userId') ?? '').replace(/\D/g, '');
       if (!userId) {
@@ -1244,15 +1244,15 @@ export function createSocialRoutes(deps) {
       return;
     }
     // 插件→能力：控制台的「聊天模式 → 插件」用它渲染与开关
-    if (url.pathname === '/api/socialV2/plugins') {
-      if (!cfg.socialV2) cfg.socialV2 = {};
-      if (!cfg.socialV2.plugins || typeof cfg.socialV2.plugins !== 'object') {
-        cfg.socialV2.plugins = migrateLegacyTools(cfg.socialV2.tools || {});
-        cfg.socialV2.pluginsVersion = 2;
+    if (url.pathname === '/api/socialData/plugins') {
+      if (!cfg.socialData) cfg.socialData = {};
+      if (!cfg.socialData.plugins || typeof cfg.socialData.plugins !== 'object') {
+        cfg.socialData.plugins = migrateLegacyTools(cfg.socialData.tools || {});
+        cfg.socialData.pluginsVersion = 2;
         persistConfig();
       }
       if (req.method === 'GET') {
-        sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins), raw: cfg.socialV2.plugins });
+        sendJson({ ok: true, plugins: pluginCatalog(cfg.socialData.plugins), raw: cfg.socialData.plugins });
         return;
       }
       if (req.method === 'POST') {
@@ -1263,20 +1263,20 @@ export function createSocialRoutes(deps) {
         if (String(body.bulk ?? '') === 'all') {
           // 批量：全部插件开/关；开启时跳过需要人工确认的高危能力（能力表里 default 即"默认关"的那些）
           for (const pl of PLUGINS) {
-            const cur0 = cfg.socialV2.plugins[pl.id] || {};
+            const cur0 = cfg.socialData.plugins[pl.id] || {};
             cur0.capabilities = cur0.capabilities && typeof cur0.capabilities === 'object' ? cur0.capabilities : {};
             for (const c of pl.capabilities) {
               // 「全部开启」跳过 opt-in（高危）能力：改账号、改群名片、手机操作/命令
               cur0.capabilities[c.id] = on ? !OPT_IN_CAPS.has(`${pl.id}:${c.id}`) : false;
             }
             cur0.enabled = on;
-            cfg.socialV2.plugins[pl.id] = cur0;
+            cfg.socialData.plugins[pl.id] = cur0;
           }
           persistConfig();
-          sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
+          sendJson({ ok: true, plugins: pluginCatalog(cfg.socialData.plugins) });
           return;
         }
-        const cur = cfg.socialV2.plugins[pid];
+        const cur = cfg.socialData.plugins[pid];
         if (!cur || typeof cur !== 'object') {
           sendJson({ ok: false, error: '没有这个插件' }, 404);
           return;
@@ -1291,11 +1291,11 @@ export function createSocialRoutes(deps) {
         }
         persistConfig();
         log(`[plugin] ${pid}${cid ? '/' + cid : ''} → ${on ? '开' : '关'}`);
-        sendJson({ ok: true, plugins: pluginCatalog(cfg.socialV2.plugins) });
+        sendJson({ ok: true, plugins: pluginCatalog(cfg.socialData.plugins) });
         return;
       }
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/wake-config') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/wake-config') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       if (!key) {
@@ -1373,22 +1373,22 @@ export function createSocialRoutes(deps) {
         if (!Number.isNaN(d.getTime())) next.sleepUntil = d.toISOString();
       } else if (Number.isFinite(Number(input.sleepMs))) {
         let ms = Math.max(0, Math.round(Number(input.sleepMs)));
-        const minMs = Math.max(0, Number(cfg.socialV2?.wake?.sleepMinMs) || 0);
-        const maxMs = Number(cfg.socialV2?.wake?.sleepMaxMs) || 0;
+        const minMs = Math.max(0, Number(cfg.socialData?.wake?.sleepMinMs) || 0);
+        const maxMs = Number(cfg.socialData?.wake?.sleepMaxMs) || 0;
         if (ms < minMs) ms = minMs;
         if (maxMs > 0 && ms > maxMs) ms = maxMs;
         next.sleepUntil = new Date(Date.now() + ms).toISOString();
       } else if (!next.sleepUntil && !next.infinite) {
         // 既没有无限也没有时间：使用推荐默认有限时长
-        const recMin = Number(cfg.socialV2?.wake?.recommendedSleepMinMs) || 300000;
-        const recMax = Number(cfg.socialV2?.wake?.recommendedSleepMaxMs) || 7200000;
+        const recMin = Number(cfg.socialData?.wake?.recommendedSleepMinMs) || 300000;
+        const recMax = Number(cfg.socialData?.wake?.recommendedSleepMaxMs) || 7200000;
         const ms = recMin + Math.random() * Math.max(0, recMax - recMin);
         next.sleepUntil = new Date(Date.now() + Math.round(ms)).toISOString();
       }
       // 对有限 sleepUntil 也做 min/max clamp，防止绕过 sleepMaxMs
       if (!next.infinite && next.sleepUntil) {
-        const maxMs = Number(cfg.socialV2?.wake?.sleepMaxMs) || 0;
-        const minMs = Math.max(0, Number(cfg.socialV2?.wake?.sleepMinMs) || 0);
+        const maxMs = Number(cfg.socialData?.wake?.sleepMaxMs) || 0;
+        const minMs = Math.max(0, Number(cfg.socialData?.wake?.sleepMinMs) || 0);
         let until = Date.parse(next.sleepUntil);
         if (Number.isFinite(until)) {
           if (minMs > 0 && until < Date.now() + minMs) until = Date.now() + minMs;
@@ -1406,7 +1406,7 @@ export function createSocialRoutes(deps) {
       }
       // 归一化“指定成员”触发：只保留正整数 QQ 号，去重，限制数量；
       // null/undefined/非法值统一清空，避免“null”被当成有效唤醒条件绕过防永眠。
-      next.triggers.speakerIds = normalizeSpeakerIdsV2(next.triggers.speakerIds);
+      next.triggers.speakerIds = normalizeSpeakerIdsChat(next.triggers.speakerIds);
       // 私聊不适用“指定成员发言醒来”：清除以免误导/脏数据（私聊仍按原有逻辑每次消息都唤醒）。
       if (key.startsWith('private:')) {
         next.triggers.speakerIds = [];
@@ -1436,8 +1436,8 @@ export function createSocialRoutes(deps) {
         }
       }
       // 沉睡前强制观察窗口：除非对方明确结束、或已经安静/等待足够时间，否则不允许 AI 聊两句就设置潜水。
-      if (isSleepingConfigV2(next) && preSleepWaitBlockedV2(st)) {
-        const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
+      if (isSleepingConfigChat(next) && preSleepWaitBlockedChat(st)) {
+        const preSleepMs = Math.max(0, Number(cfg.socialData?.wake?.preSleepWaitMs) || 300000);
         const remaining = Math.max(0, preSleepMs - (st.lastIncomingAt || 0 ? Date.now() - st.lastIncomingAt : 0));
         const remainMin = Math.ceil(remaining / 60000);
         sendJson(
@@ -1452,7 +1452,7 @@ export function createSocialRoutes(deps) {
         return;
       }
       // 常驻活跃：这些群不允许它自己潜水（否则一条消息都唤不醒，线上反复出现）
-      const forceActive = Array.isArray(cfg.socialV2?.wake?.forceActive) ? cfg.socialV2.wake.forceActive : [];
+      const forceActive = Array.isArray(cfg.socialData?.wake?.forceActive) ? cfg.socialData.wake.forceActive : [];
       if (forceActive.includes(key)) {
         next.mode = 'active';
         next.infinite = true;
@@ -1478,26 +1478,26 @@ export function createSocialRoutes(deps) {
         clearTimeout(st.pendingWakeTimer);
         st.pendingWakeTimer = null;
       }
-      cancelReplyCheckV2(key); // AI 已主动设置新的唤醒配置，取消回复检查
-      setupSleepTimerV2(key);
+      cancelReplyCheckChat(key); // AI 已主动设置新的唤醒配置，取消回复检查
+      setupSleepTimerChat(key);
       log(
         `[chat] 更新唤醒配置 ${key}: mode=${next.mode} infinite=${next.infinite} sleepUntil=${next.sleepUntil ?? 'null'}`,
       );
-      sendJson({ ok: true, key, wakeConfig: next, wakeSafety: computeWakeSafetyV2(next) });
+      sendJson({ ok: true, key, wakeConfig: next, wakeSafety: computeWakeSafetyChat(next) });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/states') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/states') {
       const list = [];
       const pickCfg = readPickConfig();
       const libItems = pickCfg.enabled !== false && pickCfg.includeLibrary ? stickerLibraryItems() : [];
-      for (const [key, st] of socialV2.conversations) {
+      for (const [key, st] of socialData.conversations) {
         const moment =
           pickCfg.enabled === false
             ? null
             : evaluateMoment(st, {
                 cfg: pickCfg,
-                context: pickContextTextV2(st),
-                lastIncomingText: lastIncomingTextV2(st),
+                context: pickContextTextChat(st),
+                lastIncomingText: lastIncomingTextChat(st),
               });
         list.push({
           key,
@@ -1533,7 +1533,7 @@ export function createSocialRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/wake') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/wake') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const reason = String(body.reason ?? 'admin').trim() || 'admin';
@@ -1566,7 +1566,7 @@ export function createSocialRoutes(deps) {
       // 必须 await + catch：以前这里是一句裸调用，函数里一旦抛异常就变成
       // 「未处理异常」，控制台看到的是 ok:true（像成功了），实际唤醒被丢掉。
       try {
-        await sendWakePromptV2(key, reason);
+        await sendWakePromptChat(key, reason);
         log(`控制台：手动唤醒 ${key}（${reason}）`);
         sendJson({ ok: true, key, reason });
       } catch (error) {
@@ -1578,8 +1578,8 @@ export function createSocialRoutes(deps) {
   }
   async function handleSocialV2TaskRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-card') {
-      if (cfg.socialV2?.card?.enabled === false) {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-card') {
+      if (cfg.socialData?.card?.enabled === false) {
         sendJson({ ok: false, error: '卡片发送已关闭' }, 403);
         return;
       }
@@ -1621,7 +1621,7 @@ export function createSocialRoutes(deps) {
       st.cardSendTimes.push(now);
       if (st.cardSendTimes.length > 500) st.cardSendTimes = st.cardSendTimes.slice(-500);
       try {
-        const result = await sendCardV2(key, {
+        const result = await sendCardChat(key, {
           url: body.url,
           title: body.title,
           desc: body.desc,
@@ -1681,7 +1681,7 @@ export function createSocialRoutes(deps) {
     // ── 把长任务丢给工作车道（qq_run_task）────────────────────────────
     // 立即返回：聊天会话这一轮不用等任务跑完，所以「发图/搜图/看视频」这类慢活
     // 不再把整条会话堵死（见 workSessions 声明处的说明）。
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/run-task') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/run-task') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const task = String(body.task ?? '').trim();
@@ -1707,7 +1707,7 @@ export function createSocialRoutes(deps) {
       }
       if (!workLaneEnabled()) {
         sendJson(
-          { ok: false, error: '工作车道未启用（控制台「工具」里打开，或 config.json socialV2.work.enabled）' },
+          { ok: false, error: '工作车道未启用（控制台「工具」里打开，或 config.json socialData.work.enabled）' },
           403,
         );
         return;
@@ -1742,7 +1742,7 @@ export function createSocialRoutes(deps) {
   }
   async function handleSocialV2SendRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-burst') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-burst') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       let rawMessages = body.messages;
@@ -1776,7 +1776,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: 'key 和 messages 不能为空' }, 400);
         return;
       }
-      const sendCfgBurst = cfg.socialV2?.send ?? {};
+      const sendCfgBurst = cfg.socialData?.send ?? {};
       if (sendCfgBurst.burstEnabled === false && messages.length > 1) {
         sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
         return;
@@ -1816,7 +1816,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403);
         return;
       }
-      const sendCfg = cfg.socialV2?.send ?? {};
+      const sendCfg = cfg.socialData?.send ?? {};
       const maxMsgs = Math.max(1, Number(sendCfg.burstMaxMessages) || 8);
       const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
       if (messages.length > maxMsgs) {
@@ -1852,16 +1852,16 @@ export function createSocialRoutes(deps) {
         // 先预占发送额度，避免并发绕过限频
         for (let i = 0; i < messages.length; i++) st.sendTimes.push(now);
         if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-        const delays = computeGapsV2(messages, 'auto', undefined, undefined, sendCfg);
-        const sentMessages = await sendMessagesV2(key, messages, delays);
-        recordSentMessagesV2(key, sentMessages);
+        const delays = computeGapsChat(messages, 'auto', undefined, undefined, sendCfg);
+        const sentMessages = await sendMessagesChat(key, messages, delays);
+        recordSentMessagesChat(key, sentMessages);
         st.lastAiReplyAt = now;
         st.lastActionAt = now;
         st.wakeConfig.noActionCount = 0;
         saveSocialV2State();
         log(`[chat] 工具分条发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
         appendActivity(`${key} [chat] 工具分条发送：成功 ${sentMessages.length}/${messages.length} 条`);
-        if (sentMessages.length > 0) scheduleReplyCheckV2(key);
+        if (sentMessages.length > 0) scheduleReplyCheckChat(key);
         // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
         // 现在阈值可配，且文案明确把正经事排除在外。
         const burstHintThreshold = Math.max(3, Number(sendCfg.burstHintThreshold) || 10);
@@ -1882,7 +1882,7 @@ export function createSocialRoutes(deps) {
         });
       } catch (error) {
         if (error?.sent?.length) {
-          recordSentMessagesV2(key, error.sent);
+          recordSentMessagesChat(key, error.sent);
           log(`[chat] 工具分条发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
         }
         // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -1915,7 +1915,7 @@ export function createSocialRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-message') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-message') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       let rawMessages = body.messages;
@@ -1957,7 +1957,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: 'key 和 messages 不能为空' }, 400);
         return;
       }
-      const sendCfgBurst = cfg.socialV2?.send ?? {};
+      const sendCfgBurst = cfg.socialData?.send ?? {};
       if (sendCfgBurst.burstEnabled === false && messages.length > 1) {
         sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
         return;
@@ -2010,7 +2010,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: 'replyToMessageId 必须是非零整数（消息 id 可能为负数）' }, 400);
         return;
       }
-      const sendCfg = cfg.socialV2?.send ?? {};
+      const sendCfg = cfg.socialData?.send ?? {};
       const maxMsgs = Math.max(1, Number(sendCfg.burstMaxMessages) || 8);
       const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
       if (messages.length > maxMsgs) {
@@ -2027,7 +2027,7 @@ export function createSocialRoutes(deps) {
           return;
         }
       }
-      const delays = computeGapsV2(messages, gapMode, gapMs, gaps, sendCfg);
+      const delays = computeGapsChat(messages, gapMode, gapMs, gaps, sendCfg);
       // 先做发送频率检查并预占额度，再解析引用目标，避免未限流的引用查询打爆 OneBot。
       const st = getSocialV2State(key);
       const now = Date.now();
@@ -2048,7 +2048,7 @@ export function createSocialRoutes(deps) {
       let quotedInfo = null;
       let actualReplyToMessageId = replyToMessageId;
       if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-        const resolved = await resolveReplyTargetV2(st, kind, id, String(replyToMessageId).trim());
+        const resolved = await resolveReplyTargetChat(st, kind, id, String(replyToMessageId).trim());
         if (!resolved) {
           // 引用解析失败：回滚已预占的发送额度
           for (let i = 0; i < messages.length; i++) {
@@ -2069,15 +2069,15 @@ export function createSocialRoutes(deps) {
         actualReplyToMessageId = resolved.messageId;
       }
       try {
-        const sentMessages = await sendMessagesV2(key, messages, delays, actualReplyToMessageId, atUserId);
-        recordSentMessagesV2(key, sentMessages);
+        const sentMessages = await sendMessagesChat(key, messages, delays, actualReplyToMessageId, atUserId);
+        recordSentMessagesChat(key, sentMessages);
         st.lastAiReplyAt = now;
         st.lastActionAt = now;
         st.wakeConfig.noActionCount = 0;
         saveSocialV2State();
         log(`[chat] 工具统一发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
         appendActivity(`${key} [chat] 工具统一发送：成功 ${sentMessages.length}/${messages.length} 条`);
-        if (sentMessages.length > 0) scheduleReplyCheckV2(key);
+        if (sentMessages.length > 0) scheduleReplyCheckChat(key);
         // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
         // 现在阈值可配，且文案明确把正经事排除在外。
         const burstHintThreshold = Math.max(3, Number(sendCfg.burstHintThreshold) || 10);
@@ -2100,7 +2100,7 @@ export function createSocialRoutes(deps) {
         });
       } catch (error) {
         if (error?.sent?.length) {
-          recordSentMessagesV2(key, error.sent);
+          recordSentMessagesChat(key, error.sent);
           log(`[chat] 工具统一发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
         }
         // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -2133,7 +2133,7 @@ export function createSocialRoutes(deps) {
       }
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/send-poke') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/send-poke') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const targetUserId = String(body.targetUserId ?? body.userId ?? '').trim();
@@ -2161,7 +2161,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_send_poke' }, 403);
         return;
       }
-      if (socialV2.paused) {
+      if (socialData.paused) {
         sendJson({ ok: false, error: 'AI 已暂停，不能发送拍一拍' }, 403);
         return;
       }
@@ -2189,7 +2189,7 @@ export function createSocialRoutes(deps) {
         return;
       }
       const st = getSocialV2State(key);
-      const sendCfg = cfg.socialV2?.send ?? {};
+      const sendCfg = cfg.socialData?.send ?? {};
       const now = Date.now();
       const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
       const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
@@ -2234,7 +2234,7 @@ export function createSocialRoutes(deps) {
           },
           time: Date.now(),
         });
-        const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
+        const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
         if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
         st.preSleepWaitSatisfiedAt = 0;
         st.preSleepWaitObservedAt = 0;
@@ -2255,7 +2255,7 @@ export function createSocialRoutes(deps) {
   }
   async function handleSocialV2WaitRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/wait') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/wait') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       if (!key) {
@@ -2274,7 +2274,7 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_wait_for_messages' }, 403);
         return;
       }
-      if (socialV2.paused) {
+      if (socialData.paused) {
         const st = getSocialV2State(key);
         sendJson({
           ok: true,
@@ -2288,7 +2288,7 @@ export function createSocialRoutes(deps) {
         });
         return;
       }
-      const waitCfg = cfg.socialV2?.wait ?? {};
+      const waitCfg = cfg.socialData?.wait ?? {};
       const minNew = Math.max(1, Math.round(Number(body.minNewMessages) || 1));
       const defaultMs = Number(waitCfg.defaultMs) || 30000;
       const minMs = Math.max(100, Number(waitCfg.minMs) || 5000);
@@ -2306,7 +2306,7 @@ export function createSocialRoutes(deps) {
       const minQuietAfterNewMs = Number.isFinite(Number(waitCfg.minQuietAfterNewMs))
         ? Math.max(0, Number(waitCfg.minQuietAfterNewMs))
         : 10000;
-      const suggestedQuietMs = Math.max(suggestQuietMsV2(st), minQuietAfterNewMs);
+      const suggestedQuietMs = Math.max(suggestQuietMsChat(st), minQuietAfterNewMs);
       const rawQuietMs = body.quietMs != null ? Number(body.quietMs) : suggestedQuietMs;
       // 收到新消息后至少再等 minQuietAfterNewMs（默认 10 秒），防止抢话；
       // 即使 AI 传了 quietMs=0，也会被抬升到最小静默窗口。
@@ -2317,9 +2317,9 @@ export function createSocialRoutes(deps) {
         clearTimeout(st.pendingWakeTimer);
         st.pendingWakeTimer = null;
       }
-      cancelReplyCheckV2(key); // AI 正在主动等待，取消回复检查定时器避免重复唤醒
+      cancelReplyCheckChat(key); // AI 正在主动等待，取消回复检查定时器避免重复唤醒
       // baseline 用「已投递给 AI 的水位线」，而不是「本次 wait 开始时的最新 seq」：
-      // 后者会让两次 wait 之间到达的消息永久消失在缝里（见 markDeliveredV2 的说明）。
+      // 后者会让两次 wait 之间到达的消息永久消失在缝里（见 markDeliveredChat 的说明）。
       const baseline = Number(st.deliveredSeq) || 0;
       const start = Date.now();
       let arrived = false;
@@ -2347,8 +2347,8 @@ export function createSocialRoutes(deps) {
         await sleep(300);
       }
       const waitedMs = Date.now() - start;
-      const preSleepWaitMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-      const preSleepRemainingMs = preSleepWaitBlockedV2(st)
+      const preSleepWaitMs = Math.max(0, Number(cfg.socialData?.wake?.preSleepWaitMs) || 300000);
+      const preSleepRemainingMs = preSleepWaitBlockedChat(st)
         ? Math.max(0, preSleepWaitMs - (st.lastIncomingAt || 0 ? Date.now() - st.lastIncomingAt : 0))
         : 0;
       const quiet = arrived && quietMs > 0 && Date.now() - lastNewAt >= quietMs;
@@ -2365,7 +2365,7 @@ export function createSocialRoutes(deps) {
         st.preSleepWaitObservedAt = 0;
         st.preSleepWaitAccumMs = 0;
       } else if (!arrived) {
-        // 短等待不累计：必须单次等满观察窗口（或实际安静时间已足够时由 preSleepWaitBlockedV2 放行）
+        // 短等待不累计：必须单次等满观察窗口（或实际安静时间已足够时由 preSleepWaitBlockedChat 放行）
         st.preSleepWaitAccumMs = 0;
       } else {
         // 等待期间有新消息：
@@ -2382,7 +2382,7 @@ export function createSocialRoutes(deps) {
           )
         : [];
       // 投出去才算「给过 AI」：下一步的 wait 不会再把同一批重复贴一遍。
-      markDeliveredV2(st, newMessages);
+      markDeliveredChat(st, newMessages);
       saveSocialV2State();
       const lastNew = newMessages.length ? newMessages[newMessages.length - 1] : null;
       const lastMessageUnfinished = lastNew
@@ -2409,7 +2409,7 @@ export function createSocialRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/check-send') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/check-send') {
       const body = await readBody();
       const key = String(body.key ?? '').trim();
       const tool = String(body.tool ?? '').trim();
@@ -2448,7 +2448,7 @@ export function createSocialRoutes(deps) {
   }
   async function handleSocialV2ExtrasRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/friend-dress') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/friend-dress') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const userId = String(url.searchParams.get('userId') ?? '').trim();
       const withImage = url.searchParams.get('withImage') === '1';
@@ -2517,7 +2517,7 @@ export function createSocialRoutes(deps) {
     }
 
     // 群成员/群头像（qq_get_member_avatar）：把头像取回来交给视觉模型
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/member-avatar') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/member-avatar') {
       const key = String(url.searchParams.get('key') ?? '').trim();
       const userId = String(url.searchParams.get('userId') ?? '').trim();
       const size = Number(url.searchParams.get('size')) || 640;
@@ -2564,8 +2564,8 @@ export function createSocialRoutes(deps) {
     }
 
     // 本地图库列表（qq_list_image_library）：让 AI 知道 assets/stickers/ 里有哪些图可用
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/image-library') {
-      if (cfg.socialV2?.image?.enabled === false) {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/image-library') {
+      if (cfg.socialData?.image?.enabled === false) {
         sendJson({ ok: false, error: '图片功能已关闭' }, 403);
         return;
       }
@@ -2618,14 +2618,14 @@ export function createSocialRoutes(deps) {
       }));
       sendJson({
         ok: true,
-        dir: String(cfg.socialV2?.image?.libraryDir || 'assets/stickers'),
+        dir: String(cfg.socialData?.image?.libraryDir || 'assets/stickers'),
         total,
         count: out.length,
         items: out,
       });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/sticker-list') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/sticker-list') {
       if (!stickerEnabled()) {
         sendJson({ ok: false, error: '表情包体系已关闭' }, 403);
         return;
@@ -2635,7 +2635,7 @@ export function createSocialRoutes(deps) {
       const onlyUnlabeled = ['1', 'true', 'yes'].includes(
         String(url.searchParams.get('onlyUnlabeled') ?? '').toLowerCase(),
       );
-      const maxCount = Math.max(1, Number(cfg.socialV2?.sticker?.maxListCount) || 100);
+      const maxCount = Math.max(1, Number(cfg.socialData?.sticker?.maxListCount) || 100);
       const count = Math.min(500, Math.max(1, Math.min(Number(url.searchParams.get('count')) || 48, maxCount)));
       let force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
       if (!key) {
@@ -2677,7 +2677,7 @@ export function createSocialRoutes(deps) {
     }
     // 管理端表情库接口（控制台）
     // 手动触发一次掉线补拉（控制台用；也方便出问题时现场验证）
-    if (url.pathname === '/api/socialV2/backfill' && req.method === 'POST') {
+    if (url.pathname === '/api/socialData/backfill' && req.method === 'POST') {
       try {
         const r = await backfillMissedMessages('console');
         sendJson({ ok: true, ...r, note: r.added ? `补回 ${r.added} 条` : '没有发现缺口（或还没建立基线）' });
@@ -2689,7 +2689,7 @@ export function createSocialRoutes(deps) {
   }
   async function handleSelfProfileRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/self-profile') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/self-profile') {
       const conf = profileCfg();
       let selfId = '';
       try {
@@ -2720,7 +2720,7 @@ export function createSocialRoutes(deps) {
       });
       return;
     }
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/self-profile') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/self-profile') {
       const body = await readBody();
       const viaAgent = !!req.headers['x-agent-token'];
       const key = String(body.key ?? '').trim();
@@ -2773,7 +2773,7 @@ export function createSocialRoutes(deps) {
       return;
     }
     // 回滚上一次改动（控制台）
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/self-profile-revert') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/self-profile-revert') {
       const body = await readBody();
       try {
         const result = await revertProfile({ field: String(body.field ?? ''), by: 'console' });
@@ -2786,7 +2786,7 @@ export function createSocialRoutes(deps) {
   }
   async function handleExploreRoutes(routeCtx) {
     const { req, res, url, sendJson, readBody, v2SessionAllowed, v2ToolEnabled } = routeCtx;
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/explore-topic') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/explore-topic') {
       const body = await readBody();
       const seed = String(body.seed ?? body.topic ?? body.keyword ?? '').trim();
       if (!seed) {
@@ -2829,7 +2829,7 @@ export function createSocialRoutes(deps) {
           progress: formatJobProgress(job),
           note:
             '任务已在后台独立会话里开跑，不用等它：挖到的梗会直接进黑话库（已确认），' +
-            '主题综述进知识库，之后聊天就能用上。想看进度可以再来查 /api/socialV2/explore-jobs（控制台）。',
+            '主题综述进知识库，之后聊天就能用上。想看进度可以再来查 /api/socialData/explore-jobs（控制台）。',
         });
       } catch (error) {
         sendJson({ ok: false, error: `发起探索失败：${error?.message ?? error}` }, 400);
@@ -2837,7 +2837,7 @@ export function createSocialRoutes(deps) {
       return;
     }
     // 探索任务列表/进度（控制台）
-    if (req.method === 'GET' && url.pathname === '/api/socialV2/explore-jobs') {
+    if (req.method === 'GET' && url.pathname === '/api/socialData/explore-jobs') {
       sendJson({
         ok: true,
         enabled: exploreCfg().enabled,
@@ -2868,7 +2868,7 @@ export function createSocialRoutes(deps) {
       return;
     }
     // 停止一个探索任务（控制台）
-    if (req.method === 'POST' && url.pathname === '/api/socialV2/explore-stop') {
+    if (req.method === 'POST' && url.pathname === '/api/socialData/explore-stop') {
       const body = await readBody();
       const id = String(body.id ?? '').trim();
       if (!id) {

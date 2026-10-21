@@ -12,7 +12,7 @@ import path from 'node:path';
 
 export const VECTOR_MODEL = 'Xenova/bge-small-zh-v1.5';
 
-/** 默认打分权重（可在 config.socialV2.rag.weights 覆盖） */
+/** 默认打分权重（可在 config.socialData.rag.weights 覆盖） */
 export const DEFAULT_WEIGHTS = Object.freeze({
   sem: 1.0,      // 语义相似度
   conv: 0.15,    // 本会话出现次数（log1p）

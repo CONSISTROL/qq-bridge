@@ -62,7 +62,7 @@ function renderStatusBadge() {
   }));
   el.appendChild(chip('群', groups.length ? String(groups.length) : '无', { title: groups.join(', ') || '未配置群白名单', className: 'groups' }));
   el.appendChild(chip('私聊', privates.length ? String(privates.length) : '无', { title: privates.join(', ') || '未配置私聊白名单', className: 'privates' }));
-  if (s.socialV2Paused) el.appendChild(chip('AI', '已暂停', { dot: 'warn', title: '聊天模式已暂停，agent 工具调用会被拒绝', className: 'paused' }));
+  if (s.socialPaused) el.appendChild(chip('AI', '已暂停', { dot: 'warn', title: '聊天模式已暂停，agent 工具调用会被拒绝', className: 'paused' }));
 }
 
 function renderSideStatus() {
@@ -82,7 +82,7 @@ function renderSideStatus() {
     const mode = MODE_LABEL[latest.mode] ?? latest.mode ?? '-';
     dot.className = 'side-status-dot ' + (latest.dshReady ? 'ok' : 'err');
     title.textContent = latest.dshReady ? 'DSH 在线' : 'DSH 离线';
-    detail.textContent = mode + (latest.socialV2Paused ? ' · AI 已暂停' : '') + (latest.ownerQQ ? '' : ' · 未设管理员');
+    detail.textContent = mode + (latest.socialPaused ? ' · AI 已暂停' : '') + (latest.ownerQQ ? '' : ' · 未设管理员');
   }
   copy.append(title, detail);
   el.append(dot, copy);

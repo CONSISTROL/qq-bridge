@@ -115,7 +115,7 @@ export function migrateFromJson({ stateDir, log = () => {} } = {}) {
       put({ id: `remark:${conv}:${qq}`, kind: 'remark', scope: conv, text: `${m.remark || ''}|${m.note || ''}`.replace(/^\|/, '') || qq, extra: { qq, nick: m.nick || '' } });
     }
   }
-  const s2 = readJson('social-v2.json', { conversations: {} });
+  const s2 = readJson('social.json', { conversations: {} });
   for (const [conv, st] of Object.entries(s2.conversations || {})) {
     for (const t of (st.topics || [])) put({ id: `topic:${conv}:${t.id || t.at}`, kind: 'topic', scope: conv, text: t.text || '', at: t.at, extra: { participants: t.participants || [] } });
     for (const t of (st.thoughts || [])) put({ id: `thought:${conv}:${t.id || t.at}`, kind: 'thought', scope: conv, text: t.text || '', at: t.at });

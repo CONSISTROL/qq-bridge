@@ -11,7 +11,7 @@ import { NodeApiClient, unwrap, discoverDshLaunchToken } from '../src/dsh-client
 const ROOT = path.resolve(import.meta.dirname, '..');
 const cfg = JSON.parse(fs.readFileSync(`${ROOT}/config.json`, 'utf8'));
 const KEY = 'private:10001';
-const token = JSON.parse(fs.readFileSync(`${ROOT}/state/social-v2.json`, 'utf8')).conversations[KEY].agentToken;
+const token = JSON.parse(fs.readFileSync(`${ROOT}/state/social.json`, 'utf8')).conversations[KEY].agentToken;
 
 const dsh = cfg.dsh ?? {};
 const launchToken = dsh.authToken || discoverDshLaunchToken() || '';

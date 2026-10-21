@@ -312,8 +312,8 @@ async function loadSlangConfig(view) {
 }
 
 // ── 掉线补拉 ─────────────────────────────────────────────────────────
-// QQ 掉线/网关抖动期间的消息网关不重发，靠重连后补拉。参数在 config.json 的 socialV2.backfill，
-// 读写走 /api/socialV2/config（**不是** /api/slang/config——那是黑话学习自己的配置）。
+// QQ 掉线/网关抖动期间的消息网关不重发，靠重连后补拉。参数在 config.json 的 socialData.backfill，
+// 读写走 /api/socialData/config（**不是** /api/slang/config——那是黑话学习自己的配置）。
 function bindBackfillPanel(view) {
   const apply = (c) => {
     const b = c?.backfill ?? {};
@@ -322,8 +322,8 @@ function bindBackfillPanel(view) {
     $('#backfillWakeMaxMessages', view).value = b.wakeMaxMessages ?? 15;
     $('#backfillWakeMaxAgeMin', view).value = Math.round((b.wakeMaxAgeMs ?? 600000) / 60000);
   };
-  // backfill 属于 QQ 消息链（socialV2），不是黑话配置——读写都走 /api/socialV2/config。
-  api('/api/socialV2/config').then((r) => apply(r?.config || {})).catch(() => {});
+  // backfill 属于 QQ 消息链（socialData），不是黑话配置——读写都走 /api/socialData/config。
+  api('/api/socialData/config').then((r) => apply(r?.config || {})).catch(() => {});
 
   $('#backfillSave', view).addEventListener('click', async () => {
     const body = {
@@ -334,13 +334,13 @@ function bindBackfillPanel(view) {
         wakeMaxAgeMs: (Number($('#backfillWakeMaxAgeMin', view).value) || 0) * 60000
       }
     };
-    const r = await api('/api/socialV2/config', { method: 'POST', body }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    const r = await api('/api/socialData/config', { method: 'POST', body }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
     setMsg($('#backfillMsg', view), r && r.ok ? '已保存' : `保存失败：${r?.error || '未知'}`, r && r.ok ? 'ok' : 'bad');
   });
 
   $('#backfillNow', view).addEventListener('click', async () => {
     setMsg($('#backfillMsg', view), '正在补拉…');
-    const r = await api('/api/socialV2/backfill', { method: 'POST' }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    const r = await api('/api/socialData/backfill', { method: 'POST' }).catch((err) => ({ ok: false, error: String(err?.message || err) }));
     if (!r || !r.ok) setMsg($('#backfillMsg', view), `补拉失败：${r?.error || '未知'}`, 'bad');
     else setMsg($('#backfillMsg', view), `检查 ${r.checked} 个会话，补回 ${r.added} 条，唤醒 ${(r.woken || []).length} 个（${r.note}）`, 'ok');
   });
@@ -593,7 +593,7 @@ export async function mount(root) {
     }).join('');
   };
   const loadExploreJobs = async () => {
-    const data = await api('/api/socialV2/explore-jobs').catch(() => null);
+    const data = await api('/api/socialData/explore-jobs').catch(() => null);
     if (data?.ok) renderExploreJobs(data);
     return data;
   };
@@ -605,7 +605,7 @@ export async function mount(root) {
     const maxDepthRaw = $('#exploreMaxDepth', view).value;
     const maxDepth = maxDepthRaw === '' ? undefined : Number(maxDepthRaw);
     setSlangMsg('发起中…');
-    const r = await api('/api/socialV2/explore-topic', 'POST', { seed, maxTopics, maxDepth }).catch((e) => ({ ok: false, error: e.message }));
+    const r = await api('/api/socialData/explore-topic', 'POST', { seed, maxTopics, maxDepth }).catch((e) => ({ ok: false, error: e.message }));
     if (r.ok) {
       $('#exploreSeed', view).value = '';
       if (msg) { msg.textContent = `✅ 已开始探索「${seed}」：${r.progress ?? ''}`; msg.style.color = ''; }
@@ -621,7 +621,7 @@ export async function mount(root) {
     const id = e.target?.dataset?.exploreStop;
     if (!id) return;
     e.preventDefault();
-    const r = await api('/api/socialV2/explore-stop', 'POST', { id }).catch((err) => ({ ok: false, error: err.message }));
+    const r = await api('/api/socialData/explore-stop', 'POST', { id }).catch((err) => ({ ok: false, error: err.message }));
     const msg = $('#exploreMsg', view);
     if (msg) { msg.textContent = r.ok ? '⏹ 已请求停止（正在等的那一轮会被立刻中断）' : ('❌ ' + (r.error || '停止失败')); msg.style.color = r.ok ? '' : '#c66'; }
     loadExploreJobs();

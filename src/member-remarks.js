@@ -4,7 +4,7 @@
 // 需要机器人是管理员/群主，而且全群可见，不适合当「只给自己看」的记忆。
 // 所以这里分成两层：
 // - 本模块：桥接本地的备注库，按 会话 key + QQ 号 索引，只在 AI 视角生效，不动 QQ；
-// - 真·群名片：另一个默认关闭的工具（qq_set_member_card，socialV2.tools.setMemberCard=true）。
+// - 真·群名片：另一个默认关闭的工具（qq_set_member_card，socialData.tools.setMemberCard=true）。
 //
 // 设计原则：
 // - 昵称/群名片只是「记录当时的快照」，索引始终用 QQ 号：群友改昵称不会丢备注；

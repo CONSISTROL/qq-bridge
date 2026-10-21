@@ -61,8 +61,8 @@ function writeTempConfig() {
   cfg.snowluma = { ...(cfg.snowluma ?? {}), wsUrl: 'ws://127.0.0.1:1/', httpUrl: `http://127.0.0.1:${ONEBOT_PORT}` };
   cfg.dsh = { ...(cfg.dsh ?? {}), baseUrl: 'http://127.0.0.1:1' };
   cfg.allow = { ...(cfg.allow ?? {}), groups: [123456], private: [] };
-  cfg.socialV2.enabled = true;
-  cfg.socialV2.tools = { ...(cfg.socialV2.tools ?? {}), knowledge: toolFlags.knowledge };
+  cfg.socialData.enabled = true;
+  cfg.socialData.tools = { ...(cfg.socialData.tools ?? {}), knowledge: toolFlags.knowledge };
   cfg.knowledge = { ...(cfg.knowledge ?? {}), enabled: true, autoWrite: true, injectMax: 6, remindHitCount: 3, remindMinAskers: 2 };
   const p = path.join(TMP, 'config.json');
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
@@ -107,20 +107,20 @@ async function waitUp() {
 
 // AI 侧调用：带 agent token
 let agentToken = '';
-const agentGet = (qs, extra) => api(`/api/socialV2/knowledge/query?${qs}`, null, 'GET', { 'x-agent-token': agentToken, ...extra });
-const agentSubmit = (body, extra) => api('/api/socialV2/knowledge/submit', body, 'POST', { 'x-agent-token': agentToken, ...extra });
+const agentGet = (qs, extra) => api(`/api/socialData/knowledge/query?${qs}`, null, 'GET', { 'x-agent-token': agentToken, ...extra });
+const agentSubmit = (body, extra) => api('/api/socialData/knowledge/submit', body, 'POST', { 'x-agent-token': agentToken, ...extra });
 
 /**
  * 取会话 agentToken。
- * /api/socialV2/state 故意不返回 token（那是给 AI 的只读状态），所以从落盘状态里读——
+ * /api/socialData/state 故意不返回 token（那是给 AI 的只读状态），所以从落盘状态里读——
  * 这也顺带验证了 token 确实被持久化（DSH 侧靠它跨重启鉴权）。
  * 注意：调用方必须保证 token 非空——空 token 会被网关的全局防护当成「绕过企图」直接 403，
  * 那会让后面的断言全部失真，所以这里宁可显式失败。
  */
 async function readAgentToken(key, timeoutMs = 8000) {
-  const file = path.join(STATE, 'social-v2.json');
+  const file = path.join(STATE, 'social.json');
   const deadline = Date.now() + timeoutMs;
-  // social-v2 是防抖落盘的，状态建立后不保证立刻可见，所以轮询等一小会
+  // social 是防抖落盘的，状态建立后不保证立刻可见，所以轮询等一小会
   while (Date.now() < deadline) {
     try {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -155,14 +155,14 @@ try {
   ok('隔离实例已启动', await waitUp());
 
   // 必须先让会话存在，才有 agentToken（与线上一致：状态在首次访问时建立）
-  const st = await api(`/api/socialV2/state?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
+  const st = await api(`/api/socialData/state?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
   ok('会话状态已建立', st.json?.ok === true, JSON.stringify(st.json).slice(0, 120));
   agentToken = await readAgentToken(GROUP_KEY);
   ok('拿到会话 agentToken（已落盘）', agentToken.length >= 16, `token=${agentToken ? agentToken.slice(0, 6) + '…' : '(空)'}`);
 
   section('工具开关');
   {
-    const off = await api(`/api/socialV2/knowledge/query?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
+    const off = await api(`/api/socialData/knowledge/query?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
     ok('不带 agent token 时按控制台身份放行(200)', off.status === 200, `status=${off.status}`);
   }
 
@@ -241,7 +241,7 @@ try {
     ok('空答案被拒(400)', noA.status === 400, `status=${noA.status}`);
     const longA = await agentSubmit({ key: GROUP_KEY, question: '超长答案测试', answer: 'a'.repeat(2100) });
     ok('超长答案被拒(400)', longA.status === 400, `status=${longA.status}`);
-    const badToken = await api('/api/socialV2/knowledge/submit', { key: GROUP_KEY, question: 'q', answer: 'a' }, 'POST', { 'x-agent-token': 'bogus' });
+    const badToken = await api('/api/socialData/knowledge/submit', { key: GROUP_KEY, question: 'q', answer: 'a' }, 'POST', { 'x-agent-token': 'bogus' });
     ok('假 agent token 被拒(403)', badToken.status === 403, `status=${badToken.status}`);
     const noKey = await agentSubmit({ question: 'q', answer: 'a' });
     ok('缺 key 被拒(400)', noKey.status === 400, `status=${noKey.status}`);
@@ -274,7 +274,7 @@ try {
 
     const noKey = await agentGet('q=abc');
     ok('查询缺 key 被拒(400)', noKey.status === 400, `status=${noKey.status}`);
-    const badToken = await api(`/api/socialV2/knowledge/query?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET', { 'x-agent-token': 'bogus' });
+    const badToken = await api(`/api/socialData/knowledge/query?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET', { 'x-agent-token': 'bogus' });
     ok('查询假 token 被拒(403)', badToken.status === 403, `status=${badToken.status}`);
   }
 
@@ -380,7 +380,7 @@ try {
 
   section('qq_get_prompt 与唤醒提示注入');
   {
-    const p = await api(`/api/socialV2/prompt?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
+    const p = await api(`/api/socialData/prompt?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
     ok('prompt 带 knowledge 段', p.json?.knowledge && typeof p.json.knowledge.total === 'number', JSON.stringify(p.json?.knowledge).slice(0, 250));
     ok('prompt 里 repeats 非空', Array.isArray(p.json?.knowledge?.repeats) && p.json.knowledge.repeats.length >= 1, JSON.stringify(p.json?.knowledge?.repeats));
     ok('prompt 的 autoWrite 反映配置', p.json?.knowledge?.autoWrite === true, String(p.json?.knowledge?.autoWrite));
@@ -397,7 +397,7 @@ try {
     writeTempConfig();
     bridge = startBridge();
     ok('重启后实例已就绪', await waitUp());
-    const st2 = await api(`/api/socialV2/state?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
+    const st2 = await api(`/api/socialData/state?key=${encodeURIComponent(GROUP_KEY)}`, null, 'GET');
     agentToken = await readAgentToken(GROUP_KEY);
     ok('重启后仍能读到同一 agentToken', Boolean(st2.json?.ok) && agentToken.length >= 16, `token=${agentToken.slice(0, 6)}…`);
     const q = await agentGet(`key=${encodeURIComponent(GROUP_KEY)}&q=x`);
@@ -545,8 +545,8 @@ try {
     ok('视图调用了调试接口', js.includes('/api/knowledge/debug-search'));
     const app = fs.readFileSync(path.join(ROOT, 'public', 'console', 'app.js'), 'utf8');
     ok('app.js 已注册 knowledge 视图', app.includes("import * as knowledge from './views/knowledge.js'") && app.includes('knowledge,'));
-    const social2 = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'social2.html'), 'utf8');
-    ok('social2 有 knowledge 工具开关', social2.includes('data-v2-tool="knowledge"'), '工具开关缺失');
+    const chat = fs.readFileSync(path.join(ROOT, 'public', 'console', 'views', 'chat.html'), 'utf8');
+    ok('chat 有 knowledge 工具开关', chat.includes('data-v2-tool="knowledge"'), '工具开关缺失');
   }
 
   section('MCP 工具注册');
