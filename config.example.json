@@ -500,5 +500,12 @@
       1,
       8
     ]
+  },
+  "draw": {
+    "enabled": false,
+    "apiKey": "",
+    "model": "doubao-seedream-3-0-t2i-250415",
+    "size": "1024x1024",
+    "watermark": false
   }
 }

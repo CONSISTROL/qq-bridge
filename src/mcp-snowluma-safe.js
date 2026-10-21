@@ -1377,6 +1377,32 @@ defineTool(
   }
 );
 
+// ── 画图（豆包 Seedream）──────────────────────────────────────────────────
+defineTool(
+  'qq_draw',
+  '**自己画一张图**并发到这个会话（文生图，豆包 Seedream）。适合：群友要图但没有现成素材、'
+    + '梗图/表情牌、示意图、带文字的图、二次元插画。写法上用具体的中文描述：主体+动作+风格+构图+画幅，'
+    + '例如「一只戴墨镜的蓝色鲸鱼蹲在沙滩上，像素风，正方形」。'
+    + '注意：① 这是生成图，不是搜图（想找现成的用 qq_search_images）；② 一张要几秒到几十秒；'
+    + '③ 不要在群里刷图，一次一张；④ 生成失败会把原因告诉你（没配密钥时直接说明）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    prompt: z.string().describe('画面描述（中文，具体一点，最多 800 字）'),
+    size: z.enum(['1024x1024', '864x1152', '1152x864', '1280x720', '720x1280']).optional()
+      .describe('画幅：正方形（默认）/ 竖版 / 横版 / 宽屏 / 手机竖屏')
+  },
+  async ({ key, token, prompt, size }) => {
+    try {
+      const d = await agentApi('/api/draw', {
+        method: 'POST', body: JSON.stringify({ key, prompt, size }), headers: { 'x-agent-token': token }, timeoutMs: 180000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `画图失败：${d.error || d.sent?.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: `画好了并发出去：${d.model || ''} ${d.size || ''}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `画图失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
 // ── 自主升级：从对话里发现问题，自己升级自己 ──────────────────────────────
 defineTool(
   'qq_self_upgrade',

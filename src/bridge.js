@@ -9125,7 +9125,9 @@ const agentTokenOk = (key, token) => {
     const profileLine = buildMemoryRecallLine(key);
     // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
     let upgradeLine = '';
-    upgradeLine += '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
+    upgradeLine += '【会画图】群友要图、要梗图/表情牌/示意图时，可以用 qq_draw 直接生成一张（中文描述，写清主体/动作/风格/画幅）；'
+      + '找现成素材才用 qq_search_images。一张几秒到几十秒，别在群里刷图。\n\n'
+      + '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
       + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
     try {
       const hints = activePromptHints({ stateDir: STATE_DIR });
@@ -9314,7 +9316,9 @@ const agentTokenOk = (key, token) => {
     const profileLine = buildMemoryRecallLine(key);
     // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
     let upgradeLine = '';
-    upgradeLine += '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
+    upgradeLine += '【会画图】群友要图、要梗图/表情牌/示意图时，可以用 qq_draw 直接生成一张（中文描述，写清主体/动作/风格/画幅）；'
+      + '找现成素材才用 qq_search_images。一张几秒到几十秒，别在群里刷图。\n\n'
+      + '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
       + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
     try {
       const hints = activePromptHints({ stateDir: STATE_DIR });

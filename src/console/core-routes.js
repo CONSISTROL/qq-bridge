@@ -1,3 +1,4 @@
+import { generateImage, drawConfig } from '../draw.js';
 import { listUpgrades, proposeUpgrade, decideUpgrade, activePromptHints } from '../self-upgrade.js';
 // 控制台核心路由：首页/状态、角色、会话、白名单、安全、令牌、重启。
 //
@@ -34,6 +35,7 @@ export function createConsoleCoreRoutes(deps) {
     drainPromptQueue,
     escapeCqText,
     fs,
+    sendImageChat,
     listApps,
     listGoals,
     listItems,
@@ -500,6 +502,35 @@ export function createConsoleCoreRoutes(deps) {
       } catch (error) {
         sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
       }
+      return;
+    }
+    // ── 画图（豆包 Seedream）：生成后直接按会话发出去 ───────────────
+    if (url.pathname === '/api/draw' && req.method === 'POST') {
+      try {
+        const body = await readBody();
+        const key = String(body.key ?? '').trim();
+        const r = await generateImage({ cfg, prompt: body.prompt, size: body.size });
+        if (!r.ok) { sendJson(r, 400); return; }
+        if (!key) {
+          // 没给 key 时把图落盘供控制台预览，不发送
+          const name = `draw-${Date.now()}.png`;
+          const dir = path.join(STATE_DIR, 'draw');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, name), r.buffer);
+          sendJson({ ok: true, file: name, url: `/api/draw/file?name=${encodeURIComponent(name)}`, model: r.model, size: r.size });
+          return;
+        }
+        const sent = await sendImageChat(key, `data:image/png;base64,${r.buffer.toString('base64')}`, {});
+        sendJson({ ok: sent?.ok !== false, sent, model: r.model, size: r.size });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    if (url.pathname === '/api/draw/file' && req.method === 'GET') {
+      const name = path.basename(String(url.searchParams.get('name') ?? ''));
+      const file = path.join(STATE_DIR, 'draw', name);
+      if (!name || !fs.existsSync(file)) { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
+      fs.createReadStream(file).pipe(res);
       return;
     }
     // ── 自主升级（从对话里自己发现问题并升级）───────────────────
