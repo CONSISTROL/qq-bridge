@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>画图 · 远程点选</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,"PingFang SC",sans-serif; background:#0d1117; color:#e6edf3; }
+  header { padding:10px 14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; border-bottom:1px solid #21262d; }
+  h1 { font-size:15px; margin:0 8px 0 0; font-weight:600; }
+  input, button { font:inherit; padding:6px 10px; border-radius:8px; border:1px solid #30363d; background:#161b22; color:#e6edf3; }
+  button { cursor:pointer; } button.primary { background:#238636; border-color:#2ea043; }
+  #stage { padding:12px; display:flex; justify-content:center; }
+  #shot { max-width:100%; width:1280px; border-radius:10px; border:1px solid #30363d; cursor:crosshair; }
+  #msg { padding:0 14px 14px; color:#8b949e; white-space:pre-wrap; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; width:100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>画图 · 远程点选</h1>
+  <div class="row">
+    <input id="prompt" placeholder="提示词（如：一只戴墨镜的蓝色鲸鱼，像素风）" style="min-width:280px;flex:1">
+    <button id="start" class="primary">启动会话</button>
+    <button id="send">发送提示词</button>
+    <button id="grab">抓图并发送</button>
+    <button id="stop">停止</button>
+    <label><input type="checkbox" id="autorefresh" checked> 自动刷新</label>
+  </div>
+</header>
+<div id="stage"><img id="shot" alt="browser"></div>
+<div id="msg">提示：点「启动会话」→ 输入提示词点「发送提示词」→ 如果弹出九宫格验证码，直接在画面上点对应的格子、再点「提交」→ 出图后点「抓图并发送」。</div>
+<script>
+(() => {
+  const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('consoleToken') || '';
+  if (token) localStorage.setItem('consoleToken', token);
+  const h = { 'x-console-token': token, 'content-type': 'application/json' };
+  const $ = (id) => document.getElementById(id);
+  const say = (t) => { $('msg').textContent = t; };
+  let pending = false;
+
+  async function shot() {
+    if (pending) return;
+    pending = true;
+    try {
+      const r = await fetch('/api/draw/live/shot?t=' + Date.now(), { headers: h });
+      if (r.ok) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const img = $('shot');
+        const old = img.src; img.src = url;
+        if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+      }
+    } catch (e) { /* 忽略 */ } finally { pending = false; }
+  }
+
+  $('shot').addEventListener('click', async (ev) => {
+    const img = ev.currentTarget;
+    const rect = img.getBoundingClientRect();
+    const x = Math.round((ev.clientX - rect.left) * (1280 / rect.width));
+    const y = Math.round((ev.clientY - rect.top) * (900 / rect.height));
+    await fetch('/api/draw/live/click', { method: 'POST', headers: h, body: JSON.stringify({ x, y }) });
+    setTimeout(shot, 250);
+  });
+
+  $('start').addEventListener('click', async () => {
+    say('启动中…（首次约 5–10 秒）');
+    const r = await fetch('/api/draw/live/start', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    say(r.ok ? '会话已就绪，可以输入提示词了' : ('启动失败：' + (r.error || '')));
+    shot();
+  });
+  $('send').addEventListener('click', async () => {
+    const prompt = $('prompt').value.trim();
+    if (!prompt) { say('先写提示词'); return; }
+    say('发送中…');
+    const r = await fetch('/api/draw/live/prompt', { method: 'POST', headers: h, body: JSON.stringify({ prompt }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    say(r.ok ? '已发送，等它出图（有验证码就在画面上点格子和提交）' : ('发送失败：' + (r.error || '')));
+    setTimeout(shot, 1200);
+  });
+  $('grab').addEventListener('click', async () => {
+    say('抓图中…');
+    const r = await fetch('/api/draw/live/grab', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    say(r.ok ? ('已抓到图并发出' + (r.sent ? '' : '（未指定会话，仅抓到）')) : ('抓图失败：' + (r.error || '')));
+  });
+  $('stop').addEventListener('click', async () => {
+    await fetch('/api/draw/live/stop', { method: 'POST', headers: h, body: '{}' }).catch(() => {});
+    say('已停止');
+  });
+
+  setInterval(() => { if ($('autorefresh').checked) shot(); }, 1200);
+  shot();
+})();
+</script>
+</body>
+</html>

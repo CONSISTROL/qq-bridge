@@ -1,3 +1,4 @@
+import { startLive, stopLive, liveShot, liveClick, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
 import { generateImage, drawConfig } from '../draw.js';
 import { listUpgrades, proposeUpgrade, decideUpgrade, activePromptHints } from '../self-upgrade.js';
 // 控制台核心路由：首页/状态、角色、会话、白名单、安全、令牌、重启。
@@ -502,6 +503,36 @@ export function createConsoleCoreRoutes(deps) {
       } catch (error) {
         sendJson({ ok: false, error: String(error?.message ?? error) }, 500);
       }
+      return;
+    }
+    // ── 画图 · 远程点选（主人通过网页过验证码）──────────────────────
+    if (url.pathname.startsWith('/api/draw/live/')) {
+      const act = url.pathname.slice('/api/draw/live/'.length);
+      try {
+        if (act === 'status') { sendJson({ ok: true, ...liveStatus() }); return; }
+        if (act === 'shot') {
+          const buf = await liveShot();
+          if (!buf) { sendJson({ ok: false, error: '没有活动会话' }, 409); return; }
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+          res.end(buf);
+          return;
+        }
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        if (act === 'start') { sendJson(await startLive({ stateDir: STATE_DIR })); return; }
+        if (act === 'click') { sendJson(await liveClick(body)); return; }
+        if (act === 'prompt') { sendJson(await livePrompt({ prompt: body.prompt })); return; }
+        if (act === 'grab') {
+          const r = await liveGrab();
+          if (!r.ok) { sendJson({ ok: false, error: r.error }, 400); return; }
+          const key = String(body.key ?? '').trim();
+          if (!key) { sendJson({ ok: true, grabbed: true }); return; }
+          const sent = await sendImageChat(key, `data:${r.mime};base64,${r.buffer.toString('base64')}`, {});
+          sendJson({ ok: sent?.ok !== false, sent, grabbed: true });
+          return;
+        }
+        if (act === 'stop') { sendJson(await stopLive()); return; }
+        sendJson({ ok: false, error: '未知操作' }, 404);
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
       return;
     }
     // ── 画图（豆包 Seedream）：生成后直接按会话发出去 ───────────────
