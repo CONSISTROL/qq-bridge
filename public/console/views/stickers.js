@@ -8,7 +8,7 @@
 // 后端：bridge.js 的 /api/stickers*（只允许控制台；带 agent token 一律 403——
 // AI 可以看图和记笔记，但不该能删管理员的收藏）。
 import { api } from '../core/api.js';
-import { $, esc, setMsg, confirmDanger, fmtClock, delegate, debounce } from '../core/dom.js';
+import { $, esc, setMsg, confirmDanger, fmtClock, delegate, debounce, resizeTextareas } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
 export const id = 'stickers';
@@ -228,6 +228,7 @@ function openModal(sticker) {
   $('#stkNote', state.view).value = sticker.localNote || '';
   setMsg($('#stkModalMsg', state.view), '', true);
   $('#stkModal', state.view).classList.add('open');
+  resizeTextareas($('#stkNote', state.view));
   // 打开时顺手把本地库补一次最新值（同步可能在别处发生过）
   $('#stkLocalRemark', state.view).focus();
 }

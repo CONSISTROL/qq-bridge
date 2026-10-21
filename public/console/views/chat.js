@@ -6,7 +6,7 @@
 //      字段但只改了 save 没改 load」的错位；
 //   2. 弹窗的事件委托挂在 view 根节点而不是 document 上，切走分区就随之失效。
 import { api } from '../core/api.js';
-import { $, $$, esc, toast, setMsg, confirmDanger, delegate, fmtClock } from '../core/dom.js';
+import { $, $$, esc, toast, setMsg, confirmDanger, delegate, fmtClock, resizeTextareas } from '../core/dom.js';
 import { every } from '../core/poll.js';
 import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
@@ -165,6 +165,8 @@ function fillForm(view, config) {
       ? config?.tools?.[el.dataset.v2Tool] === true
       : !(config?.tools && config.tools[el.dataset.v2Tool] === false);
   }
+  // .value 赋值不触发 input；配置是异步回填的，这里必须补一次自动长高
+  resizeTextareas(view);
 }
 
 function readForm(view) {
@@ -728,6 +730,7 @@ function renderToolCfg(view, section) {
   }
   // 字段每次都是新建的，所以每次重渲染后都要重建「未保存」基线
   // （打开弹窗、保存成功、立即抓取、清除 SESSDATA 都会走到这里）
+  if ($('#v2CfgBackdrop', view)?.classList.contains('open')) resizeTextareas(body);
   state.modalDirty?.markClean();
 }
 
@@ -1074,6 +1077,7 @@ export async function mount(root) {
     setMsg($('#v2CfgMsg', view), '', true);
     renderToolCfg(view, section);
     $('#v2CfgBackdrop', view).classList.add('open');
+    resizeTextareas($('#v2CfgBody', view));
   };
   const closeToolCfg = (force = false) => {
     if (!force && modalDirty.count() > 0

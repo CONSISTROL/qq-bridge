@@ -1,6 +1,6 @@
 // 黑话库（08）+ 本地向量检索 RAG（08b）
 import { api } from '../core/api.js';
-import { $, $$, esc, toast, setMsg, confirmDanger } from '../core/dom.js';
+import { $, $$, esc, toast, setMsg, confirmDanger, resizeTextareas } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
 
@@ -179,6 +179,7 @@ function openModal(id, mode) {
   $('#slangModalDirectConfirm', state.view).textContent = mode === 'confirm' ? '直接确认（转正）' : '保存修改';
   $('#slangModalSendResearch', state.view).style.display = mode === 'confirm' && e.status === 'candidate' ? '' : 'none';
   $('#slangModalOverlay', state.view).classList.add('open');
+  resizeTextareas($('#slangModalSources', state.view));
 }
 
 function closeModal() {

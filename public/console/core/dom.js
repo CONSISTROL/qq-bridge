@@ -113,20 +113,35 @@ export function joinList(list) {
 /**
  * 让 textarea 随内容自动长高（长文本不用在小框里滚来滚去）。
  *
- * 做法：全局接管——一个 input/change 监听 + 一个 MutationObserver（视图是动态渲染的，
+ * 做法：全局接管——input/change 监听 + MutationObserver（视图是动态渲染的，
  * 只在挂载时扫一遍会漏掉后插入的框）。高度上限 70vh，超过才出现滚动条，
  * 避免一屏提示词把整个页面顶没。
+ *
+ * 代码里给 `.value` 赋值不会触发 input，所以数据回填后要显式调用
+ * `resizeTextareas(view)`；隐藏容器里的框先跳过，等弹窗打开时再量。
  */
-export function autoGrowTextareas(doc = document, maxVh = 70) {
-  const resize = (el) => {
-    if (!(el instanceof HTMLTextAreaElement) || el.dataset.autogrow === 'off') return;
+export function resizeTextareas(root = document, maxVh = 70) {
+  if (!root) return;
+  const els = root instanceof HTMLTextAreaElement ? [root] : root.querySelectorAll('textarea');
+  const max = Math.round((window.innerHeight || 800) * (maxVh / 100));
+  for (const el of els) {
+    if (!(el instanceof HTMLTextAreaElement) || el.dataset.autogrow === 'off') continue;
+    // display:none 的弹窗里量不出真实换行宽度，等打开后再调一次
+    if (!el.getBoundingClientRect().width) continue;
     el.style.height = 'auto';
-    const max = Math.round((window.innerHeight || 800) * (maxVh / 100));
-    el.style.height = Math.min(el.scrollHeight + 2, max) + 'px';
-    el.style.overflowY = el.scrollHeight + 2 > max ? 'auto' : 'hidden';
-  };
-  const resizeAll = (root) => { for (const el of root.querySelectorAll('textarea')) resize(el); };
+    const wanted = el.scrollHeight + 2;
+    el.style.height = Math.min(wanted, max) + 'px';
+    el.style.overflowY = wanted > max ? 'auto' : 'hidden';
+  }
+}
+
+export function autoGrowTextareas(doc = document, maxVh = 70) {
+  const resize = (el) => resizeTextareas(el, maxVh);
+  const resizeAll = (root) => resizeTextareas(root, maxVh);
   doc.addEventListener('input', (ev) => { if (ev.target instanceof HTMLTextAreaElement) resize(ev.target); }, true);
+  doc.addEventListener('change', (ev) => { if (ev.target instanceof HTMLTextAreaElement) resize(ev.target); }, true);
+  // 补一把兜底：从隐藏 tab/弹窗里出来首次聚焦时，按当前宽度重新量
+  doc.addEventListener('focusin', (ev) => { if (ev.target instanceof HTMLTextAreaElement) resize(ev.target); }, true);
   const mo = new MutationObserver((muts) => {
     for (const m of muts) for (const node of m.addedNodes) {
       if (!(node instanceof Element)) continue;

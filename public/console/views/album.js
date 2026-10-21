@@ -4,7 +4,7 @@
 // 直接给原图一屏几十张就是几百 MB，页面极卡；列表还要分页（默认 60，点「加载更多」）。
 // 点卡片 → 弹窗看大图 + 改备注/标签 + 删除（删除进回收站，不直接抹盘）。
 import { api } from '../core/api.js';
-import { $, esc, setMsg, confirmDanger, delegate, debounce, fmtClock } from '../core/dom.js';
+import { $, esc, setMsg, confirmDanger, delegate, debounce, fmtClock, resizeTextareas } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 
 export const id = 'album';
@@ -125,6 +125,7 @@ export async function mount(root) {
     $('#albumModalNotes', view).value = it.notes || '';
     $('#albumModalTags', view).value = (it.tags || []).join(', ');
     modal.style.display = 'flex';
+    resizeTextareas($('#albumModalNotes', view));
   };
   const closeModal = () => { const m = $('#albumModal', view); if (m) m.style.display = 'none'; };
 

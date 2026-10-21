@@ -4,7 +4,7 @@
 // 本视图的重点是**纠错**：AI 全自动写入，所以一眼能看出「哪条被反复问」「哪条答案互相矛盾」
 // 比管理流程更重要——列表默认按命中次数排序，冲突单独置顶一块。
 import { api } from '../core/api.js';
-import { $, $$, toast, setMsg, confirmDanger } from '../core/dom.js';
+import { $, $$, toast, setMsg, confirmDanger, resizeTextareas } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 import { trackDirty } from '../core/dirty.js';
 
@@ -195,6 +195,8 @@ function fillForm(e) {
   } else {
     setMsg($('#kbFormMsg', view), '', true);
   }
+  // 回填答案后 textarea 要按新内容重新量高度（.value 赋值不触发 input）
+  resizeTextareas($('#kbAnswer', view));
 }
 
 async function saveForm() {

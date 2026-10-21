@@ -1,6 +1,6 @@
 // 角色设定（05 角色扮演）与静默开关（11）
 import { api } from '../core/api.js';
-import { $, esc, toast, delegate, setMsg } from '../core/dom.js';
+import { $, esc, toast, delegate, setMsg, resizeTextareas } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 import { getStatus, refreshStatus } from '../core/status.js';
 
@@ -68,6 +68,7 @@ export async function mount(root) {
     if (r.ok) {
       $('#newRoleName', view).value = '';
       $('#newRoleContent', view).value = '';
+      resizeTextareas($('#newRoleContent', view));
       refreshRoles(view);
     }
   });
