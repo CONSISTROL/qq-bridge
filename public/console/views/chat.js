@@ -194,6 +194,12 @@ function readForm(view) {
   }
   // 工具开关已改成「插件 → 能力」（/api/socialData/plugins 即时保存），这里不再收集旧的扁平 tools，
   // 否则会用空表覆盖掉旧配置。
+  // 睡眠时段（socialData.sleepHours）：起止小时
+  const sStart = Number($('#sleepStart', view)?.value);
+  const sEnd = Number($('#sleepEnd', view)?.value);
+  if (Number.isFinite(sStart) && Number.isFinite(sEnd)) {
+    setPath(body, 'socialData.sleepHours', [Math.max(0, Math.min(23, sStart)), Math.max(0, Math.min(23, sEnd))]);
+  }
   return body;
 }
 
@@ -883,6 +889,12 @@ export async function mount(root) {
 
   // 保存后回填成服务端实际接受的值（钳制过的），避免界面与配置不一致
   fillForm(view, {});
+  // 回填睡眠时段
+  const cfgNow = state.config?.socialData?.sleepHours;
+  if (Array.isArray(cfgNow) && cfgNow.length === 2) {
+    const st0 = $('#sleepStart', view); if (st0) st0.value = cfgNow[0];
+    const en0 = $('#sleepEnd', view); if (en0) en0.value = cfgNow[1];
+  }
   await loadConfig();
   await loadSelfProfile();
   await refreshActivity();

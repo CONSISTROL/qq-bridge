@@ -17,27 +17,28 @@
       <div class="note mt-12">插件与能力开关已拆成独立页面：<a class="link-chip" href="#/capabilities">插件</a>（拨动即时生效，不用在这里改）。</div>
       <div class="meta mt-8">黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在「记忆库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 
+      <div class="form-row pairs"><label>睡眠时段（起 ~ 止，小时）</label><div class="ctl">
+        <input type="number" id="sleepStart" min="0" max="23" class="w-xs"> ~ <input type="number" id="sleepEnd" min="0" max="23" class="w-xs">
+        <span class="meta">睡眠时段：群里只有被 @ / 叫名字才回，也不主动冒泡</span>
+      </div></div>
+
       <h3 class="section-head">唤醒推荐值 <span class="meta">仅参考，AI 可不遵守</span></h3>
-      <div class="form-row pairs"><label>默认模式</label><div class="ctl"><select id="v2WakeDefaultMode"><option value="diving">潜水</option><option value="active">活跃</option></select></div><label>默认下一次唤醒：无限期（永久）</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecDefaultInfinite"></div></div>
       <div class="form-grid">
-        <div class="form-row"><label>推荐潜水时长（分）</label><div class="ctl"><input type="number" id="v2RecSleepMin" min="1"><span class="tilde">~</span><input type="number" id="v2RecSleepMax" min="1"></div></div>
         <div class="form-row"><label>推荐普通消息概率</label><div class="ctl"><input type="number" id="v2RecProb" step="0.05" min="0" max="1"></div></div>
         <div class="form-row"><label>推荐关键词（逗号分隔）</label><div class="ctl"><input type="text" id="v2RecKeywords" placeholder="小鲸鱼, DeepSeek" class="grow"></div></div>
       </div>
       <div class="form-row pairs"><label>推荐 @ 唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecAt"></div><label>推荐名字唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecName"></div></div>
       <div class="form-row pairs"><label>推荐提问唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecQuestion"></div><label>推荐拍一拍唤醒</label><div class="ctl"><input type="checkbox" class="switch" id="v2RecPoke"></div></div>
       <div class="form-grid">
-        <div class="form-row"><label>唤醒推荐提示（给 AI 看的文字）</label><div class="ctl"><textarea id="v2WakeHint" rows="2" placeholder="例如：如果你在潜水，推荐 5~120 分钟、普通消息概率 0.05…"></textarea></div></div>
+        <div class="form-row"><label>唤醒推荐提示（给 AI 看的文字，已无潜水概念）</label><div class="ctl"><textarea id="v2WakeHint" rows="2" placeholder="例如：如果你在潜水，推荐 5~120 分钟、普通消息概率 0.05…"></textarea></div></div>
       </div>
 
       <h3 class="section-head">唤醒硬限制</h3>
-      <div class="form-row pairs"><label>最小潜水（秒）</label><div class="ctl"><input type="number" id="v2SleepMinMs" min="0"></div><label>最大潜水（秒，0=不限）</label><div class="ctl"><input type="number" id="v2SleepMaxMs" min="0"></div></div>
       <div class="form-row pairs"><label>每分钟最多唤醒</label><div class="ctl"><input type="number" id="v2MaxWakeMin" min="0"></div><label>每小时最多唤醒</label><div class="ctl"><input type="number" id="v2MaxWakeHour" min="0"></div></div>
       <div class="form-row pairs"><label>合并窗口（毫秒）</label><div class="ctl"><input type="number" id="v2BatchWindowMs" min="1000" step="500"></div><label>无行动兜底次数</label><div class="ctl"><input type="number" id="v2NoActionLimit" min="1"></div></div>
       <div class="form-grid">
         <div class="form-row"><label>唤醒收尾提醒次数</label><div class="ctl"><input type="number" id="v2MaxWakeConfigReminders" min="1"></div></div>
       </div>
-      <div class="form-row pairs"><label>启用沉睡前强制等待</label><div class="ctl"><input type="checkbox" class="switch" id="v2PreSleepWaitEnabled"></div><label>沉睡前强制等待（分）</label><div class="ctl"><input type="number" id="v2PreSleepWaitMin" min="0" step="1"> <span class="hint">AI 设置潜水/下一次唤醒前，默认必须先等够这个观察窗口；0 表示不限制。</span></div></div>
 
       <h3 class="section-head">发送限制</h3>
       <div class="meta mb-8">不再按空格自动拆条；AI 要分多条必须显式传数组或用 qq_send_burst。</div>

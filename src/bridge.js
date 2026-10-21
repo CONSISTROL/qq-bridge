@@ -6753,7 +6753,7 @@ const agentTokenOk = (key, token) => {
 
   function defaultWakeConfigChat() {
     const w = cfg.socialData?.wake ?? {};
-    const defaultMode = w.defaultMode === 'active' ? 'active' : 'diving';
+    const defaultMode = 'active'; // 全天候响应：默认不再有潜水
     const defaultInfinite = w.recommendedDefaultInfinite !== false;
     const recMin = Number(w.recommendedSleepMinMs) || 300000;
     const recMax = Number(w.recommendedSleepMaxMs) || 7200000;
@@ -6834,6 +6834,8 @@ const agentTokenOk = (key, token) => {
   }
 
   function preSleepWaitBlockedChat(st) {
+    return false; // 已改为全天候响应，不再有"沉睡前观察"这道门
+
     if (!st) return false;
     const w = cfg.socialData?.wake ?? {};
     if (w.preSleepWaitEnabled === false) return false;
@@ -8874,9 +8876,26 @@ const agentTokenOk = (key, token) => {
     return text;
   }
 
+  /** 睡眠时段（默认 1:00~8:00）：群里只有被 @/叫名字才回，其余一律不唤醒。 */
+  function inSleepWindow(now = Date.now()) {
+    const win = Array.isArray(cfg.socialData?.sleepHours) ? cfg.socialData.sleepHours : [1, 8];
+    if (win.length !== 2) return false;
+    const h = new Date(now).getHours();
+    const [s0, e0] = [Number(win[0]), Number(win[1])];
+    return s0 <= e0 ? (h >= s0 && h < e0) : (h >= s0 || h < e0); // 支持跨零点
+  }
+
   function evaluateWakeTriggerChat(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf) {
     if (kind === 'private') return 'private';
     const tr = st.wakeConfig?.triggers ?? {};
+    // 睡眠时段：只认 @我 / 叫我名字（问句、关键词、概率、anyMessage 全部忽略）
+    if (inSleepWindow()) {
+      const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? ''));
+      if (atSelf || quoteTargetIsSelf) return 'atMention';
+      const lowerSleep = String(textContent ?? '').toLowerCase();
+      if (selfNickname && (lowerSleep.includes('@' + selfNickname.toLowerCase()) || lowerSleep.includes(selfNickname.toLowerCase()))) return 'nameMention';
+      return null;
+    }
     if (tr.anyMessage) return 'anyMessage';
     if (tr.atMention) {
       const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? ''));
@@ -9165,17 +9184,14 @@ const agentTokenOk = (key, token) => {
       : '';
     const preSleepMs = Math.max(0, Number(cfg.socialData?.wake?.preSleepWaitMs) || 300000);
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
-    // 常驻活跃的会话：AI 反复 set_wake_config(mode=diving) 会被桥接改回 active（白做一次工具调用），
-    // 所以提前说明：想安静就直接不发言，不必调它。
-    const forceActiveCfg = Array.isArray(cfg.socialData?.wake?.forceActive) ? cfg.socialData.wake.forceActive : [];
-    const dayWin = Array.isArray(cfg.socialData?.wake?.dayActiveHours) ? cfg.socialData.wake.dayActiveHours : [8, 24];
-    const hourNow2 = new Date().getHours();
-    const inDayWin = dayWin.length === 2 && hourNow2 >= Number(dayWin[0]) && hourNow2 < Number(dayWin[1]);
-    const forcedActiveLine = (forceActiveCfg.includes(key) || inDayWin)
-      ? '【这个会话是常驻活跃】不许设成潜水：qq_set_wake_config 传 mode=diving 会被桥接立刻改回 active，纯属白调。想安静就直接不发言、不安排下一次唤醒；需要留意新消息时正常等消息即可。\n\n'
-      : '';
+    // 全天候响应 + 睡眠时段：不再有「潜水」这个概念，AI 想安静就不发言。
+    const sw = Array.isArray(cfg.socialData?.sleepHours) ? cfg.socialData.sleepHours : [1, 8];
+    const forcedActiveLine = `【全天候响应】你没有「潜水」这个概念了：\n`
+      + `· 任何时候群里有动静你都会看到，由你自己判断该不该回（不是每条都必须回）；\n`
+      + `· 睡眠时段（${sw[0]}:00–${sw[1]}:00）群里只有被 @ 或被叫名字才会叫你，其他消息不打扰你，也不会主动冒泡；\n`
+      + `· 想安静就直接不发言，不用再调 qq_set_wake_config（调了也按「全天候」处理）。\n\n`;
 
-    const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages，判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
+    const preSleepLine = ''; // 沉睡前等待机制已移除（改为全天候响应 + 睡眠时段）
     // 这一条是拿真实事故换来的：模型写好了回复文本、以为已经发出去，转头去等待/潜水，
     // 结果 QQ 那边一个字都没收到（chat 的文本不自动转发）。每轮都注入，且不依赖 preset，
     // 免得挂载的是旧版 preset 时又回到「写了不回」。
@@ -9856,9 +9872,8 @@ const agentTokenOk = (key, token) => {
       // 否则白天群容易冷场。概率/翻倍/打折那套全部去掉，只保留两个硬判定：
       //   ① 闲置时间够长（idleThresholdMs，默认 10 分钟）
       //   ② 凌晨静默时段（proactive.quietHours，默认 1~7 点）不打扰
-      const quiet = Array.isArray(p.quietHours) ? p.quietHours : [1, 7];
-      const hourNow = new Date().getHours();
-      const inQuiet = quiet.length === 2 && hourNow >= Number(quiet[0]) && hourNow < Number(quiet[1]);
+      // 睡眠时段不冒泡（与 @ 唤醒用同一个窗口）
+      const inQuiet = inSleepWindow();
       if (!inQuiet && idle >= idleThreshold && !isConversationBusyChat(key, st)) {
         // 冒泡冷却：真的开口之后，下一次机会至少隔 cooldownMs（默认 4 小时）。
         // 否则一个整天没人说话的群会每隔 20~40 分钟就冒一次泡（线上反馈：太频繁）。
@@ -11693,17 +11708,14 @@ const agentTokenOk = (key, token) => {
         if (!isSessionAllowedInCurrentMode(key)) continue;
         const st = getSocialV2State(key);
         if (!st.wakeConfig) continue;
-        const shouldActive = forceList.includes(key) || inDay;
+        // 全天候响应：不再有"潜水"，所有白名单会话都保持活跃（睡眠时段由 inSleepWindow 单独收窄触发条件）
+        const shouldActive = true;
         if (shouldActive && st.wakeConfig.mode !== 'active') {
           st.wakeConfig.mode = 'active';
           st.wakeConfig.infinite = true;
           st.wakeConfig.sleepUntil = null;
           st.wakeConfig.triggers = { ...(st.wakeConfig.triggers || {}), anyMessage: true };
           st.wakeConfig.confirmedBy = 'wake-policy'; // 标记是我们设的，夜里才敢收回
-          changed += 1;
-        } else if (!shouldActive && st.wakeConfig.mode === 'active' && st.wakeConfig.confirmedBy === 'wake-policy') {
-          // 夜里只在"是我们自己设的活跃"时才收回，不覆盖它手动的选择
-          st.wakeConfig.mode = 'diving';
           changed += 1;
         }
       }

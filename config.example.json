@@ -494,5 +494,11 @@
     "sentImagesMaxMB": 300,
     "sources": []
   },
-  "consoleOrigins": []
+  "consoleOrigins": [],
+  "socialData": {
+    "sleepHours": [
+      1,
+      8
+    ]
+  }
 }

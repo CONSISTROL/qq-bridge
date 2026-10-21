@@ -1338,7 +1338,8 @@ export function createSocialRoutes(deps) {
             : [];
       const next = {
         ...current,
-        mode: input.mode === 'active' ? 'active' : input.mode === 'diving' ? 'diving' : current.mode,
+        // 全天候响应：不再有潜水，任何 mode 都按 active 处理（睡眠时段另由 inSleepWindow 收窄触发条件）
+        mode: 'active',
         infinite: typeof input.infinite === 'boolean' ? input.infinite : current.infinite,
         sleepUntil: current.sleepUntil,
         triggers: {
