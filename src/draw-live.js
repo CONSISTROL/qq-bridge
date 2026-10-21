@@ -34,8 +34,8 @@ export async function startLive({ stateDir }) {
   if (page) return { ok: true, reused: true };
   clearLocks(stateDir);
   // 起一个虚拟显示（有头 Chrome 必须），已存在就复用
-  // 用 :98 —— 这上面已经有 x11vnc 在跑（5901），noVNC 从 6082 暴露，主人可以真操作
-  const DISPLAY = process.env.DRAW_DISPLAY || ':98';
+  // 用 :99 —— 专属虚拟屏（x11vnc 5902 → websockify 6083 → 桥接 /vnc/），避免和 :98 上的 Clash 抢画面
+  const DISPLAY = process.env.DRAW_DISPLAY || ':99';
   try {
     const probe = spawn('sh', ['-c', `pgrep -f "Xvfb ${DISPLAY}" >/dev/null || Xvfb ${DISPLAY} -screen 0 1280x900x24 >/dev/null 2>&1 &`], { detached: true, stdio: 'ignore' });
     probe.unref();

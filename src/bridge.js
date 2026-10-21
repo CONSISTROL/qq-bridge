@@ -4955,7 +4955,7 @@ const agentTokenOk = (key, token) => {
         .filter(Boolean);
       // 远程桌面（noVNC）：把 /vnc/* 反代到本机 websockify(6082)，主人可直接操作浏览器
       if (url.pathname === '/vnc' || url.pathname.startsWith('/vnc/')) {
-        const target = 'http://127.0.0.1:6082' + (url.pathname.replace(/^\/vnc/, '') || '/') + (url.search || '');
+        const target = 'http://127.0.0.1:6083' + (url.pathname.replace(/^\/vnc/, '') || '/') + (url.search || '');
         try {
           const r = await fetch(target, { headers: { 'accept-encoding': 'identity' } });
           if (r.status === 404 && /\/package\.json$/.test(url.pathname)) {
@@ -5126,7 +5126,7 @@ const agentTokenOk = (key, token) => {
         if (!String(req.url || '').startsWith('/vnc/')) { socket.destroy(); return; }
         const wss = new wsLib.WebSocketServer({ noServer: true });
         wss.handleUpgrade(req, socket, head, (client) => {
-          const upstream = new wsLib.WebSocket('ws://127.0.0.1:6082/websockify');
+          const upstream = new wsLib.WebSocket('ws://127.0.0.1:6083/websockify');
           const pending = [];
           upstream.on('open', () => { for (const m of pending) upstream.send(m); pending.length = 0; });
           client.on('message', (data, isBinary) => {
