@@ -5,7 +5,7 @@
     <div>
       <b>直播间</b>
       <span>
-        <a id="mcLiveUrl" href="https://live.bilibili.com/21803677" target="_blank" rel="noreferrer">live.bilibili.com/21803677</a>
+        <a id="mcLiveUrl" class="link-chip" href="https://live.bilibili.com/21803677" target="_blank" rel="noreferrer">live.bilibili.com/21803677</a>
         <span id="mcLiveMeta" class="muted"></span>
       </span>
     </div>
@@ -28,7 +28,7 @@
 
   <h3 class="section-head">画质</h3>
   <div class="toolbar plain">
-    <select id="mcCfgPreset" class="w-md">
+    <select id="mcCfgPreset" class="w-md" aria-label="画质预设">
       <option value="">自定义</option>
       <option value="480p">480p（854×480）</option>
       <option value="540p">540p（960×540）</option>
@@ -46,7 +46,7 @@
 
   <h3 class="section-head">网页视角</h3>
   <div class="toolbar plain">
-    <a id="mcViewerLink" href="https://anihub.xin/mc/" target="_blank" rel="noreferrer">https://anihub.xin/mc/</a>
+    <a id="mcViewerLink" class="link-chip" href="https://anihub.xin/mc/" target="_blank" rel="noreferrer">https://anihub.xin/mc/</a>
     <span id="mcViewerState" class="pill"></span>
   </div>
   <div class="meta mt-6">开播/推流都是异步执行，点完等几秒看下面状态；串流码只存在服务器上，不会回传到页面。</div>
@@ -162,7 +162,7 @@
 <section class="card">
   <h2>bot 日志 <span class="meta" id="mcLogInfo">（读取中…）</span></h2>
   <div class="toolbar plain">
-    <select id="mcLogLimit" class="small">
+    <select id="mcLogLimit" class="small" aria-label="日志行数">
       <option value="40">最近 40 行</option>
       <option value="200">最近 200 行</option>
       <option value="1000" selected>最近 1000 行</option>

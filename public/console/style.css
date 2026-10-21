@@ -225,7 +225,7 @@ code {
 .brand-mark svg { width: 23px; height: 23px; display: block; }
 .brand-copy { min-width: 0; }
 .brand h1 { font-size: 16px; letter-spacing: -0.01em; }
-.brand .sub { font-size: 11px; line-height: 1.45; margin-top: 1px; }
+.brand .sub { font-size: 11.5px; line-height: 1.45; margin-top: 1px; }
 .sub { color: var(--muted); font-size: 12.5px; }
 
 /* 图标：由 core/icons.js 生成，颜色跟随 currentColor */
@@ -255,11 +255,11 @@ code {
 .side-status-dot.err { background-color: var(--err); box-shadow: 0 0 0 4px var(--danger-soft); }
 .side-status-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .side-status-copy b { font-size: 12.5px; color: var(--text); font-weight: 600; }
-.side-status-copy span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-status-copy span { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-group-title {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 650;
   color: var(--faint);
   padding: 14px 8px 6px;
@@ -320,7 +320,7 @@ code {
   flex-direction: column;
   gap: 4px;
 }
-.sidebar-version { font-size: 10.5px; color: var(--faint); }
+.sidebar-version { font-size: 11.5px; color: var(--faint); }
 
 .main { flex: 1 1 auto; min-width: 0; padding: 24px 32px 48px; max-width: 1560px; }
 
@@ -386,9 +386,10 @@ code {
   justify-content: center;
   gap: 6px;
   width: auto;
-  height: 38px;
-  padding: 0 12px;
+  height: 34px;
+  padding: 0 10px;
   flex: 0 0 auto;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--muted);
@@ -401,7 +402,7 @@ code {
 .theme-toggle[data-icon="sun"] .theme-sun { display: block; }
 .theme-toggle[data-icon="sun"] .theme-moon { display: none; }
 @media (max-width: 900px) {
-  .theme-toggle { width: 38px; padding: 0; }
+  .theme-toggle { width: 42px; height: 42px; min-height: 42px; padding: 0; }
   .theme-toggle .theme-label { display: none; }
 }
 .view { display: flex; flex-direction: column; gap: 16px; }
@@ -439,7 +440,7 @@ code {
 .card > h2 .meta,
 .card > h3 .meta { font-weight: 400; }
 .card > h3 { margin-bottom: 10px; }
-.card-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-sub { color: var(--muted); font-size: 12.5px; margin: -6px 0 12px; }
 .span-all { grid-column: 1 / -1; }
 /* 页内小节标题：比卡片标题低一级，用一条细分隔线组织长表单 */
@@ -477,7 +478,7 @@ details {
   border-radius: var(--radius-md);
   background: var(--surface-2);
 }
-details > summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 500; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 500; padding: 6px 0; line-height: 1.5; }
 details[open] > summary { margin-bottom: 8px; color: var(--text); }
 .form-row .ctl .hint { flex: 1 1 200px; }
 .field-pair { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -522,6 +523,7 @@ button, .btn {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+  min-width: 64px;
   cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
 }
@@ -529,7 +531,8 @@ button:hover, .btn:hover { background: var(--ctrl-hover); }
 button:active, .btn:active { transform: translateY(1px); }
 button:focus-visible, .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 button:disabled, .btn:disabled, button[disabled] { opacity: 0.45; cursor: not-allowed; transform: none; }
-button.small, .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+button.small, .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; border-radius: 7px; min-width: 44px; }
+.toolbar button.small, .toolbar .btn-sm { height: 34px; font-size: 13px; padding: 0 12px; border-radius: 8px; }
 button.primary, .btn-primary, button.active {
   background: var(--accent);
   border-color: var(--accent-border);
@@ -558,7 +561,7 @@ button.planned, .btn-planned {
   cursor: not-allowed;
 }
 button.dirty { border-color: var(--accent-border); box-shadow: 0 0 0 2px var(--accent-soft); }
-.icon-btn { width: 30px; height: 30px; padding: 0; }
+.icon-btn { width: 32px; height: 32px; padding: 0; min-width: 0; }
 
 /* ── 表单控件 ─────────────────────────────────────────────────────────── */
 input:not([type]), input[type="text"], input[type="number"], input[type="password"], input[type="search"],
@@ -601,7 +604,7 @@ textarea {
   height: auto;
   padding: 9px 11px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.7;
   letter-spacing: 0.01em;
   tab-size: 2;
@@ -658,7 +661,7 @@ label > input[type="checkbox"] { vertical-align: -2px; margin-right: 5px; }
 /* ── 行 / 工具栏 / 工具类 ─────────────────────────────────────────────── */
 .row, .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .toolbar {
-  gap: 8px 10px;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
@@ -686,6 +689,19 @@ input.w-lg, select.w-lg { width: 240px; }
 .text-right { text-align: right; }
 .divider { margin: 14px 0; border: 0; border-top: 1px solid var(--card-border); }
 .inline-tip { font-size: 12px; color: var(--muted); }
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--accent);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.link-chip:hover { border-color: var(--accent); text-decoration: none; }
 
 /* ── 标签 / 状态 ──────────────────────────────────────────────────────── */
 .pill {
@@ -697,7 +713,7 @@ input.w-lg, select.w-lg { width: 240px; }
   border-radius: 999px;
   background: var(--pill-neutral-bg);
   color: var(--pill-neutral-fg);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   line-height: 20px;
   white-space: nowrap;
@@ -725,9 +741,10 @@ input.w-lg, select.w-lg { width: 240px; }
 .tabs, .album-tabs, .slang-tabs { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .tab, .album-tab, .slang-tab {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
+  min-height: 30px;
   padding: 0 11px;
   border: 1px solid var(--ctrl-border);
   border-radius: 999px;
@@ -1022,7 +1039,7 @@ input[type="checkbox"].switch.saving { opacity: 0.55; cursor: progress; }
 .album-card img { height: 128px; object-fit: cover; border-radius: 0; }
 .album-trash-card img { height: 100px; object-fit: cover; }
 .img-cell .img-title, .stk-cell .stk-name, .album-notes { font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; color: var(--text); }
-.img-cell .img-meta, .stk-cell .stk-meta, .album-sub { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.img-cell .img-meta, .stk-cell .stk-meta, .album-sub { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .img-cell .img-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .img-cell .img-actions label { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; color: var(--muted); }
 .img-trash-item { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); }
@@ -1163,7 +1180,7 @@ input[type="checkbox"].switch.saving { opacity: 0.55; cursor: progress; }
 .mem-row:last-child { border-bottom: 0; }
 .mem-ico { display: flex; padding-top: 2px; color: var(--muted); }
 .mem-text { font-size: 12.5px; line-height: 1.65; overflow-wrap: anywhere; }
-.mem-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.mem-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .panel-output {
   margin-top: 8px;
   max-height: 440px;
@@ -1235,6 +1252,7 @@ body.sheet-open { overflow: hidden; }
   }
   .mobile-tab {
     position: relative;
+    min-width: 0;
     flex: 1 1 0;
     min-width: 0;
     display: flex;
@@ -1248,7 +1266,7 @@ body.sheet-open { overflow: hidden; }
     border-radius: 12px;
     background: transparent;
     color: var(--muted);
-    font-size: 10.5px;
+    font-size: 11.5px;
     font-weight: 500;
     line-height: 1.2;
     -webkit-tap-highlight-color: transparent;
@@ -1275,9 +1293,9 @@ body.sheet-open { overflow: hidden; }
     border-radius: 999px;
     background: var(--pill-red-bg);
     color: var(--pill-red-fg);
-    font-size: 9.5px;
+    font-size: 10.5px;
     font-weight: 700;
-    line-height: 15px;
+    line-height: 16px;
     text-align: center;
   }
 
@@ -1320,7 +1338,7 @@ body.sheet-open { overflow: hidden; }
     grid-column: 1 / -1;
     padding: 10px 2px 2px;
     color: var(--faint);
-    font-size: 10.5px;
+    font-size: 11.5px;
     font-weight: 650;
     letter-spacing: 0.08em;
   }
@@ -1352,7 +1370,7 @@ body.sheet-open { overflow: hidden; }
   .sheet-item.active .sheet-ico { background: var(--accent); color: var(--on-accent); }
   .sheet-copy { min-width: 0; overflow: hidden; display: flex; flex-direction: column; gap: 1px; }
   .sheet-copy b { max-width: 100%; font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sheet-copy span { max-width: 100%; font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-copy span { max-width: 100%; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 @media (max-width: 640px) {
@@ -1366,35 +1384,38 @@ body.sheet-open { overflow: hidden; }
   .topbar-right { width: 100%; justify-content: space-between; }
   .status-badge { max-width: none; flex: 1 1 auto; gap: 5px; }
   .status-chip { min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
+  .pill { font-size: 12px; }
+  details > summary { min-height: 36px; padding: 8px 0; }
+  .link-chip { min-height: 34px; }
   .status-badge .admin, .status-badge .groups, .status-badge .privates { display: none; }
   .view { gap: 14px; }
   .card { padding: 14px 15px; border-radius: var(--radius-md); }
-  .toolbar { padding: 8px 10px; }
+  .toolbar { padding: 10px 12px; }
   .toolbar.plain { padding: 0; }
   input.w-sm, input.w-md, input.w-lg, select.w-sm, select.w-md, select.w-lg { width: 100%; }
   input:not([type]), input[type="text"], input[type="number"], input[type="password"], input[type="search"],
   input[type="url"], input[type="email"], select { min-height: 42px; font-size: 16px; }
-  textarea { font-size: 15px; min-height: 96px; }
+  textarea { font-size: 16px; min-height: 96px; }
   button, .btn { min-height: 42px; }
   button.small, .btn-sm { min-height: 36px; }
-  .form-row, .form-row.pairs { grid-template-columns: 1fr; gap: 4px; padding: 8px 0; }
+  .toolbar button.small, .toolbar .btn-sm { min-height: 42px; height: 42px; font-size: 13px; padding: 0 12px; }
+  .icon-btn { width: 36px; height: 36px; }
+  .form-row, .form-row.pairs { grid-template-columns: 1fr; gap: 6px; padding: 8px 0; }
   .form-row > .ctl input[type="number"] { width: auto; flex: 1 1 0; min-width: 0; }
   .form-row > .ctl input[type="text"] { width: 100%; }
-  .form-row > .ctl { gap: 6px; }
-  .inline-field { white-space: normal; }
+  .form-row > .ctl { gap: 8px; }
   .hint { font-size: 12px; }
+  .field + .field { margin-top: 10px; }
   .section-head { flex-wrap: wrap; row-gap: 2px; }
   .section-head > .meta, .section-head > .hint { flex: 1 1 100%; }
   .card > h2 { flex-wrap: wrap; row-gap: 4px; }
-  .card > h2 > .meta { flex: 1 1 100%; }
   input[type="checkbox"].switch { width: 48px; height: 28px; border-radius: 14px; }
   input[type="checkbox"].switch::after { width: 22px; height: 22px; top: 2px; }
   input[type="checkbox"].switch:checked::after { transform: translateX(20px); }
   .v2-cap { min-height: 34px; }
-  .inline-field input[type="number"], .inline-field input[type="text"] { width: 100%; min-width: 0; }
   .kv { grid-template-columns: 1fr; }
   .album-tabs, .tabs { width: 100%; flex-wrap: wrap; }
-  .tab, .album-tab, .slang-tab { flex: 0 0 auto; min-height: 34px; }
+  .tab, .album-tab, .slang-tab { flex: 0 0 auto; min-height: 36px; }
   .modal-overlay, .v2-modal-backdrop, .album-modal { align-items: flex-end; padding: 0; }
   .modal, .v2-modal, .album-modal-box {
     width: 100%;

@@ -237,6 +237,30 @@ function bindMobileNav() {
   });
 }
 
+// 表单控件的视觉标签大多没有 for/id 关联；这里按所在行补 aria-label，读屏也能用。
+function labelFormControls(root = document) {
+  const setLabels = (row, labelEl) => {
+    const text = labelEl?.textContent?.trim();
+    if (!text) return;
+    for (const ctl of row.querySelectorAll('input, select, textarea')) {
+      if (ctl.closest('label') || ctl.getAttribute('aria-label')) continue;
+      ctl.setAttribute('aria-label', text);
+    }
+  };
+  for (const row of root.querySelectorAll('.form-row')) setLabels(row, row.querySelector(':scope > label'));
+  for (const field of root.querySelectorAll('.field')) setLabels(field, field.querySelector(':scope > label'));
+  for (const pair of root.querySelectorAll('.field-pair')) setLabels(pair, pair.querySelector(':scope > .field-label'));
+}
+labelFormControls();
+const viewRoot = $('#view-root');
+if (viewRoot && typeof MutationObserver === 'function') {
+  let labelTimer = null;
+  new MutationObserver(() => {
+    clearTimeout(labelTimer);
+    labelTimer = setTimeout(() => labelFormControls(), 80);
+  }).observe(viewRoot, { childList: true, subtree: true });
+}
+
 initTheme();
 captureTokenFromUrl();
 renderNav();

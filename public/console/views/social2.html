@@ -14,7 +14,7 @@
         <span class="meta" id="v2ActivityStatus">读取中…</span>
       </div>
 
-      <div class="note mt-12">插件与能力开关已拆成独立页面：<a href="#/capabilities">插件</a>（拨动即时生效，不用在这里改）。</div>
+      <div class="note mt-12">插件与能力开关已拆成独立页面：<a class="link-chip" href="#/capabilities">插件</a>（拨动即时生效，不用在这里改）。</div>
       <div class="meta mt-8">黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在「记忆库」筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 
       <h3 class="section-head">唤醒推荐值 <span class="meta">仅参考，AI 可不遵守</span></h3>
@@ -169,7 +169,7 @@
 
       <h3 class="section-head">白名单会话快速选择</h3>
       <div class="toolbar plain">
-        <select id="v2SessionSelect" class="grow"><option value="">选择白名单群/私聊…</option></select>
+        <select id="v2SessionSelect" class="grow" aria-label="白名单会话快速选择"><option value="">选择白名单群/私聊…</option></select>
         <button id="v2SessionRefresh" class="small" type="button">刷新</button>
       </div>
 
