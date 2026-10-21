@@ -1342,7 +1342,7 @@ export function createAgentRoutes(deps) {
             key,
             query,
             anchors,
-            note: '直接从完整归档里捞原文锚点（日记已废弃）；别凭日记把细节说死',
+            note: '直接从完整归档里捞原文锚点；别凭印象把细节说死',
           });
           return;
         }

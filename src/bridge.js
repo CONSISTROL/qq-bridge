@@ -9072,7 +9072,7 @@ const agentTokenOk = (key, token) => {
       out += '【你最近主动开的头 · 这次别再聊这些】\n'
         + recentOpeners.map((o) => `- ${o.text}`).join('\n')
         + '\n上面这些已经说过了；同一个人物/战队/作品/圈子的后续也算重复，至少隔几轮再提。\n';
-      // 更早的题材不再往提示词里硬塞：走**记忆机制**，提示它自己去查（qq_recall 查日记+原文锚点，
+      // 更早的题材不再往提示词里硬塞：走**记忆机制**，提示它自己去查（qq_recall 查归档+原文锚点，
       // qq_search_history 查完整归档）。归档里连我自己主动发的话都记着，所以它是真能查到的。
       out += '【开口前先翻一下记忆】不确定这个话题以前聊没聊过，就先查你自己的记忆：\n'
         + '- `qq_recall`（关键词，比如「天气」「战队」这种实词）：直接查完整归档里的原文；\n'
@@ -9111,7 +9111,7 @@ const agentTokenOk = (key, token) => {
     } catch { /* 忽略 */ }
     // 告诉它怎么用这套记忆（否则它只会"看到"，不会"存/查"）
     profileLine += '【记忆怎么用】① 值得长期记住的事（主人偏好/约定、群友的梗与忌讳、群里确认过的事实）→ 用 qq_profile_save 存一条，'
-      + '存完自动进记忆库，以后按相关度召回；② 想不起以前聊过什么 → qq_recall（日记+原文锚点）或 qq_search_history（完整归档）；'
+      + '存完自动进记忆库，以后按相关度召回；② 想不起以前聊过什么 → qq_recall（原文锚点）或 qq_search_history（完整归档）；'
       + '③ 「XX 是什么/怎么弄」这类知识 → 先 qq_knowledge_query，没有再用工具查，答完用 qq_knowledge_submit 存一条；'
       + '④ 别把整段记忆念给群友听，自然用就行。\n\n';
     return profileLine;
@@ -9277,7 +9277,7 @@ const agentTokenOk = (key, token) => {
       const msgs = Array.isArray(st.recentMessages) ? st.recentMessages : [];
       const lastIn = [...msgs].reverse().find((m) => m && !m.isSelf);
       if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
-      return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查日记（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
+      return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查归档（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
     const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {

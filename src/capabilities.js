@@ -41,9 +41,9 @@ export const PLUGINS = [
     id: 'memory',
     name: '记忆',
     icon: '🧠',
-    desc: '长期记忆与日记、群知识库、黑话库',
+    desc: '长期记忆与档案、群知识库、黑话库',
     capabilities: [
-      { id: 'remember', label: '记忆与日记', flags: ['memory'] },
+      { id: 'remember', label: '记忆与档案', flags: ['memory'] },
       { id: 'knowledge', label: '群知识库', flags: ['knowledge'] },
       { id: 'slang', label: '黑话库', flags: ['slangQuery', 'slangSubmit'] }
     ]
