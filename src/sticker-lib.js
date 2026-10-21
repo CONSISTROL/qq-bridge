@@ -1,4 +1,4 @@
-// 表情包体系（二代仿真模式）——本地表情知识库与策略提示纯函数。
+// 表情包体系（聊天模式）——本地表情知识库与策略提示纯函数。
 //
 // 职责：
 // - state/stickers.json 的读写与字段归一化
@@ -242,7 +242,7 @@ export function buildStickerContext(entries, max = 8, { autoLabel = true, labelP
   return `【可用表情包】你的 QQ 收藏表情里有 ${list.length} 个表情（以下为常用/有备注的 ${top.length} 个，完整列表请用 qq_list_stickers 查看）：\n${lines.join('\n')}${backlog}`;
 }
 
-// 二代仿真模式下的“真人发表情包”策略提示。
+// 聊天模式下的“真人发表情包”策略提示。
 // 这是软策略：AI 仍自主判断是否使用，桥接不强制。
 export function buildStickerStrategyHint() {
   return [

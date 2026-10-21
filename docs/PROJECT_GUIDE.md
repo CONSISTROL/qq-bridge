@@ -82,8 +82,8 @@ qq-bridge/
 │       ├── core/               # api / dom / router / poll / status / fragments / theme
 │       └── views/              # 每分区一对：xxx.js（逻辑）+ xxx.html（markup）
 │           ├── overview.*      # 01 运行模式 + 02 会话 + 03 挂起 + 04 日志
-│           ├── social1.*       # 06 一代仿真模式
-│           ├── social2.*       # 07 二代仿真模式（含工具级配置弹窗）
+│           ├── social1.*       # 06 旧模式
+│           ├── social2.*       # 07 聊天模式（含工具级配置弹窗）
 │           ├── slang.*         # 08 黑话库 + 08b 本地向量检索
 │           ├── knowledge.*     # 09 群知识库（问题→答案）+ 检索调试
 │           ├── memory.*        # 10 AI 记忆 （七类记忆的清单/增删/钉住/备份回滚）
@@ -154,8 +154,8 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 
 - 群聊里的 `@` 段会解析成群名片/昵称（带缓存），解析失败时回退为 QQ 号。
 - 引用/回复段会解析成被引用人的群名片/昵称 + 原文，注入 prompt。
-- 一代仿真模式（`reserved`）下，模型可以只输出 `[SILENT]` 表示“潜水/不接话”，桥接会静默不发送。
-- 一代仿真模式（`reserved`）的分条方式为“按空格分句”：AI 用空格表示下一条消息，桥接按空格拆条；`reserved2` 不适用，分条请用 `qq_send_message` 数组。
+- 旧旧模式模式下，模型可以只输出 `[SILENT]` 表示“潜水/不接话”，桥接会静默不发送。
+- 旧旧模式模式的分条方式为“按空格分句”：AI 用空格表示下一条消息，桥接按空格拆条；`reserved2` 不适用，分条请用 `qq_send_message` 数组。
 
 ### 4.2 DSH 事件流 / turn 收集
 
@@ -247,7 +247,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `qq_reply` | 专用“引用/回复”工具 | 同上 |
 | `qq_send_private_message` | 发私聊；可选 `replyToMessageId` | 同上 |
 
-二代仿真模式（`reserved2`）还有：
+聊天模式（`reserved2`）还有：
 
 - 状态/消息：`qq_get_prompt`、`qq_get_unread_messages`、`qq_get_recent_messages`、`qq_get_message_detail`、`qq_get_active_members`、`qq_social_state`
 - 看图/看视频：`qq_get_message_images`（图片/表情）、`qq_get_message_video`（聊天里的 QQ 视频，抽帧；需本机 ffmpeg，无语音转写）
@@ -289,7 +289,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
   `qq_remove_member_remark`。
 - **默认不注入提示词**：备注不占 token，AI 想认人时自己来查（`qq_get_prompt` 的 `enabledTools` 里能看到工具名）。
 - 独立于 `social-v2.json`：`/reset`、切模式、清会话状态都不会丢备注。
-- 控制台「二代仿真 → 轻量记忆」面板里能看/改/删，方便管理员自己维护。
+- 控制台「聊天模式 → 轻量记忆」面板里能看/改/删，方便管理员自己维护。
 
 另外提供 `qq_set_member_card`（真·QQ 群名片，走 `set_group_card`）：**默认关闭**，
 必须 `socialV2.tools.setMemberCard=true` 才会注册，且同一人 15 秒冷却。它适合「正名」，不该拿来当记忆。
@@ -453,7 +453,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 - 控制台「表情包」分区会把「待补备注 N」显示出来，并提供**只看没备注的**筛选——AI 补完这里就归零，
   你也可以直接在详情里补。
 - **要不要让它自己补，控制台有开关**：`socialV2.sticker.autoLabel`（默认开）。
-  「表情包」分区顶部那个「AI 空闲时自己补备注」勾选框，和「二代仿真模式 → 表情包 ⚙」里的同名项是同一个 key；
+  「表情包」分区顶部那个「AI 空闲时自己补备注」勾选框，和「聊天模式 → 表情包 ⚙」里的同名项是同一个 key；
   关掉后唤醒提示里**连欠账都不出现**，AI 自然不会再补（已写的备注与手动补备注不受影响）。
   > 只管「催不催」这一层：提示是唯一驱动（线上实测模型会绕过弱提示），所以开关也卡在这里，
   > 而不是去禁工具——你想手动让它补时，`qq_sticker_note` 照样能用。
@@ -474,7 +474,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
   | `sticker.manualLabelCount` | 手动按钮**点一次要几个**（也可在请求里传 `count` 覆盖） | 5 | 1~10 |
   | `sticker.manualLabelCooldownMs` | 手动按钮冷却 | 30000 | 5s~5min |
 
-  三个都在「表情包」分区那一行（开关旁的两个数字框）和「二代仿真模式 → 表情包 ⚙」里；
+  三个都在「表情包」分区那一行（开关旁的两个数字框）和「聊天模式 → 表情包 ⚙」里；
   提示里的具体 id 数量、措辞（1 个时说「本次就补这个」）都会跟着配置走，
   所以调大/调小都真的生效，不会出现「改了配置但提示还写死两个」。
 
@@ -516,7 +516,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 
 黑话学习参数包括：`slang.enabled`、`extractMinMessages`、`extractCooldownMs`、`inferenceThresholds`、`injectMax`、`learnerPreset`、`workspaceTitle`、`autoResearch`。
 
-二代仿真参数包括：`socialV2.enabled`、`tools.*` 开关、`wake.*`、`send.*`、`wait.*`、`sticker.*`、`proactive.*`、`feedback.*`、`context.*`。
+聊天模式参数包括：`socialV2.enabled`、`tools.*` 开关、`wake.*`、`send.*`、`wait.*`、`sticker.*`、`proactive.*`、`feedback.*`、`context.*`。
 
 ---
 
@@ -533,7 +533,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 9. **只读联网搜索**：`mcp-web-search-safe.js` 只暴露 `web_search` / `web_fetch`，带 SSRF 防护。
 10. **黑话人工确认**：自动提取/联网研究的黑话默认 candidate，只有控制台确认后才注入聊天上下文。
 11. **日志脱敏**：日志统一经过 `redactSensitiveText`，不记录路径/凭据等敏感原文。
-12. **二代会话隔离**：每个二代会话生成独立 agent token，MCP 状态/发送工具必须携带 token。
+12. **聊天会话隔离**：每个聊天会话生成独立 agent token，MCP 状态/发送工具必须携带 token。
 
 ---
 
@@ -541,7 +541,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
-- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 一代仿真 / 二代仿真 / 黑话与向量检索 / 群知识库 / AI 记忆 / AI 图片 / 表情包 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
+- 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 旧模式 / 聊天模式 / 黑话与向量检索 / 群知识库 / AI 记忆 / AI 图片 / 表情包 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
 - 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
 
 ### 控制台前端结构（改 UI 前先读）
@@ -752,10 +752,10 @@ worker 由 `src/doubao-web.js` 用 `systemd-run --scope -p MemoryMax=900M` 起�
 
 ### Q：AI 不知道该不该发表情包 / 收藏里没有合适的？
 
-- 二代仿真模式有专门的 `qq_pick_sticker`：先判时机（冷却、本轮是否已发过、语境是否偏严肃），
+- 聊天模式有专门的 `qq_pick_sticker`：先判时机（冷却、本轮是否已发过、语境是否偏严肃），
   再从「QQ 收藏表情 + 本地图库」里按语境打分排序给候选；本地都不够好时自动联网找一批
   （搜索词会叠加 `sticker.pick.styleKeywords` 的风格偏置，默认偏二次元/Q版/梗图/DeepSeek 二创）。
-- 参数在控制台 **07 二代仿真模式 → 表情包时机与选图**（`config.json` 的 `socialV2.sticker.pick`）：
+- 参数在控制台 **07 聊天模式 → 表情包时机与选图**（`config.json` 的 `socialV2.sticker.pick`）：
   `minIntervalMs`（硬冷却，冷却内桥接直接拒绝发送）、`maxPerTurn`（每轮上限）、`minScore`（本地合格分，
   低于它才算「本地不满足」并触发联网）、`onlineFallback`、`librarySources`（默认只把 `style/manual/ai`
   当表情候选，`bili-cover/dynamic` 这类资讯配图排除在外）。
@@ -847,7 +847,7 @@ worker 由 `src/doubao-web.js` 用 `systemd-run --scope -p MemoryMax=900M` 起�
   实在压不下（剩余 <40KB）才判超限。批预算本身也放宽到 `socialV2.forward.maxTotalBytes`（默认 16MB）。
 - `index` 是**在整条转发里的序号**（不是窗口内序号），否则翻页会错位。
 
-控制台：`二代仿真模式 → qq_get_forward_msg 的 ⚙`。自检见 `scripts/test-audit-bridge.mjs` 的
+控制台：`聊天模式 → qq_get_forward_msg 的 ⚙`。自检见 `scripts/test-audit-bridge.mjs` 的
 「合并转发图片：分页取、报总数、单次上限可配」与「批总量预算」两条用例。
 
 ### Q：AI 被骂了只会忍着 / 讲道理，能不能让它骂回去？
@@ -860,7 +860,7 @@ preset、人格卡、每轮唤醒提示里**都没有提过这件事**，模型�
 
 | 位置 | 为什么 | 生效时机 |
 |---|---|---|
-| `buildWakePromptV2` 的 base | 人格卡在二代**不是每轮注入**（提示里只给角色名，正文要 `qq_get_prompt` 才读到），所以每轮提示必须自带 | 改完重启桥接即刻生效 |
+| `buildWakePromptV2` 的 base | 人格卡在聊天模式**不是每轮注入**（提示里只给角色名，正文要 `qq_get_prompt` 才读到），所以每轮提示必须自带 | 改完重启桥接即刻生效 |
 | `roles/小鲸鱼.md` | `qq_get_prompt` 读到的人格卡，保证两处口径一致 | 即刻 |
 | `dsh/agent-presets/qq-chat-v2/agent.cordis.yml` | 系统提示词，最稳的一层 | 需跑 `scripts/setup-dsh.mjs` 同步（DSH 0.2+ 写 profile 插件行并热加载，0.1.x 复制目录；会改组成戳 → 现有 QQ 会话被重建） |
 
@@ -1111,7 +1111,7 @@ preset、人格卡、每轮唤醒提示里**都没有提过这件事**，模型�
   反复强调这一点（否则模型很容易顺口编台词）。要听内容只能让群友打字，或视频本身是 B 站链接
   （那种可以用 `qq_video` 读字幕）。
 
-配置在控制台「二代仿真模式 → qq_get_message_video 的 ⚙」或 `config.json` 的 `socialV2.video`：
+配置在控制台「聊天模式 → qq_get_message_video 的 ⚙」或 `config.json` 的 `socialV2.video`：
 `maxBytes`（抓取上限，超过就用封面）、`maxFrames`、`frameMaxWidth`、各超时。
 
 ### Q：AI 看不懂动图（GIF），或者抱怨「图糊了 / 拳头糊成一颗球」？
@@ -1346,7 +1346,7 @@ Chromium 带 `--proxy-server` 指向 `src/safe-proxy.js` 起的本地过滤代�
 
 要点：
 
-- **一个入口全打通**：`segmentsToText` 同时服务二代唤醒上下文、一代 prompt、引用消息解析
+- **一个入口全打通**：`segmentsToText` 同时服务聊天模式唤醒上下文、旧模式 prompt、引用消息解析
   和 `qq_get_message_detail`，所以正文、引用、「@某人 + 卡片」都跟着好了；
 - **合并转发也修了**：`forward.js` 复用同一个解析器，聊天记录里的卡片同样可读；
 - **链接必须完整（重要）**：摘要把**完整 URL 的优先级放在摘要文字之前**

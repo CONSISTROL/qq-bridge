@@ -1106,7 +1106,7 @@ if (cfg.knowledge?.enabled !== false) {
   );
 }
 
-// ── 图片/表情查看工具（一代/聊天模式共用） ─────────────────────────────────
+// ── 图片/表情查看工具（旧模式/聊天模式共用） ─────────────────────────────────
 if (cfg.socialV2?.tools?.getImages !== false) {
   defineTool(
     'qq_get_message_images',

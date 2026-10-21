@@ -575,7 +575,7 @@ async function segmentsToText(segments, options = {}) {
 }
 
 // 从 OneBot 消息段中提取图片/表情元数据（不下载字节，仅记录定位信息）。
-// 供一代自动内联、按需工具、控制台/日志使用。
+// 供旧模式自动内联、按需工具、控制台/日志使用。
 function extractMediaFromSegments(segments) {
   const media = [];
   for (const seg of segments ?? []) {
@@ -3956,7 +3956,7 @@ async function main() {
   }
 
   // 黑话学习素材入口：群聊普通消息进入滚动窗口（命令/角色控制语不学；
-  // 只学当前消息自己的文字，不学引用原文）。一代/共用。
+  // 只学当前消息自己的文字，不学引用原文）。旧模式/共用。
   function feedSlangWindow(key, sender, plainContent) {
     if (cfg.slang?.enabled === false) return;
     if (!key || !plainContent || typeof plainContent !== 'string') return;
@@ -4251,7 +4251,7 @@ async function main() {
   // DSH 重启期间收到的 QQ 消息先入队（不丢），DSH 恢复后按序补投。
   let dshReady = false;
   let dshCheckStarted = false;
-  // 唯一运行模式：reserved2（二代仿真）。文本不自动转发，AI 通过工具自主收发。
+  // 唯一运行模式：reserved2（聊天模式）。文本不自动转发，AI 通过工具自主收发。
   let currentMode = 'reserved2';
   // DSH 侧真实的 preset 清单与默认 preset。
   let dshPresetIds = [];        // 当前 DSH 可用的 preset id 列表（agentPresets/list）
@@ -5304,7 +5304,7 @@ const agentTokenOk = (key, token) => {
 
   // 按“有意的空格”拆分：真人不会主动用空格，因此 AI 回复里的空格视为分条信号。
   // 空格两侧只要有一侧是中文/中文标点，就按分条处理（包括中英文/数字之间的空格）。
-  // 注意：该逻辑只用于一代 reserved 的自动转发文本； reserved2 不走这里，必须显式用数组分条。
+  // 注意：该逻辑只用于旧模式 reserved 的自动转发文本； reserved2 不走这里，必须显式用数组分条。
   function splitByCjkSpaces(src) {
     const tokens = String(src ?? '').split(/\s+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length <= 1) return tokens;
@@ -5419,7 +5419,7 @@ const agentTokenOk = (key, token) => {
     return postOneBot(action, params);
   }
 
-  // ── 图片/表情字节解析（供一代自动内联与按需工具） ────────────────────
+  // ── 图片/表情字节解析（供旧模式自动内联与按需工具） ────────────────────
   function mimeFromBuffer(buf) {
     if (!buf || buf.length < 12) return 'image/jpeg';
     if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
@@ -6280,7 +6280,7 @@ const agentTokenOk = (key, token) => {
         }
       } catch {}
     }
-    // 一代/普通模式：messageMediaStore
+    // 旧模式/普通模式：messageMediaStore
     const byRef = messageMediaStore.get(key);
     if (byRef) {
       const hit = byRef.get(refStr);
@@ -6724,7 +6724,7 @@ const agentTokenOk = (key, token) => {
     paused: false, // 控制台可暂停整个AI 活动（停止唤醒/等待）
   };
 
-  // 一代/普通模式的图片/表情元数据存储：key -> Map<messageId/seq, media[]>
+  // 旧模式/普通模式的图片/表情元数据存储：key -> Map<messageId/seq, media[]>
   // 聊天模式则直接存在 socialV2 会话的 recentMessages/unread 消息对象上。
   const messageMediaStore = new Map();
   // 会话见过的 forward id（有界，避免 recentMessages 滚动淘汰后无法读取刚见过的转发）
@@ -7512,7 +7512,7 @@ const agentTokenOk = (key, token) => {
   // 模式固定为 reserved2，启动时同步确定一次，保证监听端口之前就已就位。
   applyLocalMode();
 
-  // 一代仿真模式（reserved）已删除，v1 社交引擎永久关闭；
+  // 旧模式（reserved）已删除，v1 社交引擎永久关闭；
   // 引擎主体（socialState / tickSocial 等）暂时保留，属于不可达代码。
   function isSocialEnabled() {
     return false;
@@ -7598,7 +7598,7 @@ const agentTokenOk = (key, token) => {
   function buildContextBlock(key) {
     const ctx = (social.recentMessages.get(key) ?? []).slice(-Number(cfg.social?.contextWindow ?? 15));
     const lines = ctx.map((m) => `${m.isOwner ? '【管理员】' : ''}${m.sender}：${m.text}${mediaHintFor(key, m.messageId, m.media)}`).join('\n') || '（无）';
-    // 上下文里出现【管理员】时顺手解释一次术语，避免一代路径重演「把管理员当群主」。
+    // 上下文里出现【管理员】时顺手解释一次术语，避免旧模式路径重演「把管理员当群主」。
     return ctx.some((m) => m && m.isOwner) ? `${lines}\n\n${ADMIN_IDENTITY_HINT}` : lines;
   }
 
@@ -8075,7 +8075,7 @@ const agentTokenOk = (key, token) => {
     }
   }
 
-  // 聊天模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
+  // 聊天模式专用角色提示：去掉旧模式的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
   // 为了不削减原角色卡内容，示例节不整体删除，而是把“用空格分条”的示范改写成“用逗号表示停顿”，
   // 让AI 既保留原有人格示例，又不会照抄单条消息里的中文空格。
   function isCjkLikeChar(ch) {
@@ -8165,7 +8165,7 @@ const agentTokenOk = (key, token) => {
   function currentRoleHintV2() {
     const raw = currentRoleHint();
     if (!raw) return '';
-    // 一代仿真模式专用指令整行过滤，避免污染工具协议
+    // 旧模式专用指令整行过滤，避免污染工具协议
     const GEN1_ROLE_LINE_RE = /\[SILENT\]|空格分隔|按空格|用空格|空格分句|空格代表|自动转发|回复会自动|输出\s*\[SILENT\]/i;
     const lines = raw.split('\n');
     const kept = [];
@@ -8173,7 +8173,7 @@ const agentTokenOk = (key, token) => {
     for (const line of lines) {
       if (/^##\s*.*回复示例/.test(line)) {
         inExampleSection = true;
-        // 保留标题，但把“空格代表分条”的一代语义改写成语义
+        // 保留标题，但把“空格代表分条”的旧模式语义改写成语义
         kept.push(line.replace(/（空格代表前后分两条消息回答）/, '（示例中已用逗号表示停顿；想分多条请用数组）'));
         continue;
       }
@@ -8911,7 +8911,7 @@ const agentTokenOk = (key, token) => {
   }
 
   /**
-   * 主动开口的「换个方向」段落（reserved2 与一代共用）。
+   * 主动开口的「换个方向」段落（reserved2 与旧模式共用）。
    *
    * 为什么需要它：主动冒泡最容易退化成复读。普通唤醒有群友的新消息当抓手，
    * 主动开口时模型唯一的题材来源就是【群聊上下文】+【进行中的话题】记忆，而这两者
@@ -10311,7 +10311,7 @@ const agentTokenOk = (key, token) => {
         : textContent)
       + mediaHintFor(key, messageRef, mediaList);
 
-    // 一代模式（chat / reserved）同样先过内容策略：越线请求不该进模型。
+    // 旧模式模式（chat / reserved）同样先过内容策略：越线请求不该进模型。
     // 管理员不例外，拦的是「这类请求」，不是「谁发的」。
     const moderationLegacy = contentGate.check(plainContent, { key });
     if (moderationLegacy.blocked) {

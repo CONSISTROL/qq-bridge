@@ -63,7 +63,7 @@
      - `mcp-snowluma-host`（`src/mcp-host-server.js`）
      - `mcp-web-search-safe`（`src/mcp-web-search-safe.js`）
    - 在 `~/.dsh/profiles/web/package.json` 注册 `qq-mode-console` 插件
-   - 把 `qq-mode-console` 插件的默认模式设为 `reserved2`（二代仿真）
+   - 把 `qq-mode-console` 插件的默认模式设为 `reserved2`（聊天模式）
    - 创建本地 `state/mode.json`（`mode: reserved2`）作为 DSH settings 不可用时的兜底
    - 尝试自动执行 `dsh plugin --profile web install`（当 `dsh` CLI 在 PATH 中可用时），注册 `qq-mode-console` 的 bundle 依赖；若 `dsh` 不在 PATH，缺失依赖时 DSH 会提示补跑
 
@@ -84,7 +84,7 @@
 
    > DSH 0.2+ 的 HMR 会监听 profile 的 `cordis.patch.yml`，多数情况下改完脚本会自动热加载（`state/bridge.log` 里不再出现「不在 DSH 可用清单」即已生效）；只有热加载没接住时才需要重启。
 
-   > 运行模式**固定为 `reserved2`（二代仿真）**，即“文本不自动转发、AI 通过工具自主收发”。`chat` / `closed-agent` / `reserved` 三种模式已删除，控制台不再提供切换入口。
+   > 运行模式**固定为 `reserved2`（聊天模式）**，即“文本不自动转发、AI 通过工具自主收发”。`chat` / `closed-agent` / `reserved` 三种模式已删除，控制台不再提供切换入口。
 
 ## 验证是否装好
 
@@ -97,7 +97,7 @@
    > ℹ️ DSH 设置页 `Plugins → Plugin configuration` 里**不会**出现 `qq-mode` 卡片：该槽位要求插件自带浏览器半（`package.json` 的 `dsh.client` + `lib/client.js`），而 `plugins/qq-mode-console` 只实现了 host 半。`qq-mode` 命名空间本身正常注册（桥接靠它读 `ownerQQ`），缺的只是那张 GUI 表单。参见下方「常见问题」。
 2. **新建会话时**：agent preset 列表中应能看到：
    - `QQ 聊天角色`（`qq-chat`）
-   - `QQ 聊天角色（二代仿真）`（`qq-chat-v2`）
+   - `QQ 聊天角色（聊天模式）`（`qq-chat-v2`）
 3. **工具列表**：QQ 会话中应能看到 `mcp__snowluma__*`、`mcp__snowluma-host__*`、`mcp__web-search-safe__*` 等工具；不应看到 `dev_*` 等开发工具。
 
 ## 常见问题
