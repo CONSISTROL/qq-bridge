@@ -47,49 +47,48 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
       .some((el) => (el.innerText || '').trim() === '登录')).catch(() => false);
     if (needLogin) return { ok: false, error: '豆包未登录（需要重新扫码）' };
 
-    // 关键一步：先切到「图像生成」模式（豆包首页的对话/图像生成/视频生成 是不同入口）。
-    // 不切的话它会用普通对话回答，永远等不到图。
+    // 关键一步：点技能栏里的「图像生成」（实测按钮是 button[data-testid^="skill_bar_button"]，
+    // 文本命中「图像生成」）。不切模式的话它只回文字，永远等不到图。
+    await page.waitForSelector('button[data-testid^="skill_bar_button"]', { timeout: 20000 }).catch(() => {});
     const switched = await page.evaluate(() => {
-      const cand = [...document.querySelectorAll('button,div,span,a')]
+      const btns = [...document.querySelectorAll('button[data-testid^="skill_bar_button"], button')]
         .filter((el) => (el.innerText || '').trim() === '图像生成' && el.getBoundingClientRect().width > 0);
-      const el = cand[cand.length - 1];
+      const el = btns[0];
       if (!el) return false;
       el.click();
       return true;
     }).catch(() => false);
-    if (switched) await new Promise((r) => setTimeout(r, 2500));
+    if (!switched) return { ok: false, error: '找不到「图像生成」入口（页面可能改版）' };
+    await new Promise((r) => setTimeout(r, 2500));
 
     // 先记下页面原有的图片，只认「发送之后新出现的」那张（否则会抓到首页插画）
     const baseline = await page.evaluate(() => [...document.querySelectorAll('img')].map((i) => i.src)).catch(() => []);
 
-    const sel = 'textarea, [contenteditable="true"]';
+    // 切到图像模式后输入框是可见的 contenteditable（不是 textarea），只点可见的那个
+    const sel = '[contenteditable="true"], textarea';
     await page.waitForSelector(sel, { timeout: 20000 });
-    await page.click(sel);
+    const box = await page.evaluateHandle((q) => [...document.querySelectorAll(q)]
+      .filter((e) => e.getBoundingClientRect().width > 200)[0], sel);
+    await box.asElement()?.click?.();
+    await new Promise((r) => setTimeout(r, 300));
     await page.keyboard.type(text, { delay: 15 });
     await page.keyboard.press('Enter');
 
     const deadline = Date.now() + timeoutMs;
     let src = '';
     let canvasData = '';
+    // 注意：轮询里只做「一次 querySelectorAll('img')」这种廉价操作。
+    // 之前在一次 evaluate 里扫 message 容器 + 全页 div 的 computedStyle，单次调用要十几秒，
+    // 超时后 catch 吞掉错误 → 永远检测不到（踩过）。
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2500));
+      await new Promise((r) => setTimeout(r, 3000));
       const got = await page.evaluate((seen) => {
-        // 只在「助手消息」容器里找：豆包的回复气泡通常带 message / receive / assistant 语义
-        const scopes = [
-          ...document.querySelectorAll('[data-testid*="message"], [class*="message"], [class*="receive"], [class*="assistant"]')
-        ];
-        const pick = (root) => [...root.querySelectorAll('img')]
-          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 480 && i.naturalHeight >= 480)
-          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)[0];
-        for (const sc of scopes) { const hit = pick(sc); if (hit) return { src: hit.src }; }
-        // 兜底：整页里出现的新大图
-        const any = [...document.querySelectorAll('img')]
-          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 480 && i.naturalHeight >= 480)
-          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)[0];
-        if (any) return { src: any.src };
-        // 再兜底：canvas 画布（有些实现把图渲进 canvas）
-        const cv = [...document.querySelectorAll('canvas')].find((c) => c.width >= 480 && c.height >= 480);
-        if (cv) { try { return { canvas: cv.toDataURL('image/png') }; } catch { /* 跨域画布取不到 */ } }
+        const imgs = [...document.querySelectorAll('img')]
+          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 400 && i.naturalHeight >= 400)
+          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight);
+        if (imgs[0]) return { src: imgs[0].src };
+        const cv = [...document.querySelectorAll('canvas')].find((c) => c.width >= 400 && c.height >= 400);
+        if (cv) { try { return { canvas: cv.toDataURL('image/png') }; } catch { /* 跨域 */ } }
         return null;
       }, baseline).catch(() => null);
       if (got?.src) { src = got.src; break; }
@@ -99,7 +98,10 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
       const buffer = Buffer.from(canvasData.split(',')[1] || '', 'base64');
       if (buffer.length) return { ok: true, buffer, mime: 'image/png', url: 'canvas' };
     }
-    if (!src) return { ok: false, error: '等不到出图（可能被限流/需要验证）' };
+    if (!src) {
+      await page.screenshot({ path: path.join(stateDir, 'draw-web-last.png') }).catch(() => {});
+      return { ok: false, error: '等不到出图（可能还在排队/被限流），已留截图 state/draw-web-last.png' };
+    }
 
     // 直接在页面里取像素，避免再走一次网络（图片可能带鉴权/防盗链）
     const b64 = await page.evaluate(async (u) => {
