@@ -13,9 +13,60 @@ export const group = '总览';
 export const order = 1;
 export const badge = 'navPending';
 
-function renderStatus(view, s) {
-  if (!s) return;
-  $('#activity', view).textContent = s.activity || '（空）';
+// 活动日志：默认停在最新一条；用户往上翻时暂停自动跟随，并给出「回到最新」。
+function createActivityLog(view) {
+  const el = $('#activity', view);
+  const jump = $('#activityJump', view);
+  if (!el) return { render() {}, destroy() {} };
+  const STICK_PX = 28;
+  let follow = true;
+  let initialized = false;
+  const atBottom = () => el.scrollTop + el.clientHeight >= el.scrollHeight - STICK_PX;
+  const syncJump = () => {
+    if (!jump) return;
+    jump.hidden = follow || el.scrollHeight <= el.clientHeight + 2;
+  };
+  const onScroll = () => { follow = atBottom(); syncJump(); };
+  const onResize = () => {
+    if (follow) el.scrollTop = el.scrollHeight;
+    syncJump();
+  };
+  const toBottom = () => {
+    follow = true;
+    el.scrollTop = el.scrollHeight;
+    syncJump();
+  };
+  const onJump = () => toBottom();
+  el.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onResize);
+  jump?.addEventListener('click', onJump);
+  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; syncJump(); });
+  return {
+    render(text) {
+      const next = String(text ?? '（空）');
+      if (el.textContent === next) {
+        if (follow) el.scrollTop = el.scrollHeight;
+        syncJump();
+        return;
+      }
+      const stick = follow || !initialized;
+      const prevTop = el.scrollTop;
+      el.textContent = next;
+      initialized = true;
+      requestAnimationFrame(() => {
+        if (stick) toBottom();
+        else {
+          el.scrollTop = Math.min(prevTop, Math.max(0, el.scrollHeight - el.clientHeight));
+          syncJump();
+        }
+      });
+    },
+    destroy() {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+      jump?.removeEventListener('click', onJump);
+    }
+  };
 }
 
 function renderPending(view, list) {
@@ -73,11 +124,12 @@ export async function mount(root) {
     setMsg($('#restartMsg', view), r.message || r.error || '正在重启…', r.ok !== false);
   });
 
-  const onStatus = (ev) => renderStatus(view, ev.detail);
+  const activityLog = createActivityLog(view);
+  const onStatus = (ev) => { if (ev.detail) activityLog.render(ev.detail.activity); };
   const onPending = (ev) => renderPending(view, ev.detail || []);
   document.addEventListener('console:status', onStatus);
   document.addEventListener('console:pending', onPending);
-  renderStatus(view, getStatus());
+  activityLog.render(getStatus()?.activity);
   renderPending(view, getPending());
 
   const sessionBox = $('#sessionList', view);
@@ -95,6 +147,7 @@ export async function mount(root) {
 
   return () => {
     stopSessions();
+    activityLog.destroy();
     document.removeEventListener('console:status', onStatus);
     document.removeEventListener('console:pending', onPending);
   };
