@@ -75,6 +75,19 @@ export async function liveClick({ x, y }) {
   return { ok: true };
 }
 
+/** 直接把文本打进当前焦点元素（CDP sendCharacter）——中文走这个最稳，不依赖剪切板。 */
+export async function liveText({ text }) {
+  if (!page) return { ok: false, error: '没有活动会话' };
+  const body = String(text ?? '');
+  if (!body) return { ok: false, error: 'text 不能为空' };
+  try {
+    await page.keyboard.sendCharacter(body);
+    return { ok: true, chars: body.length };
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
 /** 指针事件：支持按下/移动/抬起，才能把「拖拽」转发到真实浏览器。 */
 export async function livePointer({ type, x, y }) {
   if (!page) return { ok: false, error: '没有活动会话' };

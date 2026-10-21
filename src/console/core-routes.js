@@ -1,4 +1,4 @@
-import { startLive, stopLive, liveShot, liveClick, livePointer, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
+import { startLive, stopLive, liveShot, liveClick, livePointer, liveText, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
 import { generateImage, drawConfig } from '../draw.js';
 import { listUpgrades, proposeUpgrade, decideUpgrade, activePromptHints } from '../self-upgrade.js';
 // 控制台核心路由：首页/状态、角色、会话、白名单、安全、令牌、重启。
@@ -521,6 +521,7 @@ export function createConsoleCoreRoutes(deps) {
         if (act === 'start') { sendJson(await startLive({ stateDir: STATE_DIR })); return; }
         if (act === 'click') { sendJson(await liveClick(body)); return; }
         if (act === 'pointer') { sendJson(await livePointer(body)); return; }
+        if (act === 'text') { sendJson(await liveText(body)); return; }
         if (act === 'prompt') { sendJson(await livePrompt({ prompt: body.prompt })); return; }
         if (act === 'grab') {
           const r = await liveGrab();

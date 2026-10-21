@@ -28,6 +28,10 @@
     <button id="stop">停止</button>
     <label><input type="checkbox" id="autorefresh" checked> 自动刷新</label>
   </div>
+  <div class="row" style="margin-top:6px">
+    <input id="pastebox" placeholder="中文用这里：输入/粘贴后点右侧按钮，直接打进浏览器焦点处" style="flex:1;min-width:320px">
+    <button id="sendText">打进画面</button>
+  </div>
 </header>
 <div id="stage"><img id="shot" alt="browser"></div>
 <div id="msg">提示：点「启动会话」→ 输入提示词点「发送提示词」→ 弹验证码时：<b>单击空格子可以选中</b>，也可以<b>按住图片拖到下方虚线框里</b>（拖拽已支持）→ 点画面里的「提交」→ 出图后点「抓图并发送」。</div>
@@ -116,6 +120,14 @@
     const r = await fetch(API + '/grab', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
     say(r.ok ? ('已抓到图并发出' + (r.sent ? '' : '（未指定会话，仅抓到）')) : ('抓图失败：' + (r.error || '')));
   });
+  $('sendText').addEventListener('click', async () => {
+    const text = $('pastebox').value;
+    if (!text) { say('先在左边输入要打的字'); return; }
+    const r = await fetch(API + '/text', { method: 'POST', headers: h, body: JSON.stringify({ text }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    say(r.ok ? ('已打进 ' + r.chars + ' 个字') : ('失败：' + (r.error || '')));
+    setTimeout(shot, 400);
+  });
+
   $('stop').addEventListener('click', async () => {
     await fetch(API + '/stop', { method: 'POST', headers: h, body: '{}' }).catch(() => {});
     say('已停止');
