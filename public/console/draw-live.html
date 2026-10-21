@@ -36,6 +36,8 @@
   const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('consoleToken') || '';
   if (token) localStorage.setItem('consoleToken', token);
   const h = { 'x-console-token': token, 'content-type': 'application/json' };
+  // 页面可能被反代到子路径下（如 https://anihub.xin/qq/…），接口要跟着带同样的前缀
+  const API = (location.pathname.startsWith('/qq/') ? '/qq' : '') + '/api/draw/live';
   const $ = (id) => document.getElementById(id);
   const say = (t) => { $('msg').textContent = t; };
   let pending = false;
@@ -44,7 +46,7 @@
     if (pending) return;
     pending = true;
     try {
-      const r = await fetch('/api/draw/live/shot?t=' + Date.now(), { headers: h });
+      const r = await fetch(API + '/shot?t=' + Date.now(), { headers: h });
       if (r.ok) {
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
@@ -60,13 +62,13 @@
     const rect = img.getBoundingClientRect();
     const x = Math.round((ev.clientX - rect.left) * (1280 / rect.width));
     const y = Math.round((ev.clientY - rect.top) * (900 / rect.height));
-    await fetch('/api/draw/live/click', { method: 'POST', headers: h, body: JSON.stringify({ x, y }) });
+    await fetch(API + '/click', { method: 'POST', headers: h, body: JSON.stringify({ x, y }) });
     setTimeout(shot, 250);
   });
 
   $('start').addEventListener('click', async () => {
     say('启动中…（首次约 5–10 秒）');
-    const r = await fetch('/api/draw/live/start', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    const r = await fetch(API + '/start', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
     say(r.ok ? '会话已就绪，可以输入提示词了' : ('启动失败：' + (r.error || '')));
     shot();
   });
@@ -74,17 +76,17 @@
     const prompt = $('prompt').value.trim();
     if (!prompt) { say('先写提示词'); return; }
     say('发送中…');
-    const r = await fetch('/api/draw/live/prompt', { method: 'POST', headers: h, body: JSON.stringify({ prompt }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    const r = await fetch(API + '/prompt', { method: 'POST', headers: h, body: JSON.stringify({ prompt }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
     say(r.ok ? '已发送，等它出图（有验证码就在画面上点格子和提交）' : ('发送失败：' + (r.error || '')));
     setTimeout(shot, 1200);
   });
   $('grab').addEventListener('click', async () => {
     say('抓图中…');
-    const r = await fetch('/api/draw/live/grab', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
+    const r = await fetch(API + '/grab', { method: 'POST', headers: h, body: '{}' }).then((x) => x.json()).catch((e) => ({ ok: false, error: e.message }));
     say(r.ok ? ('已抓到图并发出' + (r.sent ? '' : '（未指定会话，仅抓到）')) : ('抓图失败：' + (r.error || '')));
   });
   $('stop').addEventListener('click', async () => {
-    await fetch('/api/draw/live/stop', { method: 'POST', headers: h, body: '{}' }).catch(() => {});
+    await fetch(API + '/stop', { method: 'POST', headers: h, body: '{}' }).catch(() => {});
     say('已停止');
   });
 
