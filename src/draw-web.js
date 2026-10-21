@@ -47,6 +47,18 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
       .some((el) => (el.innerText || '').trim() === '登录')).catch(() => false);
     if (needLogin) return { ok: false, error: '豆包未登录（需要重新扫码）' };
 
+    // 关键一步：先切到「图像生成」模式（豆包首页的对话/图像生成/视频生成 是不同入口）。
+    // 不切的话它会用普通对话回答，永远等不到图。
+    const switched = await page.evaluate(() => {
+      const cand = [...document.querySelectorAll('button,div,span,a')]
+        .filter((el) => (el.innerText || '').trim() === '图像生成' && el.getBoundingClientRect().width > 0);
+      const el = cand[cand.length - 1];
+      if (!el) return false;
+      el.click();
+      return true;
+    }).catch(() => false);
+    if (switched) await new Promise((r) => setTimeout(r, 2500));
+
     // 先记下页面原有的图片，只认「发送之后新出现的」那张（否则会抓到首页插画）
     const baseline = await page.evaluate(() => [...document.querySelectorAll('img')].map((i) => i.src)).catch(() => []);
 
@@ -58,15 +70,34 @@ async function doGenerate({ stateDir, prompt, timeoutMs }) {
 
     const deadline = Date.now() + timeoutMs;
     let src = '';
+    let canvasData = '';
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2500));
-      src = await page.evaluate((seen) => {
-        const imgs = [...document.querySelectorAll('img')]
-          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 400 && i.naturalHeight >= 400)
-          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight);
-        return imgs[0]?.src || '';
-      }, baseline).catch(() => '');
-      if (src) break;
+      const got = await page.evaluate((seen) => {
+        // 只在「助手消息」容器里找：豆包的回复气泡通常带 message / receive / assistant 语义
+        const scopes = [
+          ...document.querySelectorAll('[data-testid*="message"], [class*="message"], [class*="receive"], [class*="assistant"]')
+        ];
+        const pick = (root) => [...root.querySelectorAll('img')]
+          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 480 && i.naturalHeight >= 480)
+          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)[0];
+        for (const sc of scopes) { const hit = pick(sc); if (hit) return { src: hit.src }; }
+        // 兜底：整页里出现的新大图
+        const any = [...document.querySelectorAll('img')]
+          .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 480 && i.naturalHeight >= 480)
+          .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)[0];
+        if (any) return { src: any.src };
+        // 再兜底：canvas 画布（有些实现把图渲进 canvas）
+        const cv = [...document.querySelectorAll('canvas')].find((c) => c.width >= 480 && c.height >= 480);
+        if (cv) { try { return { canvas: cv.toDataURL('image/png') }; } catch { /* 跨域画布取不到 */ } }
+        return null;
+      }, baseline).catch(() => null);
+      if (got?.src) { src = got.src; break; }
+      if (got?.canvas) { canvasData = got.canvas; break; }
+    }
+    if (!src && canvasData) {
+      const buffer = Buffer.from(canvasData.split(',')[1] || '', 'base64');
+      if (buffer.length) return { ok: true, buffer, mime: 'image/png', url: 'canvas' };
     }
     if (!src) return { ok: false, error: '等不到出图（可能被限流/需要验证）' };
 
