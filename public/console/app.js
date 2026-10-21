@@ -199,7 +199,7 @@ function highlightNav(view) {
   if (title) title.textContent = view.title;
   const desc = $('#viewDesc');
   if (desc) desc.textContent = view.desc ?? '';
-  document.title = `QQ 桥接控制台 · ${view.title}`;
+  document.title = `鱼群bot 控制台 · ${view.title}`;
 }
 
 function updatePendingBadge(count) {

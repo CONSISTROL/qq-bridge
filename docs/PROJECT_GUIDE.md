@@ -1,4 +1,4 @@
-# DSH QQ 桥接（qq-bridge）项目说明书
+# DSH 鱼群bot（qq-bridge）项目说明书
 
 > 让 DeepSeek Harness（DSH）的 agent 以“仿真群友”身份接入 QQ 群/私聊。
 > 本文是面向公开仓库的精简版说明；本地开发历史、个人配置与运行状态不会包含在仓库中。
