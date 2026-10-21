@@ -1,12 +1,12 @@
-// 人格（05 角色扮演）与静默开关（11）
+// 角色设定（05 角色扮演）与静默开关（11）
 import { api } from '../core/api.js';
 import { $, esc, toast, delegate, setMsg } from '../core/dom.js';
 import { mountFragment } from '../core/fragments.js';
 import { getStatus, refreshStatus } from '../core/status.js';
 
 export const id = 'persona';
-export const title = '人格与静默';
-export const desc = '当前角色、人格库、静默开关';
+export const title = '角色设定';
+export const desc = '当前角色、角色库、静默开关';
 export const icon = 'persona';
 export const group = '运行';
 export const order = 2;

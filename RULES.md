@@ -106,7 +106,7 @@ agent 由此可以对**那台手机**执行命令，与本机工具是两套相�
 
 **途径 A：QQ 群内管理命令**（桥接直接执行，不经过模型判断）：
 ```
-/role 傲娇助手    # 切换角色（roles/傲娇助手.md）
+/role 小鲸鱼    # 切换角色（roles/小鲸鱼.md）
 /role off         # 清除角色
 /silent           # 静默模式（群友消息不回复）
 /active           # 恢复正常
@@ -115,10 +115,10 @@ agent 由此可以对**那台手机**执行命令，与本机工具是两套相�
 ```
 
 **途径 B：DSH WebUI**：
-- 在 GUI 会话里对我说「给 QQ 机器人设置角色：傲娇助手」/「清除角色」/「开启静默模式」，我写 `state/current-role.json`
+- 在 GUI 会话里对我说「给 QQ 机器人设置角色：小鲸鱼」/「清除角色」/「开启静默模式」，我写 `state/current-role.json`
 - 或手动编辑 `qq-bridge/state/current-role.json`：
   ```json
-  { "role": "傲娇助手", "mode": "active" }   // active=正常, silent=静默
+  { "role": "小鲸鱼", "mode": "active" }   // active=正常, silent=静默
   ```
 - 角色文件放 `qq-bridge/roles/<角色名>.md`（格式见 `roles/README.md`）
 

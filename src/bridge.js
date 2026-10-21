@@ -314,7 +314,7 @@ function appendActivity(line) {
   } catch {}
 }
 
-// 读取角色/模式状态：{"role": "傲娇助手", "mode": "active"|"silent"}
+// 读取角色/模式状态：{"role": "小鲸鱼", "mode": "active"|"silent"}
 function readRoleState() {
   return readJsonSafe(ROLE_STATE_FILE, { role: null, mode: 'active' });
 }
