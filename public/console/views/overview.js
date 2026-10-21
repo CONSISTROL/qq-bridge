@@ -7,7 +7,7 @@ import { getStatus, getPending, refreshStatus } from '../core/status.js';
 
 export const id = 'overview';
 export const title = '总览';
-export const desc = '运行模式 · 会话映射 · 挂起审批 · 活动日志';
+export const desc = '运行说明 · 会话映射 · 挂起审批 · 活动日志';
 export const icon = 'overview';
 export const group = '总览';
 export const order = 1;
@@ -54,6 +54,17 @@ async function refreshSessions(view) {
 
 export async function mount(root) {
   const view = await mountFragment(root, 'overview');
+
+  // 睡眠时段显示真实配置（socialData.sleepHours）
+  (async () => {
+    const r = await api('/api/socialData/config', 'GET').catch(() => null);
+    const win = (r?.config || r)?.sleepHours;
+    const el = $('#sleepWindowText', view);
+    if (el && Array.isArray(win) && win.length === 2) {
+      const fmt = (h) => String(Math.max(0, Math.min(23, Number(h)))).padStart(2, '0') + ':00';
+      el.textContent = `${fmt(win[0])}–${fmt(win[1])}`;
+    }
+  })();
 
   // 重启桥接（按钮从已删除的「运维」页搬到这里）
   delegate(view, 'click', '#restartBtn', async () => {

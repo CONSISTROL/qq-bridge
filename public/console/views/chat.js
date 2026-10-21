@@ -16,7 +16,7 @@ export const id = 'chat';
 export const title = '聊天模式';
 export const desc = 'AI 工具开关、唤醒/发送/等待参数、工具日志、轻量记忆、工具级配置';
 export const icon = 'chat';
-export const group = '仿真';
+export const group = '聊天';
 export const order = 2;
 
 // 默认关闭的工具开关：只有 config.tools[flag] === true 才算开启（与 bridge/mcp 侧一致），

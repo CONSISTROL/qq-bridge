@@ -1,6 +1,13 @@
 <section class="card span-all">
-  <h2>运行模式</h2>
-  <div class="meta">固定为 <b>聊天模式（chat）</b>：文本不自动转发，AI 通过工具自主收发。</div>
+  <h2>运行说明</h2>
+  <div class="meta">
+    <b>鱼群bot</b> 全天候在线：群消息和私聊都由 AI 自己判断要不要回，<b>文本不会自动转发</b>，
+    所有发言都通过工具发出（所以它想说什么、什么时候说、说几条，都由它决定）。
+  </div>
+  <div class="meta" style="margin-top:6px">
+    <b>睡眠时段</b>（<span id="sleepWindowText">1:00–8:00</span>）：群里只有被 @ 或被叫名字才会打扰它，
+    其他消息照常记录但不唤醒，也不主动冒泡；私聊不受限制。
+  </div>
   <div class="row" style="gap:8px;margin-top:10px;align-items:center">
     <button id="restartBtn" class="danger" type="button">重启</button>
     <span class="meta" id="restartMsg"></span>

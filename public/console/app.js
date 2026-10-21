@@ -23,7 +23,7 @@ import * as capabilities from './views/capabilities.js';
 import * as mc from './views/mc.js';
 
 const VIEWS = [overview, chat, memorydb, album, voicepack, persona, autonomy, security, tools, capabilities, plugins, mc];
-const GROUP_ORDER = ['总览', '仿真', '语料', '运行', '扩展', '系统'];
+const GROUP_ORDER = ['总览', '聊天', '语料', '运行', '扩展', '系统'];
 const GROUP_FALLBACK = '系统';
 // 手机底栏只放最常用的四个分区；其余进「更多」抽屉。
 const MOBILE_PRIMARY = [
