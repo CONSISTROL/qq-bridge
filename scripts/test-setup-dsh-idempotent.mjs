@@ -68,7 +68,7 @@ const finalPatch = fs.readFileSync(path.join(tmpHome, 'profiles', 'web', 'cordis
 
 // 断言 1：每个托管 id 恰好出现一次
 let failed = 0;
-for (const id of ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe', 'preset-qq-chat', 'preset-qq-chat-v2']) {
+for (const id of ['mcp-snowluma', 'mcp-snowluma-host', 'mcp-web-search-safe', 'preset-qq-chat', 'preset-qq-chat']) {
   const n = finalPatch.split('\n').filter((l) => new RegExp(`^\\s*-\\s*id:\\s*${id}\\s*$`).test(l)).length;
   const ok = n === 1;
   if (!ok) failed += 1;
@@ -108,7 +108,7 @@ console.log(`${okBundle ? '✅' : '❌'} profile bundles 正确: ${bundles.join(
 if (!okBundle) failed += 1;
 
 // 断言 6：preset 已安装
-for (const p of ['qq-chat', 'qq-chat-v2']) {
+for (const p of ['qq-chat', 'qq-chat']) {
   const f = path.join(tmpHome, '.agent-presets', p, 'agent.cordis.yml');
   const ok = fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('prefix:');
   console.log(`${ok ? '✅' : '❌'} preset ${p} 已安装且使用 prefix 字段`);
@@ -124,7 +124,7 @@ const unstaged = (rows) => rows.map((r) => {
   if (Array.isArray(copy.config)) copy.config = unstaged(copy.config);
   return copy;
 });
-for (const p of ['qq-chat', 'qq-chat-v2']) {
+for (const p of ['qq-chat', 'qq-chat']) {
   const row = (doc || []).flatMap((e) => e?.insert || []).find((x) => x.id === `preset-${p}`);
   const source = yaml.load(fs.readFileSync(path.join(ROOT, 'dsh', 'agent-presets', p, 'agent.cordis.yml'), 'utf8').replace(/^\uFEFF/, ''));
   const same = row !== undefined && JSON.stringify(unstaged(row.config.plugins)) === JSON.stringify(source);

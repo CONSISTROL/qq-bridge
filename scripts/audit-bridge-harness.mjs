@@ -218,7 +218,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
     /** 学习会话当前有没有在等回合结束的任务。 */
     learnerWaiting() { return [...learnerWaiters.values()].some((a) => a && a.length > 0); },
     // 主动开话题的反重复：记住最近主动开的头，下次要求换方向。
-    // 注意 buildProactivePrompt 只是**一代（reserved）**路径；reserved2 真正生效的是
+    // 注意 buildProactivePrompt 只是**一代（reserved）**路径；chat 真正生效的是
     // buildWakePromptV2 + 共用的 buildProactiveTopicBlock，两个都要能测。
     buildProactivePrompt, buildWakePromptV2, buildProactiveTopicBlock, recordSentMessagesV2, retryPendingWakeV2, agentMessageView, planAnimFrames, animFrameText, deriveSelfSaid,
     // 一代批次提示：用来钉住「【管理员】≠群主」的术语只在真的出现管理员消息时注入。
@@ -346,7 +346,7 @@ export async function bridgeHarness({ config = {}, savedState, stickerState, for
   });
   vm.runInContext(source + '\nglobalThis.auditReady = main();', context);
   const bridge = await context.auditReady;
-  bridge.setPresets(['standard', 'qq-chat', 'qq-chat-v2']);
+  bridge.setPresets(['standard', 'qq-chat', 'qq-chat']);
   bridge.setReady(true);
   /**
    * 在审计里完整跑一遍「研究会话 → 落库」：把等待中的那次 turn 用 buildText(prompt) 的

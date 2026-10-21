@@ -401,12 +401,12 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_send_sticker' }, 403);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (!req.headers['x-agent-token']) {
-        sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403);
+        sendJson({ ok: false, error: 'chat 模式发送必须携带 agent token' }, 403);
         return;
       }
       const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -1384,8 +1384,8 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: 'messageId 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode === 'reserved2' && !agentToken) {
-        sendJson({ ok: false, error: 'reserved2 模式读取文件必须携带 agent token' }, 403);
+      if (deps.currentMode === 'chat' && !agentToken) {
+        sendJson({ ok: false, error: 'chat 模式读取文件必须携带 agent token' }, 403);
         return;
       }
       // 读文件同样允许跨会话（同图片端点，理由见 anyAgentTokenOk）
@@ -1518,8 +1518,8 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: 'messageId 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode === 'reserved2' && !agentToken) {
-        sendJson({ ok: false, error: 'reserved2 模式读取图片必须携带 agent token' }, 403);
+      if (deps.currentMode === 'chat' && !agentToken) {
+        sendJson({ ok: false, error: 'chat 模式读取图片必须携带 agent token' }, 403);
         return;
       }
       // 读图允许跨会话：用任一有效会话令牌即可（AI 可能在私聊会话里被要求看群里的图）
@@ -1649,8 +1649,8 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: 'messageId 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode === 'reserved2' && !agentToken) {
-        sendJson({ ok: false, error: 'reserved2 模式读取视频必须携带 agent token' }, 403);
+      if (deps.currentMode === 'chat' && !agentToken) {
+        sendJson({ ok: false, error: 'chat 模式读取视频必须携带 agent token' }, 403);
         return;
       }
       if (agentToken && !agentTokenOk(key, agentToken)) {
@@ -1883,8 +1883,8 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: `工具未启用：${needFlag}` }, 403);
         return;
       }
-      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       try {
@@ -1970,8 +1970,8 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：videoFrames' }, 403);
         return;
       }
-      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (cfg.socialV2?.enabled === false || deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       const bvid = String(body.bvid ?? '').trim();

@@ -110,7 +110,7 @@ if (fs.existsSync(consoleTokenFile) && fs.existsSync(socialV2File)) {
       const urlBase = `http://127.0.0.1:${config.consolePort || 3100}/api/socialV2/forward-message`;
       const authHeaders = { 'x-console-token': consoleToken };
       if (agentToken) {
-        // 未带 agent token 应被拒绝（reserved2）
+        // 未带 agent token 应被拒绝（chat）
         const resNoToken = await fetch(`${urlBase}?key=${encodeURIComponent(key)}&id=abc`, { headers: authHeaders, signal: AbortSignal.timeout(5000) });
         const bodyNoToken = await resNoToken.json().catch(() => ({}));
         check('桥接端点：无 agent token 被拒绝', resNoToken.status === 403 && /agent token/.test(bodyNoToken.error || ''), `HTTP ${resNoToken.status} ${bodyNoToken.error || ''}`);

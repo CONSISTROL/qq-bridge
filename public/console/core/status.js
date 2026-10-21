@@ -8,7 +8,7 @@ import { every } from './poll.js';
 import { $ } from './dom.js';
 
 export const MODE_LABEL = {
-  reserved2: '聊天模式'
+  chat: '聊天模式'
 };
 
 let latest = null;

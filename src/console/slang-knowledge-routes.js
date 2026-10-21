@@ -932,7 +932,7 @@ export function createSlangKnowledgeRoutes(deps) {
             queueSlangTask(() => runSlangResearch([existing]));
           }
         }
-        log(`[reserved2] AI 再次提交黑话候选「${content}」(${key})，累计 ${existing.count} 次`);
+        log(`[chat] AI 再次提交黑话候选「${content}」(${key})，累计 ${existing.count} 次`);
         sendJson({ ok: true, duplicate: true, status: 'candidate', entry: publicSlangEntry(existing) });
         return;
       }
@@ -947,8 +947,8 @@ export function createSlangKnowledgeRoutes(deps) {
       if (cfg.slang?.autoResearch !== false) {
         queueSlangTask(() => runSlangResearch([entry]));
       }
-      log(`[reserved2] AI 提交黑话候选「${content}」(${key})`);
-      appendActivity(`${key} [reserved2] AI 提交黑话候选：${content}${context ? '（附语境）' : ''}`);
+      log(`[chat] AI 提交黑话候选「${content}」(${key})`);
+      appendActivity(`${key} [chat] AI 提交黑话候选：${content}${context ? '（附语境）' : ''}`);
       sendJson({ ok: true, entry: publicSlangEntry(entry) });
       return;
     }
@@ -966,8 +966,8 @@ export function createSlangKnowledgeRoutes(deps) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
         return;
       }
-      if (req.headers['x-agent-token'] && deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (req.headers['x-agent-token'] && deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) {
@@ -1116,8 +1116,8 @@ export function createSlangKnowledgeRoutes(deps) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
         return;
       }
-      if (req.headers['x-agent-token'] && deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (req.headers['x-agent-token'] && deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) {
@@ -1192,8 +1192,8 @@ export function createSlangKnowledgeRoutes(deps) {
         sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400);
         return;
       }
-      if (deps.currentMode === 'reserved2' && !agentTokenOk(key, token)) {
-        sendJson({ ok: false, error: 'reserved2 模式下旧只读工具不可用，请使用带会话令牌的 v2 读工具' }, 403);
+      if (deps.currentMode === 'chat' && !agentTokenOk(key, token)) {
+        sendJson({ ok: false, error: 'chat 模式下旧只读工具不可用，请使用带会话令牌的 v2 读工具' }, 403);
         return;
       }
       if (token && !agentTokenOk(key, token)) {

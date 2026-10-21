@@ -100,7 +100,7 @@ qq-bridge/
 │   ├── PROJECT_GUIDE.md        # 本文档（公开版）
 │   └── DSH_SETUP.md            # DSH 端安装说明（另一台设备）
 ├── dsh/
-│   └── agent-presets/          # qq-chat / qq-chat-v2 的 DSH preset 模板
+│   └── agent-presets/          # qq-chat / qq-chat 的 DSH preset 模板
 ├── plugins/
 │   └── qq-mode-console/        # DSH 插件：注册 qq-mode 设置命名空间（仅 host 半，UI 卡片未实现）
 ├── assets/
@@ -155,7 +155,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 - 群聊里的 `@` 段会解析成群名片/昵称（带缓存），解析失败时回退为 QQ 号。
 - 引用/回复段会解析成被引用人的群名片/昵称 + 原文，注入 prompt。
 - 旧旧模式模式下，模型可以只输出 `[SILENT]` 表示“潜水/不接话”，桥接会静默不发送。
-- 旧旧模式模式的分条方式为“按空格分句”：AI 用空格表示下一条消息，桥接按空格拆条；`reserved2` 不适用，分条请用 `qq_send_message` 数组。
+- 旧旧模式模式的分条方式为“按空格分句”：AI 用空格表示下一条消息，桥接按空格拆条；`chat` 不适用，分条请用 `qq_send_message` 数组。
 
 ### 4.2 DSH 事件流 / turn 收集
 
@@ -191,7 +191,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | 模块 | 说明 |
 |---|---|
 | `loadConfig` | 读取 `config.json`，fail-fast；提供社交参数默认值 |
-| `allowed` / `modeAllowed` | 白名单准入（运行模式已固定为 reserved2） |
+| `allowed` / `modeAllowed` | 白名单准入（运行模式已固定为 chat） |
 | `acquireLock` / `releaseLock` | 单实例锁（原子 `fs.openSync('wx')` + stale 检测） |
 | `ensureSession` | 创建/复用 DSH 会话，带 `sessionEpoch` 防止 reset 竞态 |
 | `social` | 社交引擎状态（states / recentMessages / pendingSummaries / silentContext / silentTurns / pendingTimers） |
@@ -247,7 +247,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 | `qq_reply` | 专用“引用/回复”工具 | 同上 |
 | `qq_send_private_message` | 发私聊；可选 `replyToMessageId` | 同上 |
 
-聊天模式（`reserved2`）还有：
+聊天模式（`chat`）还有：
 
 - 状态/消息：`qq_get_prompt`、`qq_get_unread_messages`、`qq_get_recent_messages`、`qq_get_message_detail`、`qq_get_active_members`、`qq_social_state`
 - 看图/看视频：`qq_get_message_images`（图片/表情）、`qq_get_message_video`（聊天里的 QQ 视频，抽帧；需本机 ffmpeg，无语音转写）
@@ -262,7 +262,7 @@ DSH 事件流（api.events.mux → /api/remote.mux + session/follow + $events）
 `mcp-host-server.js`：
 
 - `snowluma_status`：只读探活。
-- `start_snowluma` / `stop_snowluma`：默认禁用，需 `config.json` 设置 `snowluma.allowProcessControl: true`，且需通过 reserved2 门禁（私聊白名单仅 owner + 无新鲜群活动）。
+- `start_snowluma` / `stop_snowluma`：默认禁用，需 `config.json` 设置 `snowluma.allowProcessControl: true`，且需通过 chat 门禁（私聊白名单仅 owner + 无新鲜群活动）。
 
 `mcp-web-search-safe.js`：
 
@@ -332,7 +332,7 @@ AI 的记忆**不是一个文件**，而是七类东西拼起来的。它们各�
 模型连"发生过这件事"都不知道，也就不会有「思考 → 生成拒绝 → 对方还是没收到」那一串浪费。
 
 为什么需要它（真实事故）：有人在私聊里反复发同一类越线请求，模型每轮都完整思考一遍、
-生成一句拒绝，然后因为 reserved2 的文本不自动转发而一个字都没发出去，对方以为它不理人。
+生成一句拒绝，然后因为 chat 的文本不自动转发而一个字都没发出去，对方以为它不理人。
 所以这一层管的是"它要不要为这件事花一次推理"——拦的是**管理员显式点名的那几种请求**，
 不是"AI 自己觉得敏感的话题"。
 
@@ -527,7 +527,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 3. **敏感审计**：`SENSITIVE_RE` 拦截路径/凭据；agent 回复、错误文本、审批/提问理由、MCP send 都会过。
 4. **管理命令**：`/` 命令仅 owner（ownerQQ 可在控制台设置）。
 5. **审批**：非 owner 不能通过审批；超时/覆盖会给 DSH 回执。
-6. **进程控制**：`start/stop_snowluma` 默认禁用；即使开启，也需通过 reserved2 门禁（私聊白名单仅 owner + 无新鲜群活动）才允许调用。
+6. **进程控制**：`start/stop_snowluma` 默认禁用；即使开启，也需通过 chat 门禁（私聊白名单仅 owner + 无新鲜群活动）才允许调用。
 7. **配置 fail-closed**：config.json 损坏直接退出；白名单默认不放行。
 8. **控制台鉴权**：可配 `consoleToken`；未配置时自动生成强 token。凭据可用三种形式之一提交：`x-console-token` 请求头、`?token=` 查询参数、或首次验证通过后下发的 `qq_console_token` Cookie（HttpOnly + SameSite=Strict，30 天）——浏览器直接导航/刷新带不了自定义请求头，没有这个 Cookie 每次刷新都要重输令牌；点控制台里的「忘记本机令牌」可立即清除。
 9. **只读联网搜索**：`mcp-web-search-safe.js` 只暴露 `web_search` / `web_fetch`，带 SSRF 防护。
@@ -542,7 +542,7 @@ QQ 只存图不存含义，这些表情对 AI 等于「看得见、认不出」�
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
 - 控制台：`http://127.0.0.1:3100`（左侧导航分区：总览 / 旧模式 / 聊天模式 / 黑话与向量检索 / 群知识库 / AI 记忆 / AI 图片 / 表情包 / 人格与静默 / 白名单与安全 / 运维 / MCP 工具）。
-- 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
+- 模式：在**控制台「总览」的运行模式按钮**切换（桥接会写穿到 DSH settings 的 `qq-mode`，并同时写 `state/mode.json` 作兜底）。读取时 **DSH 设置为准**，`state/mode.json` 只在 DSH 侧不可用时兜底 —— 所以别直接改本地文件。运行 `scripts/setup-dsh.mjs` 的全新环境默认 `chat`。
 
 ### 控制台前端结构（改 UI 前先读）
 
@@ -862,7 +862,7 @@ preset、人格卡、每轮唤醒提示里**都没有提过这件事**，模型�
 |---|---|---|
 | `buildWakePromptV2` 的 base | 人格卡在聊天模式**不是每轮注入**（提示里只给角色名，正文要 `qq_get_prompt` 才读到），所以每轮提示必须自带 | 改完重启桥接即刻生效 |
 | `roles/小鲸鱼.md` | `qq_get_prompt` 读到的人格卡，保证两处口径一致 | 即刻 |
-| `dsh/agent-presets/qq-chat-v2/agent.cordis.yml` | 系统提示词，最稳的一层 | 需跑 `scripts/setup-dsh.mjs` 同步（DSH 0.2+ 写 profile 插件行并热加载，0.1.x 复制目录；会改组成戳 → 现有 QQ 会话被重建） |
+| `dsh/agent-presets/qq-chat/agent.cordis.yml` | 系统提示词，最稳的一层 | 需跑 `scripts/setup-dsh.mjs` 同步（DSH 0.2+ 写 profile 插件行并热加载，0.1.x 复制目录；会改组成戳 → 现有 QQ 会话被重建） |
 
 **边界**（写在提示里，别指望模型自己把握）：对等还击不主动升级；只回击挑事的人、不牵连无关群友；
 不拿家人/地域/性别/身体/疾病当武器；不用性侮辱与「操你妈」这类极端脏字（「滚 / 傻逼 / 神经病 / 你tm」这一档）；

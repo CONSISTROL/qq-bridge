@@ -36,13 +36,13 @@ const c = calls[0];
 const ok = c
   && c.ns === 'qq-mode'
   && typeof c.options?.base === 'object'
-  && c.options.base.mode === 'reserved2';
+  && c.options.base.mode === 'chat';
 console.log('\n命名空间注册形态与新 API 一致:', ok ? 'YES' : 'NO');
 
 // schema 解析结果
 const schema = mod.QqModeSchema;
 console.log('schema default =', JSON.stringify(schema({})));
-console.log('schema with ownerQQ =', JSON.stringify(schema({ mode: 'reserved2', ownerQQ: '123456789' })));
+console.log('schema with ownerQQ =', JSON.stringify(schema({ mode: 'chat', ownerQQ: '123456789' })));
 try {
   schema({ mode: 'bogus' });
   console.log('❌ 非法 mode 未被拒绝');

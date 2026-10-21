@@ -29,7 +29,7 @@ let oldRejected = false;
 try { persona.Config({ text: 'x' }); } catch { oldRejected = true; }
 check('dsh-persona 仍拒绝旧字段 text（故障前提成立）', oldRejected);
 
-for (const p of ['qq-chat', 'qq-chat-v2']) {
+for (const p of ['qq-chat', 'qq-chat']) {
   const f = path.join(ROOT, 'dsh/agent-presets', p, 'agent.cordis.yml');
   const row = yaml.load(fs.readFileSync(f, 'utf8')).find((r) => r.id === 'persona');
   let schemaOk = false;
@@ -43,7 +43,7 @@ for (const p of ['qq-chat', 'qq-chat-v2']) {
 // 工作区、以及 setup-dsh.mjs 写出的副本，都可能是 CRLF。换行不属于 YAML 语义，
 // 字节比较会在同一内容的两种换行之间误报（实测：一侧 CRLF 一侧 LF，归一化后同哈希）。
 const norm = (s) => s.replace(/\r\n/g, '\n');
-for (const p of ['qq-chat', 'qq-chat-v2']) {
+for (const p of ['qq-chat', 'qq-chat']) {
   const repo = norm(fs.readFileSync(path.join(ROOT, 'dsh/agent-presets', p, 'agent.cordis.yml'), 'utf8'));
   const inst = path.join(DSH_HOME, '.agent-presets', p, 'agent.cordis.yml');
   const same = fs.existsSync(inst) && norm(fs.readFileSync(inst, 'utf8')) === repo;
@@ -92,7 +92,7 @@ check('bridge.js 含 preset 清单/默认 preset 解析', bridgeSrc.includes('re
 check('preset 解析无 strict 开关（一律 fail-closed）', /function resolvePresetName\(name\)/.test(bridgeCode));
 check('缺少 preset 时拒绝建会话（fail-closed）', /if \(!preset\)/.test(bridgeCode));
 check('不再重试「无 preset」建会话', /for \(const withPreset of \[true\]\)/.test(bridgeCode));
-check('运行模式固定为 reserved2', /const VALID_MODES = \['reserved2'\]/.test(bridgeCode));
+check('运行模式固定为 chat', /const VALID_MODES = \['chat'\]/.test(bridgeCode));
 
 // ── 3b. 版本身份一致性 ──────────────────────────────────────────────────────
 // v0.1.5 曾带着自称 0.1.2-alpha.1 的 package-lock.json 发布出去（package.json 却是
@@ -139,7 +139,7 @@ const dm = st.value?.namespaces?.find((n) => n.ns === 'agent-default-model');
 check('DSH 全局默认模型 = deepseek-flash', dm?.value?.model === 'deepseek-flash', `当前 ${dm?.value?.model}`);
 const ap = await rpc('agentPresets/list', {});
 const presetIds = ap.value?.presets?.map((p) => p.id) ?? [];
-check('agentPresets/list 含 qq-chat 与 qq-chat-v2', presetIds.includes('qq-chat') && presetIds.includes('qq-chat-v2'), presetIds.join(', '));
+check('agentPresets/list 含 qq-chat 与 qq-chat', presetIds.includes('qq-chat') && presetIds.includes('qq-chat'), presetIds.join(', '));
 // closed-agent 删除后已没有「回落 DSH 默认 preset」的路径，这里只校验命名空间存在。
 const apNs = st.value?.namespaces?.find((n) => n.ns === 'agent-presets');
 check('agent-presets 命名空间可读', Boolean(apNs), apNs ? '' : '命名空间缺失');

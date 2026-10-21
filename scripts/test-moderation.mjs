@@ -4,7 +4,7 @@
 //   ① 纯函数层：默认词表为空（ACG 标签不被拦）、显式词表才拦、regex/substring、
 //      extraPatterns 追加、显式空数组 = 不拦、冷却、回复文本；
 //   ② 策略层（改 prompt 防回归）：`萝莉`/`合法萝莉`/`loli` 这类 ACG 体裁词**不能**出现在
-//      默认词表里；preset（qq-chat-v2）与桥接每轮注入的提示词里**不能**再出现
+//      默认词表里；preset（qq-chat）与桥接每轮注入的提示词里**不能**再出现
 //      「这套就是不碰 / 不搜不发 / 未成年色情」之类的 AI 内容审查话术。
 //
 //   node scripts/test-moderation.mjs
@@ -77,7 +77,7 @@ for (const tag of ACG_TAGS) {
   ok(!inDefault, `默认词表不含 ${tag}`);
 }
 
-const presetPath = path.join(ROOT, 'dsh/agent-presets/qq-chat-v2/agent.cordis.yml');
+const presetPath = path.join(ROOT, 'dsh/agent-presets/qq-chat/agent.cordis.yml');
 const preset = fs.readFileSync(presetPath, 'utf8');
 for (const banned of ['这套就是不碰', '不搜、不发', '【硬底线】']) {
   ok(!preset.includes(banned), `preset 不再有审查话术：「${banned}」`);

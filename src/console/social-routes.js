@@ -1,4 +1,4 @@
-// 聊天模式（reserved2）相关路由：配置、唤醒、发送、资料、主题探索、工作车道。
+// 聊天模式（chat）相关路由：配置、唤醒、发送、资料、主题探索、工作车道。
 //
 // 从 bridge.js 抽出的控制台路由。依赖由工厂函数注入：
 // 稳定的函数/常量按值传入；会被重新赋值的绑定用 getter/setter（模块内以 deps.xxx 访问）。
@@ -982,7 +982,7 @@ export function createSocialRoutes(deps) {
         time: new Date().toISOString(),
         role: {
           name: roleState.role ?? null,
-          hint: deps.currentMode === 'reserved2' ? currentRoleHintV2() : currentRoleHint(),
+          hint: deps.currentMode === 'chat' ? currentRoleHintV2() : currentRoleHint(),
         },
         recommended:
           cfg.socialV2?.provideRecommendations === false
@@ -1158,7 +1158,7 @@ export function createSocialRoutes(deps) {
       markReadCalledKeys.add(key);
       saveSocialV2State();
       log(
-        `[reserved2] 控制台/工具标记 ${key} 未读已读：${markedCount} 条${unseen.length ? `，保留 ${unseen.length} 条没看过的` : ''}，已确认下一次唤醒配置`,
+        `[chat] 控制台/工具标记 ${key} 未读已读：${markedCount} 条${unseen.length ? `，保留 ${unseen.length} 条没看过的` : ''}，已确认下一次唤醒配置`,
       );
       sendJson({
         ok: true,
@@ -1481,7 +1481,7 @@ export function createSocialRoutes(deps) {
       cancelReplyCheckV2(key); // AI 已主动设置新的唤醒配置，取消回复检查
       setupSleepTimerV2(key);
       log(
-        `[reserved2] 更新唤醒配置 ${key}: mode=${next.mode} infinite=${next.infinite} sleepUntil=${next.sleepUntil ?? 'null'}`,
+        `[chat] 更新唤醒配置 ${key}: mode=${next.mode} infinite=${next.infinite} sleepUntil=${next.sleepUntil ?? 'null'}`,
       );
       sendJson({ ok: true, key, wakeConfig: next, wakeSafety: computeWakeSafetyV2(next) });
       return;
@@ -1541,8 +1541,8 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -1712,7 +1712,7 @@ export function createSocialRoutes(deps) {
         );
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
+      if (deps.currentMode !== 'chat') {
         sendJson({ ok: false, error: '工作车道仅在聊天模式下可用' }, 403);
         return;
       }
@@ -1793,12 +1793,12 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_send_burst' }, 403);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (!req.headers['x-agent-token']) {
-        sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403);
+        sendJson({ ok: false, error: 'chat 模式发送必须携带 agent token' }, 403);
         return;
       }
       const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -1859,8 +1859,8 @@ export function createSocialRoutes(deps) {
         st.lastActionAt = now;
         st.wakeConfig.noActionCount = 0;
         saveSocialV2State();
-        log(`[reserved2] 工具分条发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
-        appendActivity(`${key} [reserved2] 工具分条发送：成功 ${sentMessages.length}/${messages.length} 条`);
+        log(`[chat] 工具分条发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
+        appendActivity(`${key} [chat] 工具分条发送：成功 ${sentMessages.length}/${messages.length} 条`);
         if (sentMessages.length > 0) scheduleReplyCheckV2(key);
         // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
         // 现在阈值可配，且文案明确把正经事排除在外。
@@ -1883,7 +1883,7 @@ export function createSocialRoutes(deps) {
       } catch (error) {
         if (error?.sent?.length) {
           recordSentMessagesV2(key, error.sent);
-          log(`[reserved2] 工具分条发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
+          log(`[chat] 工具分条发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
         }
         // 失败/未发出的消息回滚预占的发送额度，避免假 429。
         const sentCount = Array.isArray(error?.sent) ? error.sent.length : 0;
@@ -1974,12 +1974,12 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_send_message' }, 403);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (!req.headers['x-agent-token']) {
-        sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403);
+        sendJson({ ok: false, error: 'chat 模式发送必须携带 agent token' }, 403);
         return;
       }
       const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -2075,8 +2075,8 @@ export function createSocialRoutes(deps) {
         st.lastActionAt = now;
         st.wakeConfig.noActionCount = 0;
         saveSocialV2State();
-        log(`[reserved2] 工具统一发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
-        appendActivity(`${key} [reserved2] 工具统一发送：成功 ${sentMessages.length}/${messages.length} 条`);
+        log(`[chat] 工具统一发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
+        appendActivity(`${key} [chat] 工具统一发送：成功 ${sentMessages.length}/${messages.length} 条`);
         if (sentMessages.length > 0) scheduleReplyCheckV2(key);
         // 原来硬编码 >=3 条就劝阻，等于否定了「复杂任务可以长」。
         // 现在阈值可配，且文案明确把正经事排除在外。
@@ -2101,7 +2101,7 @@ export function createSocialRoutes(deps) {
       } catch (error) {
         if (error?.sent?.length) {
           recordSentMessagesV2(key, error.sent);
-          log(`[reserved2] 工具统一发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
+          log(`[chat] 工具统一发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
         }
         // 失败/未发出的消息回滚预占的发送额度，避免假 429。
         const sentCount = Array.isArray(error?.sent) ? error.sent.length : 0;
@@ -2141,12 +2141,12 @@ export function createSocialRoutes(deps) {
         sendJson({ ok: false, error: 'key 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
         return;
       }
       if (!req.headers['x-agent-token']) {
-        sendJson({ ok: false, error: 'reserved2 模式发送拍一拍必须携带 agent token' }, 403);
+        sendJson({ ok: false, error: 'chat 模式发送拍一拍必须携带 agent token' }, 403);
         return;
       }
       if (!agentTokenOk(key, req.headers['x-agent-token'])) {
@@ -2240,14 +2240,14 @@ export function createSocialRoutes(deps) {
         st.preSleepWaitObservedAt = 0;
         st.preSleepWaitAccumMs = 0;
         saveSocialV2State();
-        log(`[reserved2] 工具拍一拍 ${key}${kind === 'group' ? ' -> ' + targetUserId : ''}`);
-        appendActivity(`${key} [reserved2] 工具拍一拍${kind === 'group' ? ' -> ' + targetUserId : ''}`);
+        log(`[chat] 工具拍一拍 ${key}${kind === 'group' ? ' -> ' + targetUserId : ''}`);
+        appendActivity(`${key} [chat] 工具拍一拍${kind === 'group' ? ' -> ' + targetUserId : ''}`);
         sendJson({ ok: true, key, kind, targetUserId: targetUserId || String(id) });
       } catch (error) {
         const idx = st.sendTimes.indexOf(now);
         if (idx >= 0) st.sendTimes.splice(idx, 1);
         if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-        log(`[reserved2] 工具拍一拍失败 ${key}:`, error?.message ?? error);
+        log(`[chat] 工具拍一拍失败 ${key}:`, error?.message ?? error);
         sendJson({ ok: false, error: `拍一拍失败：${error?.message ?? error}` }, 500);
       }
       return;

@@ -25,7 +25,7 @@ export function resolveDshHome(env = process.env) {
 /**
  * 计算一个 preset 的组成戳（短 sha1）。
  *
- * @param {string} presetId preset id（如 `qq-chat-v2`）
+ * @param {string} presetId preset id（如 `qq-chat`）
  * @param {{dshHome?:string, files?:string[]}} [opts]
  * @returns {string} 16 位十六进制；**读不到任何组成文件时返回 ''**（表示「无法判断」，
  *   调用方据此跳过陈旧判定，避免在 preset 未安装时反复重建会话）。

@@ -45,7 +45,7 @@ check('新配置 {prefix, suffix} 通过（含 {{cwd}} 模板）', () => {
 const YAML = await import(pathToFileURL(path.join(DSH_MODULES, 'js-yaml/index.js')).href);
 const yaml = YAML.default ?? YAML;
 
-for (const preset of ['qq-chat', 'qq-chat-v2']) {
+for (const preset of ['qq-chat', 'qq-chat']) {
   const file = path.resolve(process.cwd(), 'dsh/agent-presets', preset, 'agent.cordis.yml');
   console.log(`\n${preset} (${path.relative(process.cwd(), file)}):`);
   const doc = yaml.load(fs.readFileSync(file, 'utf8'));

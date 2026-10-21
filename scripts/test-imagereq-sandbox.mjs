@@ -1,4 +1,4 @@
-// ⚠️ 诊断脚本：会创建一个挂了 qq-chat-v2 预设的真实 DSH 会话，并按唤醒格式喂一句话。
+// ⚠️ 诊断脚本：会创建一个挂了 qq-chat 预设的真实 DSH 会话，并按唤醒格式喂一句话。
 // 模型如果决定发言/发图，会**真的**通过桥接发到目标会话（默认 private:10001），
 // 所以别拿群号跑。用途：改完预设/工具描述后，验证模型的真实行为（而不是靠猜）。
 //
@@ -20,7 +20,7 @@ const api = new NodeApiClient(dsh.baseUrl || 'http://127.0.0.1:3080', undefined,
 });
 
 const ws = unwrap(await api.workspace.create({ path: path.join(ROOT, 'state', 'agents') }), 'workspace.create');
-const created = unwrap(await api.sessions.create({ workspaceId: ws.workspace.workspaceId, agentPreset: 'qq-chat-v2' }), 'session.create');
+const created = unwrap(await api.sessions.create({ workspaceId: ws.workspace.workspaceId, agentPreset: 'qq-chat' }), 'session.create');
 const sessionId = created.sessionId;
 console.log('沙盒 sessionId =', sessionId);
 

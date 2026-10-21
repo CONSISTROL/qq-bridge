@@ -1,4 +1,4 @@
-// 二代等待逻辑的「实时」端到端测试：真建一个 qq-chat-v2 会话并向 DSH 提问，
+// 二代等待逻辑的「实时」端到端测试：真建一个 qq-chat 会话并向 DSH 提问，
 // 断言 qq_wait_for_messages 出现在该 preset 的可用工具面里。需要 DSH 正在运行。
 // （纯逻辑单测见 scripts/test-v2-wait.mjs，两者不重复。）
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ async function main() {
   const api = new NodeApiClient('http://127.0.0.1:3080', undefined, auth);
   const cwd = path.join(ROOT, 'state', 'self-test-v2-wait');
   fs.mkdirSync(cwd, { recursive: true });
-  const created = unwrap(await api.sessions.create({ cwd, agentPreset: 'qq-chat-v2' }), 'session.create');
+  const created = unwrap(await api.sessions.create({ cwd, agentPreset: 'qq-chat' }), 'session.create');
   const sessionId = created.sessionId;
   console.log('SESSION_CREATED', sessionId);
 

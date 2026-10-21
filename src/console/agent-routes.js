@@ -164,10 +164,10 @@ export function createAgentRoutes(deps) {
         message,
         time: new Date().toISOString(),
       });
-      log(`[reserved2] AI 反馈 (${key}) [${level}]: ${message.slice(0, 80)}`);
-      appendActivity(`${key} [reserved2] AI 反馈 [${level}]：${message.slice(0, 80)}`);
+      log(`[chat] AI 反馈 (${key}) [${level}]: ${message.slice(0, 80)}`);
+      appendActivity(`${key} [chat] AI 反馈 [${level}]：${message.slice(0, 80)}`);
       if (cfg.socialV2?.feedback?.notifyOwnerOnError && level === 'error' && cfg.ownerQQ) {
-        log(`[reserved2] 错误级反馈，可通知 owner ${cfg.ownerQQ}（当前仅记录日志）`);
+        log(`[chat] 错误级反馈，可通知 owner ${cfg.ownerQQ}（当前仅记录日志）`);
       }
       sendJson({ ok: true, key, level, message });
       return;
@@ -286,12 +286,12 @@ export function createAgentRoutes(deps) {
         sendJson({ ok: false, error: 'id 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '合并转发查看仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '合并转发查看仅 chat 模式可用' }, 403);
         return;
       }
       if (!agentToken) {
-        sendJson({ ok: false, error: 'reserved2 模式读取合并转发必须携带 agent token' }, 403);
+        sendJson({ ok: false, error: 'chat 模式读取合并转发必须携带 agent token' }, 403);
         return;
       }
       if (!agentTokenOk(key, agentToken)) {
@@ -439,8 +439,8 @@ export function createAgentRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_get_forward_msg' }, 403);
         return;
       }
-      if (deps.currentMode !== 'reserved2') {
-        sendJson({ ok: false, error: '转发媒体读取仅 reserved2 模式可用' }, 403);
+      if (deps.currentMode !== 'chat') {
+        sendJson({ ok: false, error: '转发媒体读取仅 chat 模式可用' }, 403);
         return;
       }
       const fwdCfg = cfg.socialV2?.forward ?? {};
@@ -983,8 +983,8 @@ export function createAgentRoutes(deps) {
         return;
       }
       if (req.headers['x-agent-token']) {
-        if (deps.currentMode !== 'reserved2') {
-          sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+        if (deps.currentMode !== 'chat') {
+          sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
           return;
         }
         if (!agentTokenOk(key, req.headers['x-agent-token'])) {
@@ -999,9 +999,9 @@ export function createAgentRoutes(deps) {
           sendJson({ ok: false, error: 'AI 已暂停，不能改群名片' }, 403);
           return;
         }
-      } else if (deps.currentMode === 'reserved2') {
-        // reserved2 下不允许「无 token 的管理端」绕过：控制台请走备注库或切模式后再改。
-        sendJson({ ok: false, error: 'reserved2 模式下改群名片必须携带 agent token' }, 403);
+      } else if (deps.currentMode === 'chat') {
+        // chat 下不允许「无 token 的管理端」绕过：控制台请走备注库或切模式后再改。
+        sendJson({ ok: false, error: 'chat 模式下改群名片必须携带 agent token' }, 403);
         return;
       }
       const groupId = Number(key.slice(6));
@@ -1069,8 +1069,8 @@ export function createAgentRoutes(deps) {
         sendJson({ ok: false, error: 'replyToMessageId 不能为空' }, 400);
         return;
       }
-      if (deps.currentMode === 'reserved2' && !token) {
-        sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403);
+      if (deps.currentMode === 'chat' && !token) {
+        sendJson({ ok: false, error: 'chat 模式发送必须携带 agent token' }, 403);
         return;
       }
       if (token && !agentTokenOk(key, token)) {

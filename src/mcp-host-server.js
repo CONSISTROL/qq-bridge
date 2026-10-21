@@ -95,7 +95,7 @@ async function readBridgeStatus() {
   }
 }
 
-// SnowLuma 进程控制与 mc_control 同门槛（allowProcessControl + reserved2 + 仅 owner 私聊 + 无新鲜群活动）。
+// SnowLuma 进程控制与 mc_control 同门槛（allowProcessControl + chat + 仅 owner 私聊 + 无新鲜群活动）。
 async function bridgeModeAllowsProcessControl() {
   const decision = await hostControlDecision();
   return decision.allowed;
@@ -104,15 +104,15 @@ async function bridgeModeAllowsProcessControl() {
 /**
  * MC 控制（mc_control）的门禁。
  *
- * 开关的用途就是「在 QQ 里让机器人开播/上号」，所以门禁按 reserved2 的实际用法设计。
+ * 开关的用途就是「在 QQ 里让机器人开播/上号」，所以门禁按 chat 的实际用法设计。
  * 判定条件（全部满足才放行，任何一步读不到都 fail-closed）：
  *   ① config.json 的 snowluma.allowProcessControl=true —— 显式、唯一的配置开关
- *   ② bridge 处于 reserved2，且 allow.private **恰好只白名单 owner**
+ *   ② bridge 处于 chat，且 allow.private **恰好只白名单 owner**
  *   ③ 群聊活动守卫：最近 GROUP_ACTIVITY_GUARD_MS 内**有群会话在活动**就拒绝
  *
  * ④ 的由来（重要，别删）：MCP 协议层拿不到「这次调用来自哪个 QQ 会话」
  * （DSH 的 mcp-client 不透传会话信息，handler 的 extra 里也没有），
- * 而 qq-chat-v2 preset 的白名单前缀包含 mcp__snowluma-host__ ——
+ * 而 qq-chat preset 的白名单前缀包含 mcp__snowluma-host__ ——
  * 也就是**群会话的 agent 也能看到 mc_control**。于是只能靠时序启发式：
  * QQ 驱动的控制必然紧跟在一条群消息之后（桥接收到消息 → 建/唤 agent → 调工具），
  * 而控制台/私聊发起的调用前面不会有新鲜的群活动。
@@ -143,12 +143,12 @@ export function recentGroupActivityAgeMs(activityText) {
  *
  * 判定条件（全部满足才放行，任何一步读不到都 fail-closed）：
  *   ① config.json 的 snowluma.allowProcessControl=true —— 显式、唯一的配置开关
- *   ② bridge 处于 reserved2，且 allow.private **恰好只白名单 owner**
+ *   ② bridge 处于 chat，且 allow.private **恰好只白名单 owner**
  *   ③ 群聊活动守卫：最近 GROUP_ACTIVITY_GUARD_MS 内**有群会话在活动**就拒绝
  *
  * ④ 的由来（重要，别删）：MCP 协议层拿不到「这次调用来自哪个 QQ 会话」
  * （DSH 的 mcp-client 不透传会话信息，handler 的 extra 里也没有），
- * 而 qq-chat-v2 preset 的白名单前缀包含 mcp__snowluma-host__ ——
+ * 而 qq-chat preset 的白名单前缀包含 mcp__snowluma-host__ ——
  * 也就是**群会话的 agent 也能看到 mc_control**。于是只能靠时序启发式：
  * QQ 驱动的控制必然紧跟在一条群消息之后（桥接收到消息 → 建/唤 agent → 调工具），
  * 而控制台/私聊发起的调用前面不会有新鲜的群活动。
@@ -164,19 +164,19 @@ export async function hostControlDecision() {
     return { allowed: false, reason: `读不到桥接控制台状态（http://127.0.0.1:${getConsolePort()}/api/status），门禁 fail-closed` };
   }
   const mode = String(st.mode ?? '');
-  if (mode !== 'reserved2') {
-    return { allowed: false, reason: `当前模式是 ${mode || '(未知)'}，只有 reserved2（且私聊白名单仅 owner）允许控制` };
+  if (mode !== 'chat') {
+    return { allowed: false, reason: `当前模式是 ${mode || '(未知)'}，只有 chat（且私聊白名单仅 owner）允许控制` };
   }
   const ownerQQ = String(st.ownerQQ ?? '');
   const priv = Array.isArray(st.allowPrivate) ? st.allowPrivate.map(String) : [];
   if (!(ownerQQ !== '' && priv.length > 0 && priv.every((q) => q === ownerQQ))) {
-    return { allowed: false, reason: `reserved2 的私聊白名单不是「仅 owner」（allow.private=${JSON.stringify(priv)}，ownerQQ=${ownerQQ || '(未设置)'}）` };
+    return { allowed: false, reason: `chat 的私聊白名单不是「仅 owner」（allow.private=${JSON.stringify(priv)}，ownerQQ=${ownerQQ || '(未设置)'}）` };
   }
   const age = recentGroupActivityAgeMs(st.activity);
   if (age < GROUP_ACTIVITY_GUARD_MS) {
     return { allowed: false, reason: `最近 ${Math.round(age / 1000)}s 内有群会话在活动，为避免群友诱导 agent 操作服务端/直播而拒绝；稍后重试即可` };
   }
-  return { allowed: true, reason: 'reserved2 + 仅 owner 私聊 + 无新鲜群活动' };
+  return { allowed: true, reason: 'chat + 仅 owner 私聊 + 无新鲜群活动' };
 }
 
 async function gatewayInfo() {
@@ -238,7 +238,7 @@ server.tool(
   async () => {
     const hc = getHostConfig();
     const info = await gatewayInfo();
-    // 只有显式开启进程控制且通过 reserved2 门禁时，才暴露本机路径/PID 这类敏感信息。
+    // 只有显式开启进程控制且通过 chat 门禁时，才暴露本机路径/PID 这类敏感信息。
     const admin = hc.allowProcessControl && await bridgeModeAllowsProcessControl();
     const extra = admin ? { launcher: hc.launcher, homeDir: hc.homeDir, processPids: findSnowLumaPids() } : {};
     return {
@@ -249,7 +249,7 @@ server.tool(
 
 // ===== Minecraft bot =====
 // 只读状态随时可查；投递游戏内指令属于"会改变外部世界"的操作，
-// 与进程控制同门槛：config.json 的 snowluma.allowProcessControl + reserved2 门禁。
+// 与进程控制同门槛：config.json 的 snowluma.allowProcessControl + chat 门禁。
 server.tool(
   'mc_status',
   '查看你自己在 Minecraft 里的实时状态 —— 那个游戏角色就是你本人，不是别人也不是小号。含：是否在线、位置、血量、饥饿、已加载区块、背包、在线玩家，以及服务端进程/端口/模式/难度、里程碑进度、直播地址。只读。',
@@ -278,7 +278,7 @@ server.tool(
       return { content: [{ type: 'text', text: '拒绝：未开启进程控制（config.json 需设置 snowluma.allowProcessControl=true）。' }], isError: true };
     }
     if (!(await bridgeModeAllowsProcessControl())) {
-      return { content: [{ type: 'text', text: '拒绝：投递指令需要 reserved2 + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
+      return { content: [{ type: 'text', text: '拒绝：投递指令需要 chat + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
     }
     const r = postCommand(cmd);
     return { content: [{ type: 'text', text: JSON.stringify(r) }], isError: !r.ok };
@@ -309,7 +309,7 @@ if (getHostConfig().allowProcessControl) {
         return { content: [{ type: 'text', text: '拒绝：进程控制未开启（config.json 需设置 snowluma.allowProcessControl=true）。' }], isError: true };
       }
       if (!(await bridgeModeAllowsProcessControl())) {
-        return { content: [{ type: 'text', text: '拒绝：进程控制需要 reserved2 + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
+        return { content: [{ type: 'text', text: '拒绝：进程控制需要 chat + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
       }
       const before = await gatewayInfo();
       if (before.reachable && before.online) {
@@ -344,7 +344,7 @@ if (getHostConfig().allowProcessControl) {
         return { content: [{ type: 'text', text: '拒绝：进程控制未开启（config.json 需设置 snowluma.allowProcessControl=true）。' }], isError: true };
       }
       if (!(await bridgeModeAllowsProcessControl())) {
-        return { content: [{ type: 'text', text: '拒绝：进程控制需要 reserved2 + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
+        return { content: [{ type: 'text', text: '拒绝：进程控制需要 chat + 私聊白名单仅 owner + 无新鲜群活动的门禁放行。' }], isError: true };
       }
       const pids = findSnowLumaPids();
       if (pids.length === 0) {

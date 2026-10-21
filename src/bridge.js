@@ -2661,7 +2661,7 @@ async function main() {
     if (q) { q.running = false; q.queue.length = 0; }
     if (st.pendingWakeTimer) { clearTimeout(st.pendingWakeTimer); st.pendingWakeTimer = null; }
     st.pendingSince = 0;
-    log(`[reserved2] ⚠ 会话繁忙超时，强制清空忙标记 ${key}（${reason}；清掉：${cleared.join('+') || '无'}）`);
+    log(`[chat] ⚠ 会话繁忙超时，强制清空忙标记 ${key}（${reason}；清掉：${cleared.join('+') || '无'}）`);
   }
 
   /**
@@ -2688,7 +2688,7 @@ async function main() {
         try {
           idle = await dshSessionIdleNow(state.sessions[key]);
         } catch (error) {
-          log(`[reserved2] DSH 空闲探针失败（本次不清理忙标记，按繁忙暂存）：${error?.message ?? error}`);
+          log(`[chat] DSH 空闲探针失败（本次不清理忙标记，按繁忙暂存）：${error?.message ?? error}`);
           return false;
         }
       }
@@ -2699,29 +2699,29 @@ async function main() {
       if (Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons.length = 0;
       st.pendingSince = 0;
       saveSocialV2State();
-      log(`[reserved2] 检测到残留忙标记（${list.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
-      void sendWakePromptV2(key, reason).catch((error) => log(`[reserved2] 清标记后投递唤醒失败 ${key}: ${error?.message ?? error}`));
+      log(`[chat] 检测到残留忙标记（${list.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
+      void sendWakePromptV2(key, reason).catch((error) => log(`[chat] 清标记后投递唤醒失败 ${key}: ${error?.message ?? error}`));
       return true;
     } catch (error) {
-      log(`[reserved2] 忙标记自愈探针异常（本次不清理）：${error?.message ?? error}`);
+      log(`[chat] 忙标记自愈探针异常（本次不清理）：${error?.message ?? error}`);
       return false;
     }
   }
 
   function startBusyWatchdogV2() {
     const timeoutMs = Math.max(0, Number(cfg.socialV2?.busyRecoveryMs ?? 480000));
-    if (!timeoutMs) { log('[reserved2] 忙标记看门狗已禁用（busyRecoveryMs=0）'); return; }
+    if (!timeoutMs) { log('[chat] 忙标记看门狗已禁用（busyRecoveryMs=0）'); return; }
     busyWatchdogTimer = setInterval(() => {
       const now = Date.now();
       for (const [key, st] of socialV2.conversations.entries()) {
         const since = Number(st.pendingSince) || 0;
         if (!since || now - since < timeoutMs) continue;
         forceClearBusyV2(key, `busy ${Math.round((now - since) / 1000)}s`);
-        void sendWakePromptV2(key, 'busyRecovery').catch((e) => log(`[reserved2] 补投唤醒失败 ${key}: ${e?.message ?? e}`));
+        void sendWakePromptV2(key, 'busyRecovery').catch((e) => log(`[chat] 补投唤醒失败 ${key}: ${e?.message ?? e}`));
       }
     }, 60000);
     busyWatchdogTimer.unref?.();
-    log(`[reserved2] 忙标记看门狗已启动（${Math.round(timeoutMs / 60000)} 分钟）`);
+    log(`[chat] 忙标记看门狗已启动（${Math.round(timeoutMs / 60000)} 分钟）`);
   }
 
   function saveSlangStore() {
@@ -3503,7 +3503,7 @@ async function main() {
    */
   async function deliverWorkTask(key, task, options = {}) {
     if (!workLaneEnabled()) throw new Error('工作车道未启用（config.json 的 socialV2.work.enabled === false）');
-    if (currentMode !== 'reserved2') throw new Error('工作车道只在聊天模式（reserved2）下可用');
+    if (currentMode !== 'chat') throw new Error('工作车道只在聊天模式（chat）下可用');
     const text = String(task ?? '').trim();
     if (!text) throw new Error('task 不能为空');
     if (text.length > 4000) throw new Error(`task 太长（${text.length} 字，上限 4000），把任务收敛成一句话，细节放进 note`);
@@ -4199,10 +4199,10 @@ async function main() {
   });
   const collectors = new Map(); // sessionId -> turn collector
   const sendToolSucceededSessions = new Set(); // sessionId：当前 turn 内 MCP 发送类工具至少成功一次
-  const v2TurnStartAt = new Map(); // sessionId -> timestamp：reserved2 turn 开始时间，用于判断是否“无行动”
+  const v2TurnStartAt = new Map(); // sessionId -> timestamp：chat turn 开始时间，用于判断是否“无行动”
   const toolCallNames = new Map(); // sessionId -> Map<callId, toolName>：用于结果日志关联工具名
   const pendingSendToolCalls = new Map(); // sessionId -> Set<callId>：等待 tool/result 的发送类调用
-  // reserved2 防“忘记设置唤醒条件”：key -> 当前是否等待 AI 处理唤醒回合 / 本回合已更新唤醒配置 / 连续未设置次数
+  // chat 防“忘记设置唤醒条件”：key -> 当前是否等待 AI 处理唤醒回合 / 本回合已更新唤醒配置 / 连续未设置次数
   const pendingWakeKeys = new Set();
   const activeWaits = new Set(); // key：正在执行 qq_wait_for_messages 长轮询的会话，防止同一会话并发挂起
   const pendingWakeLeaseTimers = new Map(); // key -> timeout：防止 accepted 但无 turn/end 的唤醒把 key 永久标记为 busy
@@ -4251,8 +4251,8 @@ async function main() {
   // DSH 重启期间收到的 QQ 消息先入队（不丢），DSH 恢复后按序补投。
   let dshReady = false;
   let dshCheckStarted = false;
-  // 唯一运行模式：reserved2（聊天模式）。文本不自动转发，AI 通过工具自主收发。
-  let currentMode = 'reserved2';
+  // 唯一运行模式：chat（聊天模式）。文本不自动转发，AI 通过工具自主收发。
+  let currentMode = 'chat';
   // DSH 侧真实的 preset 清单与默认 preset。
   let dshPresetIds = [];        // 当前 DSH 可用的 preset id 列表（agentPresets/list）
   let dshDefaultPreset = '';    // DSH settings `agent-presets.default`，取不到时用列表里的 isDefault
@@ -4278,11 +4278,11 @@ async function main() {
     setTimeout(() => { flushQueue(); }, 3000);
   };
 
-  // 运行模式已固定为 reserved2；保留这个函数供启动与兜底路径调用。
-  const VALID_MODES = ['reserved2'];
-  /** 模式固定为 reserved2，不再读配置。 */
+  // 运行模式已固定为 chat；保留这个函数供启动与兜底路径调用。
+  const VALID_MODES = ['chat'];
+  /** 模式固定为 chat，不再读配置。 */
   function applyLocalMode() {
-    currentMode = 'reserved2';
+    currentMode = 'chat';
     return currentMode;
   }
 
@@ -4297,7 +4297,7 @@ async function main() {
       const ns = s.namespaces.find((n) => n.ns === 'qq-mode');
       // DSH 设置页也可配置管理员 QQ。⚠️ 只有**非空**值才覆盖 config.json：
       // 插件 schema 的默认值是空串，而 normalizeOwnerQQ('') 会返回 null，
-      // 直接赋值等于把 config.json 里的 ownerQQ 抹掉 ， 那会让 reserved2 的
+      // 直接赋值等于把 config.json 里的 ownerQQ 抹掉 ， 那会让 chat 的
       // 进程控制门禁（要求 ownerQQ 与私聊白名单一致）永久失败。
       const rawOwner = ns?.value?.ownerQQ;
       if (rawOwner !== undefined && rawOwner !== null && String(rawOwner).trim() !== '') {
@@ -4307,7 +4307,7 @@ async function main() {
           log(`DSH settings ownerQQ 无效，已忽略: ${error?.message ?? error}`);
         }
       }
-      currentMode = 'reserved2';
+      currentMode = 'chat';
       return;
     } catch {}
     applyLocalMode();
@@ -4563,15 +4563,15 @@ async function main() {
       reconcileSessionPolicies();
       if (!dshReady) {
         dshReady = true;
-        log('DSH 已就绪（模式: reserved2）');
-        if (currentMode === 'reserved2') {
-          // 首次确定模式为 reserved2 后再恢复持久化的有限睡眠定时器，
+        log('DSH 已就绪（模式: chat）');
+        if (currentMode === 'chat') {
+          // 首次确定模式为 chat 后再恢复持久化的有限睡眠定时器，
           // 避免在 initial chat 模式下设置定时器导致 timeout 唤醒被模式守卫吞掉。
           for (const key of socialV2.conversations.keys()) {
             setupSleepTimerV2(key);
             scheduleProactiveCheckV2(key);
           }
-          log('桥接模式已确定为 reserved2，恢复有限睡眠定时器');
+          log('桥接模式已确定为 chat，恢复有限睡眠定时器');
           // 重启期间被丢掉的一次唤醒：pendingWakeReasons 是「回合进行中收到消息、等回合结束再补投」
           // 的队列。它只在 turn/end 被消费，所以桥接恰好在回合中途重启，这条意图就永远不会被执行
           //，表现为「AI 明明在线却对那条消息毫无反应」。这里重启后主动补投一次。
@@ -4585,22 +4585,22 @@ async function main() {
             const queued = Array.isArray(st.pendingWakeReasons) ? st.pendingWakeReasons : [];
             if (!queued.length) {
               if (!Array.isArray(st.unread) || st.unread.length === 0) continue;
-              log(`[reserved2] 重启后发现未读没人管，主动唤醒 ${key}（未读 ${st.unread.length} 条）`);
+              log(`[chat] 重启后发现未读没人管，主动唤醒 ${key}（未读 ${st.unread.length} 条）`);
               setTimeout(() => {
-                if (socialV2.paused || currentMode !== 'reserved2') return;
+                if (socialV2.paused || currentMode !== 'chat') return;
                 void sendWakePromptV2(key, 'unreadRecovery')
-                  .catch((error) => log(`[reserved2] 未读补唤醒失败 ${key}：${error?.message ?? error}`));
+                  .catch((error) => log(`[chat] 未读补唤醒失败 ${key}：${error?.message ?? error}`));
               }, 3000).unref?.();
               continue;
             }
             const item = queued.shift();
             const reason = item && typeof item === 'object' ? item.reason : item;
             saveSocialV2State();
-            log(`[reserved2] 重启后补投积压唤醒 ${key}（${reason}）`);
+            log(`[chat] 重启后补投积压唤醒 ${key}（${reason}）`);
             setTimeout(() => {
-              if (socialV2.paused || currentMode !== 'reserved2') return;
+              if (socialV2.paused || currentMode !== 'chat') return;
               void sendWakePromptV2(key, reason || 'restartRecovery')
-                .catch((error) => log(`[reserved2] 重启补投唤醒失败 ${key}：${error?.message ?? error}`));
+                .catch((error) => log(`[chat] 重启补投唤醒失败 ${key}：${error?.message ?? error}`));
             }, 3000).unref?.();
           }
         }
@@ -5033,9 +5033,9 @@ const agentTokenOk = (key, token) => {
           sendJson({ ok: false, error: '聊天模式已关闭，当前不允许执行 v2 工具' }, 403);
           return;
         }
-        // 模式隔离：带 agent token 的 v2 接口只允许在 reserved2 模式下使用
-        if (req.headers['x-agent-token'] && url.pathname.startsWith('/api/socialV2/') && currentMode !== 'reserved2') {
-          sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
+        // 模式隔离：带 agent token 的 v2 接口只允许在 chat 模式下使用
+        if (req.headers['x-agent-token'] && url.pathname.startsWith('/api/socialV2/') && currentMode !== 'chat') {
+          sendJson({ ok: false, error: '该接口仅 chat 模式可用' }, 403);
           return;
         }
         // 管理端专用 v2 接口：带 agent token 的请求一律拒绝，防止 MCP 工具越权访问控制台功能
@@ -5304,7 +5304,7 @@ const agentTokenOk = (key, token) => {
 
   // 按“有意的空格”拆分：真人不会主动用空格，因此 AI 回复里的空格视为分条信号。
   // 空格两侧只要有一侧是中文/中文标点，就按分条处理（包括中英文/数字之间的空格）。
-  // 注意：该逻辑只用于旧模式 reserved 的自动转发文本； reserved2 不走这里，必须显式用数组分条。
+  // 注意：该逻辑只用于旧模式 reserved 的自动转发文本； chat 不走这里，必须显式用数组分条。
   function splitByCjkSpaces(src) {
     const tokens = String(src ?? '').split(/\s+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length <= 1) return tokens;
@@ -6261,7 +6261,7 @@ const agentTokenOk = (key, token) => {
         + '但**不必每张都回图**，也别当成在跟你说话，更别硬凑反应；'
         + '③ **跟我无关**（别人的生活照、跟自己没关系的内容）→ 可以不回。'
       : '';
-    if (currentMode === 'reserved2') {
+    if (currentMode === 'chat') {
       return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}${imageNudge}。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
     }
     return `\n【图片/表情】本条消息包含 ${mediaList.length} 个${desc}（消息ID=${messageRef}）${stickerNote}${cardNote}${animNote}${imageNudge}。`;
@@ -6271,7 +6271,7 @@ const agentTokenOk = (key, token) => {
     const refStr = String(ref ?? '').trim();
     if (!refStr) return [];
     // ：消息对象上直接带 media（仅在确实存在会话状态时读取，避免为 gen1 创建影子状态）
-    if (currentMode === 'reserved2' || socialV2.conversations.has(key)) {
+    if (currentMode === 'chat' || socialV2.conversations.has(key)) {
       try {
         const st = getSocialV2State(key);
         if (st && Array.isArray(st.recentMessages)) {
@@ -6718,7 +6718,7 @@ const agentTokenOk = (key, token) => {
     exitingSessions: new Set()     // sessionId：当前正在等待“活跃超时退场”发言完成的 DSH 会话
   };
 
-  // ── 聊天模式（reserved2）运行时状态与唤醒配置 ────────────────────────
+  // ── 聊天模式（chat）运行时状态与唤醒配置 ────────────────────────
   const socialV2 = {
     conversations: new Map(), // key -> state
     paused: false, // 控制台可暂停整个AI 活动（停止唤醒/等待）
@@ -6883,7 +6883,7 @@ const agentTokenOk = (key, token) => {
       st.wakeConfig = defaultWakeConfigV2();
       if (!opts.skipSave) saveSocialV2State();
       if (key) setupSleepTimerV2(key);
-      log(`[reserved2] 唤醒配置无任何触发条件，已重置为默认配置，避免永眠`);
+      log(`[chat] 唤醒配置无任何触发条件，已重置为默认配置，避免永眠`);
     }
   }
 
@@ -7509,7 +7509,7 @@ const agentTokenOk = (key, token) => {
     imageLibraryCache = { at: 0, items: [] };
   }
 
-  // 模式固定为 reserved2，启动时同步确定一次，保证监听端口之前就已就位。
+  // 模式固定为 chat，启动时同步确定一次，保证监听端口之前就已就位。
   applyLocalMode();
 
   // 旧模式（reserved）已删除，v1 社交引擎永久关闭；
@@ -7764,7 +7764,7 @@ const agentTokenOk = (key, token) => {
       if (!opts.silent) await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
       return { ok: false, error: safeErrText };
     }
-    if (accepted.result.value.command?.text && !opts.silent && currentMode !== 'reserved2') {
+    if (accepted.result.value.command?.text && !opts.silent && currentMode !== 'chat') {
       if (opts.farewell) social.exitingSessions.delete(sessionId);
       await auditAndSend(key, mdToPlain(accepted.result.value.command.text));
     } else if (accepted.result.value.command?.text && opts.silent && opts.farewell) {
@@ -7805,7 +7805,7 @@ const agentTokenOk = (key, token) => {
       const e = new Error('该会话不在白名单内，且尚未创建'); e.statusCode = 403; throw e;
     }
     if (!dshReady) { const e = new Error('DSH 当前不可用，请稍后再试'); e.statusCode = 503; throw e; }
-    const isV2 = currentMode === 'reserved2';
+    const isV2 = currentMode === 'chat';
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     // 必须带会话令牌，否则 AI 调用任何 MCP 状态/发送工具都会被拒。
@@ -8399,7 +8399,7 @@ const agentTokenOk = (key, token) => {
     return false;
   }
 
-  // ── 聊天模式（reserved2）唤醒调度 ──────────────────────────────────
+  // ── 聊天模式（chat）唤醒调度 ──────────────────────────────────
   /**
    * 自己说过的话（含**回复**）的规范化 / 补种。
    * 为什么要补种：旧状态里没有 selfSaid 字段，不补的话新逻辑要等好几天才生效，
@@ -8911,7 +8911,7 @@ const agentTokenOk = (key, token) => {
   }
 
   /**
-   * 主动开口的「换个方向」段落（reserved2 与旧模式共用）。
+   * 主动开口的「换个方向」段落（chat 与旧模式共用）。
    *
    * 为什么需要它：主动冒泡最容易退化成复读。普通唤醒有群友的新消息当抓手，
    * 主动开口时模型唯一的题材来源就是【群聊上下文】+【进行中的话题】记忆，而这两者
@@ -9168,7 +9168,7 @@ const agentTokenOk = (key, token) => {
 
     const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages，判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
     // 这一条是拿真实事故换来的：模型写好了回复文本、以为已经发出去，转头去等待/潜水，
-    // 结果 QQ 那边一个字都没收到（reserved2 的文本不自动转发）。每轮都注入，且不依赖 preset，
+    // 结果 QQ 那边一个字都没收到（chat 的文本不自动转发）。每轮都注入，且不依赖 preset，
     // 免得挂载的是旧版 preset 时又回到「写了不回」。
     // 整蛊/钓鱼：对方要的不是答案，是看你一本正经地上钩。模型默认会老实地纠正/自证，
     // 那正好是对方想要的效果，所以这里明确给「可以不老实答、反手整回去」的许可 + 边界。
@@ -9336,7 +9336,7 @@ const agentTokenOk = (key, token) => {
       await sendWakePromptV2(key, item.reason);
       return true;
     } catch (error) {
-      log(`[reserved2] 补投暂存唤醒失败 ${key}（${item.reason}）:`, error?.message ?? error);
+      log(`[chat] 补投暂存唤醒失败 ${key}（${item.reason}）:`, error?.message ?? error);
       return false;
     }
   }
@@ -9369,9 +9369,9 @@ const agentTokenOk = (key, token) => {
 
   async function sendWakePromptV2(key, reason) {
     if (cfg.socialV2?.enabled === false) return;
-    if (currentMode !== 'reserved2' || socialV2.paused) return;
+    if (currentMode !== 'chat' || socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
-      log(`[reserved2] 跳过唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
+      log(`[chat] 跳过唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
       return;
     }
     const st = getSocialV2State(key);
@@ -9415,12 +9415,12 @@ const agentTokenOk = (key, token) => {
         try {
           staleByIdle = await dshSessionIdleNow(state.sessions[key]);
         } catch (error) {
-          log(`[reserved2] DSH 空闲探针失败（本次不清理忙标记，按繁忙暂存）：${error?.message ?? error}`);
+          log(`[chat] DSH 空闲探针失败（本次不清理忙标记，按繁忙暂存）：${error?.message ?? error}`);
         }
       }
       if (staleTurn || staleByIdle) {
         forceClearBusyV2(key, staleTurn ? `stale ${staleTurn}` : `DSH 会话空闲但忙标记残留（${busyMarkers.join('+')}）`);
-        log(`[reserved2] 检测到残留忙标记（${busyMarkers.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
+        log(`[chat] 检测到残留忙标记（${busyMarkers.join('+')}），已清空并直接投递本次唤醒 ${key}（${reason}）`);
       } else {
         if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
         const seq = st.lastUnreadSeq || 0;
@@ -9430,7 +9430,7 @@ const agentTokenOk = (key, token) => {
           if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
         }
         st.pendingSince = Number(st.pendingSince) || Date.now();
-        log(`[reserved2] 会话繁忙（${busyMarkers.join('+')}），暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
+        log(`[chat] 会话繁忙（${busyMarkers.join('+')}），暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
         saveSocialV2State();
         return;
       }
@@ -9456,7 +9456,7 @@ const agentTokenOk = (key, token) => {
       const waitMs = (maxPerMinute > 0 && recentMinute >= maxPerMinute)
         ? Math.max(5000, 60000 - (now - minuteOldest) + 500)
         : Math.max(5000, 3600000 - (now - hourOldest) + 500);
-      log(`[reserved2] 唤醒频率超限，暂存待补投 ${key}（${reason}@seq${seq}，约 ${Math.round(waitMs / 1000)}s 后重试）`);
+      log(`[chat] 唤醒频率超限，暂存待补投 ${key}（${reason}@seq${seq}，约 ${Math.round(waitMs / 1000)}s 后重试）`);
       saveSocialV2State();
       scheduleWakeRetryV2(key, waitMs);
       return;
@@ -9479,7 +9479,7 @@ const agentTokenOk = (key, token) => {
     st.lastWakeReason = reason;
     saveSocialV2State();
     const promptText = buildWakePromptV2(key, reason);
-    log(`[reserved2] 唤醒 ${key}（${reason}）`);
+    log(`[chat] 唤醒 ${key}（${reason}）`);
     const rollbackWakeTime = () => {
       const idx = st.wakeTimes.lastIndexOf(wakeTime);
       if (idx >= 0) st.wakeTimes.splice(idx, 1);
@@ -9502,11 +9502,11 @@ const agentTokenOk = (key, token) => {
         disarmPendingWakeLease(key);
         rollbackWakeTime();
         restoreFiniteSleep();
-        log(`[reserved2] 唤醒投递被拒 ${key}: ${result.error || '未知错误'}`);
+        log(`[chat] 唤醒投递被拒 ${key}: ${result.error || '未知错误'}`);
       } else if (result && result.queued === true) {
         // 入队而非真正在途：保留 pendingWakeKeys，等 DSH 恢复后真正投递的 turn/end 再触发收尾保护；
         // 不能在这里删除，否则补投的唤醒回合会丢失“未设置唤醒配置”的安全兜底。
-        log(`[reserved2] 唤醒已入队 ${key}（${reason}），等待 DSH 恢复后补投`);
+        log(`[chat] 唤醒已入队 ${key}（${reason}），等待 DSH 恢复后补投`);
       }
     } catch (error) {
       pendingWakeKeys.delete(key);
@@ -9518,7 +9518,7 @@ const agentTokenOk = (key, token) => {
         saveSocialV2State();
         setupSleepTimerV2(key);
       }
-      log(`[reserved2] 唤醒投递失败 ${key}: ${error?.message ?? error}`);
+      log(`[chat] 唤醒投递失败 ${key}: ${error?.message ?? error}`);
     }
   }
 
@@ -9531,7 +9531,7 @@ const agentTokenOk = (key, token) => {
 
   function scheduleReplyCheckV2(key) {
     if (cfg.socialV2?.enabled === false) return;
-    if (socialV2.paused || currentMode !== 'reserved2') return;
+    if (socialV2.paused || currentMode !== 'chat') return;
     const st = getSocialV2State(key);
     // 已有真实唤醒/有限睡眠/回复检查在排队时不再重复安排，避免 AI 被连环唤醒。
     if (st.pendingWakeTimer || st.sleepTimer || st.replyCheckTimer) return;
@@ -9543,10 +9543,10 @@ const agentTokenOk = (key, token) => {
     if (recentSelf.length >= 3) delay = Math.round(delay * 1.3);
     st.replyCheckTimer = setTimeout(() => {
       st.replyCheckTimer = null;
-      void sendWakePromptV2(key, 'replyCheck').catch((error) => log(`[reserved2] replyCheck 唤醒异常 ${key}:`, error?.message ?? error));
+      void sendWakePromptV2(key, 'replyCheck').catch((error) => log(`[chat] replyCheck 唤醒异常 ${key}:`, error?.message ?? error));
     }, delay);
     st.replyCheckTimer.unref?.();
-    log(`[reserved2] 已安排回复检查唤醒 ${key}，${Math.round(delay / 1000)}s 后检查`);
+    log(`[chat] 已安排回复检查唤醒 ${key}，${Math.round(delay / 1000)}s 后检查`);
   }
 
   function isConversationBusyV2(key, st) {
@@ -9660,7 +9660,7 @@ const agentTokenOk = (key, token) => {
         sessionIdCache = { at: now, ok: true, ids };
       } catch (error) {
         sessionIdCache = { at: now, ok: false, ids: new Set() };
-        log(`[reserved2] 查询 DSH 会话状态失败（忙标记残留检测本次不清理）：${error?.message ?? error}`);
+        log(`[chat] 查询 DSH 会话状态失败（忙标记残留检测本次不清理）：${error?.message ?? error}`);
       }
     }
     return sessionIdCache.ok && sessionIdCache.ids.has(String(sessionId));
@@ -9683,7 +9683,7 @@ const agentTokenOk = (key, token) => {
           if (item && item.sessionId && item.running === false) idleSid.add(String(item.sessionId));
         }
       } catch (error) {
-        log(`[reserved2] 启动自检：查询 DSH 会话状态失败，跳过（下次收到消息时还会再判）：${error?.message ?? error}`);
+        log(`[chat] 启动自检：查询 DSH 会话状态失败，跳过（下次收到消息时还会再判）：${error?.message ?? error}`);
         return;
       }
       for (const key of socialV2.conversations.keys()) {
@@ -9694,7 +9694,7 @@ const agentTokenOk = (key, token) => {
         forceClearBusyV2(key, `启动自检：DSH 报告空闲但忙标记残留（${markers.join('+')}）`);
       }
     } catch (error) {
-      log(`[reserved2] 启动自检失败（不影响运行）：${error?.message ?? error}`);
+      log(`[chat] 启动自检失败（不影响运行）：${error?.message ?? error}`);
     }
   }
 
@@ -9721,7 +9721,7 @@ const agentTokenOk = (key, token) => {
     if (cfg.socialV2?.enabled === false) return;
     if (socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
-      log(`[reserved2] 跳过计划唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
+      log(`[chat] 跳过计划唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
       return;
     }
     const st = getSocialV2State(key);
@@ -9730,7 +9730,7 @@ const agentTokenOk = (key, token) => {
       const cur = st.pendingWakeReason || reason;
       if (wakePriorityV2(reason) > wakePriorityV2(cur)) {
         st.pendingWakeReason = reason;
-        log(`[reserved2] 合并窗口内升级唤醒原因 ${key}: ${cur} -> ${reason}`);
+        log(`[chat] 合并窗口内升级唤醒原因 ${key}: ${cur} -> ${reason}`);
       }
       return;
     }
@@ -9742,7 +9742,7 @@ const agentTokenOk = (key, token) => {
         // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
-      log(`[reserved2] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
+      log(`[chat] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}）`);
       // 必须落盘：这一条只能等 turn/end 才被消费，桥接若在回合中途重启就会连同意图一起丢，
       // 表现是「那条消息再也没人处理」。启动时会读回来补投（见「重启后补投积压唤醒」）。
       //
@@ -9765,9 +9765,9 @@ const agentTokenOk = (key, token) => {
       st.pendingWakeTimer = null;
       const finalReason = st.pendingWakeReason || reason;
       st.pendingWakeReason = null;
-      void sendWakePromptV2(key, finalReason).catch((error) => log(`[reserved2] 计划唤醒异常 ${key}:`, error?.message ?? error));
+      void sendWakePromptV2(key, finalReason).catch((error) => log(`[chat] 计划唤醒异常 ${key}:`, error?.message ?? error));
     }, batchMs);
-    log(`[reserved2] 计划唤醒 ${key}（${reason}），${Math.round(batchMs / 1000)}s 后发送`);
+    log(`[chat] 计划唤醒 ${key}（${reason}），${Math.round(batchMs / 1000)}s 后发送`);
   }
 
   function setupSleepTimerV2(key) {
@@ -9786,7 +9786,7 @@ const agentTokenOk = (key, token) => {
     if (!Number.isFinite(until)) return;
     const delay = until - Date.now();
     if (delay <= 0) {
-      void sendWakePromptV2(key, 'timeout').catch((error) => log(`[reserved2] 睡眠到期唤醒异常 ${key}:`, error?.message ?? error));
+      void sendWakePromptV2(key, 'timeout').catch((error) => log(`[chat] 睡眠到期唤醒异常 ${key}:`, error?.message ?? error));
       return;
     }
     // Node setTimeout 超过 2^31-1ms 会按 1ms 触发；远未来定时器先等满上限后重新续期，而不是提前唤醒。
@@ -9797,21 +9797,21 @@ const agentTokenOk = (key, token) => {
         setupSleepTimerV2(key);
       }, MAX_TIMEOUT_MS);
       st.sleepTimer.unref?.();
-      log(`[reserved2] 设置远未来有限潜水定时器 ${key}，首段 ${Math.round(MAX_TIMEOUT_MS / 86400000)} 天后续期`);
+      log(`[chat] 设置远未来有限潜水定时器 ${key}，首段 ${Math.round(MAX_TIMEOUT_MS / 86400000)} 天后续期`);
       return;
     }
     st.sleepTimer = setTimeout(() => {
       st.sleepTimer = null;
-      void sendWakePromptV2(key, 'timeout').catch((error) => log(`[reserved2] 睡眠到期唤醒异常 ${key}:`, error?.message ?? error));
+      void sendWakePromptV2(key, 'timeout').catch((error) => log(`[chat] 睡眠到期唤醒异常 ${key}:`, error?.message ?? error));
     }, delay);
     st.sleepTimer.unref?.();
-    log(`[reserved2] 设置有限潜水定时器 ${key}，剩余 ${Math.round(delay / 1000)}s`);
+    log(`[chat] 设置有限潜水定时器 ${key}，剩余 ${Math.round(delay / 1000)}s`);
   }
 
 
   function scheduleProactiveCheckV2(key) {
     if (cfg.socialV2?.proactive?.enabled === false) return;
-    if (socialV2.paused || currentMode !== 'reserved2') return;
+    if (socialV2.paused || currentMode !== 'chat') return;
     if (!isSessionAllowedInCurrentMode(key)) return;
     const st = getSocialV2State(key);
     if (st.proactiveTimer) return;
@@ -9849,12 +9849,12 @@ const agentTokenOk = (key, token) => {
         // 3 小时的冷场计时自然从这里重启，所以不需要再叠一层冷却（cooldownMs=0 即关闭）。
         const cooldown = Math.max(0, Number(p.cooldownMs) || 0);
         st.proactiveNextAt = Date.now() + (cooldown || 3 * 60 * 60 * 1000);
-        void sendWakePromptV2(key, 'proactiveCheck').catch((error) => log(`[reserved2] proactive 唤醒异常 ${key}:`, error?.message ?? error));
+        void sendWakePromptV2(key, 'proactiveCheck').catch((error) => log(`[chat] proactive 唤醒异常 ${key}:`, error?.message ?? error));
       }
       scheduleProactiveCheckV2(key);
     }, delay);
     st.proactiveTimer.unref?.();
-    log(`[reserved2] 已安排主动机会检查 ${key}，约 ${Math.round(delay / 60000)}min 后`);
+    log(`[chat] 已安排主动机会检查 ${key}，约 ${Math.round(delay / 60000)}min 后`);
   }
 
   function clearSocialV2Timers(key) {
@@ -10232,8 +10232,8 @@ const agentTokenOk = (key, token) => {
       // 其余 / 开头内容照常发给 DSH（DSH 的斜杠命令原样执行，如 /model）
     }
 
-    // 聊天模式（reserved2）：唤醒调度
-    if (currentMode === 'reserved2') {
+    // 聊天模式（chat）：唤醒调度
+    if (currentMode === 'chat') {
       const sender = kind === 'group' ? (event.sender?.card || event.sender?.nickname || String(event.user_id)) : '私聊';
       // 引用解析：用户「引用某条消息」时，必须把被引用消息的 id 交给 AI，
       // 否则它引用机器人自己发的图问「这是什么」时，AI 不知道该去取哪一条。
@@ -10264,10 +10264,10 @@ const agentTokenOk = (key, token) => {
       if (moderation.blocked) {
         if (moderation.reply) {
           await sendToQQ(key, moderation.reply);
-          appendActivity(`${key} [reserved2] 已拦截越线请求并回固定话（命中「${moderation.matched}」）`
+          appendActivity(`${key} [chat] 已拦截越线请求并回固定话（命中「${moderation.matched}」）`
             + (contentGate.config.logMatch ? `：${plainContent.slice(0, 80)}` : ''));
         } else {
-          appendActivity(`${key} [reserved2] 已拦截越线请求（${moderation.throttled ? '冷却中' : '静默'}，命中「${moderation.matched}」）`
+          appendActivity(`${key} [chat] 已拦截越线请求（${moderation.throttled ? '冷却中' : '静默'}，命中「${moderation.matched}」）`
             + (contentGate.config.logMatch ? `：${plainContent.slice(0, 80)}` : ''));
         }
         return;
@@ -10276,7 +10276,7 @@ const agentTokenOk = (key, token) => {
       // 同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {
-        appendActivity(`${key} [reserved2] AI 已暂停，消息仅入库不唤醒：${textContent.slice(0, 80)}`);
+        appendActivity(`${key} [chat] AI 已暂停，消息仅入库不唤醒：${textContent.slice(0, 80)}`);
         return;
       }
       const st = getSocialV2State(key);
@@ -10290,7 +10290,7 @@ const agentTokenOk = (key, token) => {
           scheduleWakeV2(key, reason);
         }
       }
-      appendActivity(`${key} [reserved2] 消息已入未读：${textContent.slice(0, 80)}`);
+      appendActivity(`${key} [chat] 消息已入未读：${textContent.slice(0, 80)}`);
       return;
     }
 
@@ -10451,7 +10451,7 @@ const agentTokenOk = (key, token) => {
       if (accepted.result.value.command.text) await auditAndSend(key, mdToPlain(accepted.result.value.command.text));
       return;
     }
-    if (cfg.ackMessage && currentMode !== 'reserved2') await sendToQQ(key, cfg.ackMessage);
+    if (cfg.ackMessage && currentMode !== 'chat') await sendToQQ(key, cfg.ackMessage);
     log(`已投递 ${key}: ${promptText.slice(0, 80)}${promptText.length > 80 ? '…' : ''}`);
   }
 
@@ -10561,8 +10561,8 @@ const agentTokenOk = (key, token) => {
       key = convKey('private', id);
     }
     if (!modeAllowed(key, kind, id, cfg, currentMode)) return;
-    if (currentMode !== 'reserved2') {
-      appendActivity(`${key} 收到拍一拍事件（非 reserved2，仅记录）：${senderId} -> ${targetId}`);
+    if (currentMode !== 'chat') {
+      appendActivity(`${key} 收到拍一拍事件（非 chat，仅记录）：${senderId} -> ${targetId}`);
       return;
     }
     let sender = senderId;
@@ -10584,7 +10584,7 @@ const agentTokenOk = (key, token) => {
       suffix: event.suffix
     });
     appendActivity(`${key} 拍一拍事件：${msg.text.slice(0, 80)}`);
-    if (currentMode !== 'reserved2') return;
+    if (currentMode !== 'chat') return;
     if (socialV2.paused) return;
     const st = getSocialV2State(key);
     if (takeBootstrapV2(st)) {
@@ -10717,11 +10717,11 @@ const agentTokenOk = (key, token) => {
             collectors.set(frame.sessionId, collector);
             const ended = collector.push(frame.event);
             if (ended) {
-              // reserved2 无行动兜底：普通唤醒回合若既没发消息、也没 mark_read / set_wake_config，
+              // chat 无行动兜底：普通唤醒回合若既没发消息、也没 mark_read / set_wake_config，
               // 则累计 noActionCount；达到阈值后自动重置 WakeConfig，避免 AI 卡死。
               const silentQueueNow = social.silentTurns.get(frame.sessionId) ?? [];
               const isSilentTurn = silentQueueNow.length > 0;
-              if (currentMode === 'reserved2' && key && !isSilentTurn) {
+              if (currentMode === 'chat' && key && !isSilentTurn) {
                 const st = getSocialV2State(key);
                 const turnStart = v2TurnStartAt.get(frame.sessionId) ?? 0;
                 const actionTaken = sendToolSucceededSessions.has(frame.sessionId) || (turnStart > 0 && st.lastActionAt >= turnStart);
@@ -10731,7 +10731,7 @@ const agentTokenOk = (key, token) => {
                   st.wakeConfig.noActionCount = (st.wakeConfig.noActionCount || 0) + 1;
                   const limit = Number(cfg.socialV2?.wake?.noActionLimit) || 3;
                   if (st.wakeConfig.noActionCount >= limit) {
-                    log(`[reserved2] ${key} 连续 ${st.wakeConfig.noActionCount} 次唤醒无行动，重置唤醒配置`);
+                    log(`[chat] ${key} 连续 ${st.wakeConfig.noActionCount} 次唤醒无行动，重置唤醒配置`);
                     st.wakeConfig = defaultWakeConfigV2();
                     st.bootstrapSent = true;
                     st.wakeConfig.noActionCount = 0;
@@ -10760,7 +10760,7 @@ const agentTokenOk = (key, token) => {
                 log(`摘要投喂 turn 结束，静默 (${key})`);
                 continue;
               }
-              // reserved2 防遗忘：每次唤醒回合结束时，若 AI 没有调用 qq_set_wake_config 设置下一次唤醒条件，
+              // chat 防遗忘：每次唤醒回合结束时，若 AI 没有调用 qq_set_wake_config 设置下一次唤醒条件，
               // 则发送提醒；连续未设置达到上限后重置为默认唤醒配置。静默/后台提醒回合已在上方 continue，不触发。
               if (pendingWakeKeys.has(key)) {
                 pendingWakeKeys.delete(key);
@@ -10785,14 +10785,14 @@ const agentTokenOk = (key, token) => {
                     }).catch((error) => {
                       pendingWakeKeys.delete(key);
                       disarmPendingWakeLease(key);
-                      log(`[reserved2] ${key} 唤醒提醒投递失败: ${error?.message ?? error}`);
+                      log(`[chat] ${key} 唤醒提醒投递失败: ${error?.message ?? error}`);
                     });
-                    log(`[reserved2] ${key} 未设置唤醒条件，发送提醒 (${currentMiss}/${maxReminders})`);
+                    log(`[chat] ${key} 未设置唤醒条件，发送提醒 (${currentMiss}/${maxReminders})`);
                   } else {
                     const st = getSocialV2State(key);
                     st.wakeConfig = defaultWakeConfigV2();
                     saveSocialV2State();
-                    log(`[reserved2] ${key} 连续未设置唤醒条件，已重置为默认唤醒配置`);
+                    log(`[chat] ${key} 连续未设置唤醒条件，已重置为默认唤醒配置`);
                   }
                 }
               }
@@ -10809,10 +10809,10 @@ const agentTokenOk = (key, token) => {
                     // 让陈旧意图「看起来仍然相关」。卡死恢复后暂存队列往往积压 20 条旧意图，
                     // 用 `>=` 会变成每回合结束时补一刀，连着把 AI 叫醒十几次。
                     if (pendingWakeStillRelevantV2(stEnd, item)) {
-                      log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}@seq${item.seq}`);
+                      log(`[chat] ${key} 补发繁忙期间积压的唤醒：${item.reason}@seq${item.seq}`);
                       scheduleWakeV2(key, item.reason);
                     } else {
-                      log(`[reserved2] ${key} 繁忙期间唤醒 ${item.reason}@seq${item.seq} 已被当前回合处理，跳过补发`);
+                      log(`[chat] ${key} 繁忙期间唤醒 ${item.reason}@seq${item.seq} 已被当前回合处理，跳过补发`);
                     }
                   }
                 }
@@ -10921,9 +10921,9 @@ const agentTokenOk = (key, token) => {
                     st.lastAiReplyAt = Date.now();
                     log(`社交模式：发言完成，刷新活跃时间 (${key})`);
                   }
-                } else if (currentMode === 'reserved2') {
-                  log(`[reserved2] AI 内部输出（不自动转发）(${key}): ${plain.slice(0, 80)}`);
-                  appendActivity(`${key} [reserved2] AI 内部输出：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
+                } else if (currentMode === 'chat') {
+                  log(`[chat] AI 内部输出（不自动转发）(${key}): ${plain.slice(0, 80)}`);
+                  appendActivity(`${key} [chat] AI 内部输出：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
                 } else {
                   if (shouldBlockSilentReply(key)) {
                     log(`静默模式，拦截在途回复 (${key})`);

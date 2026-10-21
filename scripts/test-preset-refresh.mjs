@@ -21,31 +21,31 @@ function ok(cond, label, detail = '') {
 
 console.log('## presetCompositionStamp');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'preset-stamp-'));
-const presetDir = path.join(home, '.agent-presets', 'qq-chat-v2');
+const presetDir = path.join(home, '.agent-presets', 'qq-chat');
 fs.mkdirSync(presetDir, { recursive: true });
 const write = (name, body) => fs.writeFileSync(path.join(presetDir, name), body);
 
 write('agent.cordis.yml', 'prefix: A\n');
 write('preset.yml', 'name: X\n');
-const stamp1 = presetCompositionStamp('qq-chat-v2', { dshHome: home });
+const stamp1 = presetCompositionStamp('qq-chat', { dshHome: home });
 ok(/^[0-9a-f]{16}$/.test(stamp1), '组成戳是 16 位十六进制', stamp1);
-ok(presetCompositionStamp('qq-chat-v2', { dshHome: home }) === stamp1, '内容不变 → 戳稳定');
+ok(presetCompositionStamp('qq-chat', { dshHome: home }) === stamp1, '内容不变 → 戳稳定');
 ok(presetCompositionStamp('', { dshHome: home }) === '', '空 presetId → 空戳');
 ok(presetCompositionStamp('not-installed', { dshHome: home }) === '', '未安装的 preset → 空戳（无法判断，不折腾会话）');
 
 write('agent.cordis.yml', 'prefix: B\n');
-const stamp2 = presetCompositionStamp('qq-chat-v2', { dshHome: home });
+const stamp2 = presetCompositionStamp('qq-chat', { dshHome: home });
 ok(stamp2 !== stamp1 && stamp2.length === 16, '组成文件内容变化 → 戳变化');
 
 write('agent.cordis.yml', 'prefix: A\n');
-ok(presetCompositionStamp('qq-chat-v2', { dshHome: home }) === stamp1, '内容改回去 → 戳回到原值');
+ok(presetCompositionStamp('qq-chat', { dshHome: home }) === stamp1, '内容改回去 → 戳回到原值');
 
 fs.rmSync(path.join(presetDir, 'preset.yml'));
-const stampNoMeta = presetCompositionStamp('qq-chat-v2', { dshHome: home });
+const stampNoMeta = presetCompositionStamp('qq-chat', { dshHome: home });
 ok(stampNoMeta !== '' && stampNoMeta !== stamp1, '删掉 preset.yml 也会改变戳（不会因为缺文件而“看起来没变”）');
 
 fs.rmSync(path.join(presetDir, 'agent.cordis.yml'));
-ok(presetCompositionStamp('qq-chat-v2', { dshHome: home }) === '', '组成文件全缺 → 空戳');
+ok(presetCompositionStamp('qq-chat', { dshHome: home }) === '', '组成文件全缺 → 空戳');
 
 ok(PRESET_STAMP_FILES.includes('agent.cordis.yml') && PRESET_STAMP_FILES.includes('preset.yml'), '戳覆盖 agent.cordis.yml 与 preset.yml');
 ok(resolveDshHome({ DSH_HOME: '/tmp/x' }) === '/tmp/x', 'DSH_HOME 环境变量优先');
@@ -65,7 +65,7 @@ ok(/if \(!state\.sessionPresetStamps \|\| typeof state\.sessionPresetStamps !== 
 ok(/const presetStampCache = new Map\(\)/.test(bridge), '组成戳进程内缓存（改预设 + 重启桥接才重算）');
 
 console.log('## 提示词存在性（要图契约）');
-const preset = fs.readFileSync(path.join(ROOT, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
+const preset = fs.readFileSync(path.join(ROOT, 'dsh', 'agent-presets', 'qq-chat', 'agent.cordis.yml'), 'utf8');
 ok(/你的第一个动作就是搜图，然后发图/.test(preset), 'preset 21b 规定“第一个动作就是搜图发图”');
 ok(/不要自己替管理员审查/.test(preset), 'preset 21b 禁止模型自行顺掉分级允许的图');
 ok(/rating.*safe.*mild.*直接发/s.test(preset), 'preset 21b 写明 safe/mild 都该直接发');

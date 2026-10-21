@@ -201,7 +201,7 @@ export function loadConfig(root = ROOT) {
     socialV2: {
       enabled: true,
       autoReplyCheckMs: 30000,
-      agentPreset: 'qq-chat-v2',
+      agentPreset: 'qq-chat',
       provideRecommendations: true,
       // 掉线补拉：OneBot 是推送模型，断线期间群里的消息网关不会重发
       //（实测 2026-10-05 一次 1006 抖动丢了 5 条，AI 完全不知道它们存在过）。

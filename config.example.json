@@ -110,7 +110,7 @@
   "socialV2": {
     "enabled": true,
     "autoReplyCheckMs": 30000,
-    "agentPreset": "qq-chat-v2",
+    "agentPreset": "qq-chat",
     "provideRecommendations": true,
     "presetRefresh": true,
     "tools": {

@@ -6,14 +6,14 @@
 控制台会**同时**写穿到 DSH 设置与本地 `qq-bridge/state/mode.json`，两者保持一致。
 （DSH 设置页目前**没有** `qq-mode` 卡片：该插件只有 host 半，未实现浏览器半。详见 docs/DSH_SETUP.md。）
 桥接每 5 秒读取一次；控制台切换立即应用。会话持久化记录创建时的模式、preset 和管理员边界，权限变化时自动撤销旧会话映射和聊天模式 token，并在下次消息到达时重建，避免继续使用旧的高权限 preset。升级前没有这些权限元数据的旧会话也会重建一次，历史仍保留在 DSH。
-全新安装运行 `scripts/setup-dsh.mjs` 后，DSH 设置与本地兜底默认均为 `reserved2`；若已存在 `state/mode.json` 或 DSH 设置旧值，脚本不会覆盖。
+全新安装运行 `scripts/setup-dsh.mjs` 后，DSH 设置与本地兜底默认均为 `chat`；若已存在 `state/mode.json` 或 DSH 设置旧值，脚本不会覆盖。
 
 | 模式 | 允许通道 | agent preset | 用途 |
 | --- | --- | --- | --- |
-| `reserved2`（唯一模式） | 白名单群 + 白名单私聊 | qq-chat-v2 | 文本不自动转发，AI 通过工具自主看消息/发言/等待/设置唤醒与潜水 |
+| `chat`（唯一模式） | 白名单群 + 白名单私聊 | qq-chat | 文本不自动转发，AI 通过工具自主看消息/发言/等待/设置唤醒与潜水 |
 
-> 运行模式只有 `reserved2` 一种（`chat` / `closed-agent` / `reserved` 已删除）。
-> 会话永远挂 `qq-chat-v2`，拿不到就 fail-closed 拒绝建会话 —— **没有任何回落 DSH 默认 preset 的路径**，
+> 运行模式只有 `chat` 一种（`chat` / `closed-agent` / `reserved` 已删除）。
+> 会话永远挂 `qq-chat`，拿不到就 fail-closed 拒绝建会话 —— **没有任何回落 DSH 默认 preset 的路径**，
 > 所以群友永远触不到本地工具。
 >
 > 注：DSH 0.1.5 已不存在 `router-standard` preset。桥接现在留空表示「用 DSH 默认 preset」，
@@ -31,11 +31,11 @@
 
 ## QQ 会话 agent 的硬边界
 
-1. **无本地工具**：qq-chat / qq-chat-v2 预设不挂载 bash/pwsh、文件读写、子代理、工作流——群友无论如何诱导，agent 物理上无法操作本机。
+1. **无本地工具**：qq-chat / qq-chat 预设不挂载 bash/pwsh、文件读写、子代理、工作流——群友无论如何诱导，agent 物理上无法操作本机。
    - 注意区分两个不同的对象：**本机**（跑 DSH 的服务器）与**域外手机**（见下方「手机远端」一节）。群里 agent 对这两者的工具都不存在——手机工具同样被本节的执行期白名单拦掉。
 2. **QQ 动作安全子集**：只允许 `mcp__snowluma__*`、`mcp__snowluma-host__*`、`mcp__web-search-safe__*` 三个命名空间下的工具，以及 `ask_user_question` / `todo_write`；其他工具（含 `dev_*` 开发/管理工具）在执行期会被 `qq-tool-restrict.mjs` 拒绝。
    - `mcp__phone__*`（域外手机远端）**同样不在白名单内**，因此群里 agent 拿不到手机工具。真实约束是执行期 guard，而不是「工具没被注册」——所以即使 DSH 侧挂载了 mcp-phone，群聊通道依然拒绝。QQ 动作无禁言、踢人、文件上传下载等管理操作。
-3. **只读联网搜索**：`qq-chat` / `qq-chat-v2` 预设已关闭 DSH 内置 `tool-web` 的 `search` / `fetch`，联网统一走 `src/mcp-web-search-safe.js` 提供的 `mcp__web-search-safe__web_search/web_fetch`。不暴露本地文件、命令执行、写操作。
+3. **只读联网搜索**：`qq-chat` / `qq-chat` 预设已关闭 DSH 内置 `tool-web` 的 `search` / `fetch`，联网统一走 `src/mcp-web-search-safe.js` 提供的 `mcp__web-search-safe__web_search/web_fetch`。不暴露本地文件、命令执行、写操作。
    - ✅ `mcp__web-search-safe__web_fetch` 已做 SSRF 加固：仅 http/https、禁止 localhost/私有 IP/链路本地/CGNAT/带凭据 URL、DNS 解析结果全量校验、每跳重定向重新校验、响应体限量读取。
 4. **发送强制白名单**：所有发送类工具（`qq_send_group_message` / `qq_send_private_message` / `qq_send_message` / `qq_send_burst` / `qq_reply` / `qq_send_poke` / `qq_send_sticker` / `qq_send_image` / `qq_send_card` 等）的目标必须命中 `config.json` 的 `allow.groups` / `allow.private`，否则拒绝执行。
    - `qq_send_card`（链接分享卡）**当前网关协议版本下渲染不出来**（QQ 客户端显示「发送者版本过低，无法展示内容」，是发送端协议版本门禁），所以 AI 侧默认关闭；它还额外受一层约束：**卡片体由桥接组装**，AI 只能填标题/摘要/链接/缩略图，不接受任意 `json`/`xml`（否则可伪造「系统通知 / 红包 / 群邀请」这类看着像官方的卡片）；链接与缩略图必须是公网 `http(s)`，本机/内网地址一律拒绝（防止做出指向本机控制台、还带着令牌的可点击卡片）。
@@ -56,7 +56,7 @@
 被包装成 MCP server `mcp-phone`（`src/mcp-phone.js`，serverName `phone`）。
 agent 由此可以对**那台手机**执行命令，与本机工具是两套相互独立的能力。
 
-**为什么群友用不到**：`qq-chat` / `qq-chat-v2` 的 `qq-tool-restrict.mjs` 执行期白名单里
+**为什么群友用不到**：`qq-chat` / `qq-chat` 的 `qq-tool-restrict.mjs` 执行期白名单里
 没有 `mcp__phone__` 前缀，所以群聊通道调用手机工具会被直接拒绝。
 只有**不带该限制的 preset**（如 `standard`）才看得到这些工具。
 换句话说：手机远端的可达面 = 管理员，不是群友。**这是有意设计，改动前请三思。**
@@ -129,7 +129,7 @@ agent 由此可以对**那台手机**执行命令，与本机工具是两套相�
 
 ### 在 WebUI 与 QQ 机器人对话
 
-打开「QQ 聊天」工作区里的会话即可直接对话（DSH 原生）。`reserved2` 不自动转发 agent 文本，但工具可以发送 QQ；`chat`、`reserved` 和 `closed-agent` 会转发映射会话的 agent 回合输出，因此在这些会话中从 DSH 界面输入内容，也可能使回复出现在 QQ。需要纯本地讨论时请使用没有 QQ 映射的 DSH 会话。
+打开「QQ 聊天」工作区里的会话即可直接对话（DSH 原生）。`chat` 不自动转发 agent 文本，但工具可以发送 QQ；`chat`、`reserved` 和 `closed-agent` 会转发映射会话的 agent 回合输出，因此在这些会话中从 DSH 界面输入内容，也可能使回复出现在 QQ。需要纯本地讨论时请使用没有 QQ 映射的 DSH 会话。
 
 ## 事故与兜底
 

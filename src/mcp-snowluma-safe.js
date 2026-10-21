@@ -307,7 +307,7 @@ defineTool(
     // 避免绕过聊天模式的令牌隔离。
     try {
       const status = await agentApi('/api/status');
-      if (status?.mode === 'reserved2') {
+      if (status?.mode === 'chat') {
         return { content: [{ type: 'text', text: '聊天模式下旧只读工具不可用，请使用带会话令牌的 v2 读工具' }], isError: true };
       }
     } catch (error) {
@@ -404,7 +404,7 @@ defineTool(
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
+    token: z.string().optional().describe('会话令牌（chat 模式下必填）')
   },
   async ({ groupId, message, replyToMessageId, token }) => {
     try {
@@ -427,7 +427,7 @@ defineTool(
     groupId: z.union([z.number(), z.string()]).describe('群号（必须在白名单内）'),
     replyToMessageId: z.union([z.number(), z.string()]).describe('被引用/回复的消息 id（非零整数，可为负数）'),
     message: z.string().describe('要发送的文本，纯文本，不要用 Markdown 或 CQ 码'),
-    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
+    token: z.string().optional().describe('会话令牌（chat 模式下必填）')
   },
   async ({ groupId, replyToMessageId, message, token }) => {
     try {
@@ -450,7 +450,7 @@ defineTool(
     userId: z.union([z.number(), z.string()]).describe('好友 QQ 号（必须在白名单内）'),
     message: z.string().describe('消息文本，纯文本，不要用 Markdown 或 CQ 码'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用/回复的消息 id（非零整数，可为负数，可选）'),
-    token: z.string().optional().describe('会话令牌（reserved2 模式下必填）')
+    token: z.string().optional().describe('会话令牌（chat 模式下必填）')
   },
   async ({ userId, message, replyToMessageId, token }) => {
     try {

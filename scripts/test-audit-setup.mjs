@@ -90,10 +90,10 @@ try {
       assert.equal(result.status, 0, result.stderr || result.error?.message);
     }
     const entries = yaml.load(fs.readFileSync(f.patchFile, 'utf8')).flatMap((op) => op.insert || []);
-    for (const id of ['preset-qq-chat-v2']) {
+    for (const id of ['preset-qq-chat']) {
       assert.equal(entries.filter((entry) => entry.id === id).length, 1, `${id} duplicate`);
     }
-    for (const id of ['qq-chat-v2']) {
+    for (const id of ['qq-chat']) {
       const row = entries.find((entry) => entry.id === `preset-${id}`);
       assert.equal(row.name, '@deepseek-ai/dsh-agent-preset');
       assert.equal(row.config.id, id);
@@ -131,13 +131,13 @@ try {
   test('legacy format installs only the directory presets and strips modern rows', () => {
     const f = fixture('legacy-format', '[]\n');
     assert.equal(f.run().status, 0);
-    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat-v2/);
+    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat/);
     const result = f.run('web', { QQ_BRIDGE_DSH_PRESET_FORMAT: 'legacy' });
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     const text = fs.readFileSync(f.patchFile, 'utf8');
     assert.doesNotMatch(text, /preset-qq-chat(?!-v2)/);
     assert.match(text, /mcp-snowluma/);
-    for (const id of ['qq-chat-v2']) {
+    for (const id of ['qq-chat']) {
       assert.ok(fs.existsSync(path.join(f.home, '.agent-presets', id, 'agent.cordis.yml')), `${id} not installed`);
     }
   });
@@ -147,7 +147,7 @@ try {
     const result = f.run('web', { QQ_BRIDGE_DSH_PRESET_FORMAT: '' });
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     assert.match(result.stdout, /preset 安装方式：modern/);
-    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat-v2/);
+    assert.match(fs.readFileSync(f.patchFile, 'utf8'), /preset-qq-chat/);
   });
 
   test('legacy root [] is repaired without altering literal strings', () => {
@@ -177,7 +177,7 @@ try {
   test('existing mode, DSH settings and non-link plugin directory remain untouched', () => {
     const f = fixture('preserve', '[]\n');
     fs.mkdirSync(path.join(f.repo, 'state'), { recursive: true });
-    const mode = '{"mode":"reserved2"}\n';
+    const mode = '{"mode":"chat"}\n';
     fs.writeFileSync(path.join(f.repo, 'state/mode.json'), mode);
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);

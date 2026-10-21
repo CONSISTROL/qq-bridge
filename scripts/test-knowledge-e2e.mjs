@@ -50,7 +50,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(STATE, { recursive: true });
 // 隔离状态目录必须自带 mode.json：DSH 不可达时 currentMode 就从这里读，
 // 缺了它会回落成 'chat'，带 agent token 的 v2 接口会被模式闸门整体拒绝（403）。
-fs.writeFileSync(path.join(STATE, 'mode.json'), JSON.stringify({ mode: 'reserved2' }));
+fs.writeFileSync(path.join(STATE, 'mode.json'), JSON.stringify({ mode: 'chat' }));
 const baseCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
 
 let toolFlags = { knowledge: true };

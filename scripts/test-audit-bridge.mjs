@@ -263,7 +263,7 @@ await testWith({ globals: pngFetch }, '一条消息图多时要能翻页：告�
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     const media = Array.from({ length: 7 }, (_, i) => ({ kind: 'image', file: `img${i + 1}.jpg`, url: `https://public.invalid/img${i + 1}.jpg` }));
@@ -409,7 +409,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
@@ -431,7 +431,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
@@ -469,7 +469,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
@@ -496,7 +496,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       const res = await apiRequest(server, '/api/socialV2/send-message?token=fixture-console-token', {
@@ -551,9 +551,9 @@ await testWith({ config: { socialV2: { image: { allowRemoteUrl: true, deliverChe
 // 背景：一个 QQ 会话只对应一个 DSH session，而 DSH 一次只跑一个 turn。
 // 慢工具（pixiv 取图链上限 110s）会把整条会话堵住，群里再问什么都得等。
 // 工作车道把长任务放进独立会话，聊天会话立刻恢复可应答。
-const workCfg = { socialV2: { agentPreset: 'qq-chat-v2', work: { enabled: true, maxSessions: 2 } } };
+const workCfg = { socialV2: { agentPreset: 'qq-chat', work: { enabled: true, maxSessions: 2 } } };
 await testWith({ config: workCfg }, '工作车道：长任务投给独立会话并立即返回，聊天会话不被占用', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const chatSession = await h.ensureSession('group:456');
   const result = await h.deliverWorkTask('group:456', '用 pixiv 搜一张初音未来的图并发到本群', { note: '只要 1 张' });
   assert.notEqual(result.sessionId, chatSession, '工作车道是另一个 DSH session');
@@ -570,7 +570,7 @@ await testWith({ config: workCfg }, '工作车道：长任务投给独立会话�
   assert.equal(h.calls.prompts.at(-1).mode, 'queue');
 });
 await testWith({ config: workCfg }, '工作车道跑完把结论回投给聊天会话（而不是直接对 QQ 发言）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.ensureSession('group:456');
   const { sessionId } = await h.deliverWorkTask('group:456', '找一张图发出去');
   // 模拟 DSH 侧这条车道的回合：turn/start → assistant/message → turn/end
@@ -586,7 +586,7 @@ await testWith({ config: workCfg }, '工作车道跑完把结论回投给聊天�
   assert.equal(h.workTasks.get(sessionId), undefined, '任务从队列里出清，车道恢复空闲');
 });
 await testWith({ config: workCfg }, '工作车道异常结束时如实说「没拿到结论」，不许假装完成', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.ensureSession('group:456');
   const { sessionId } = await h.deliverWorkTask('group:456', '看几个视频总结一下');
   h.handleWorkLaneFrame({ sessionId, event: { type: 'turn/start', data: { turn: 't1' } } });
@@ -598,7 +598,7 @@ await testWith({ config: workCfg }, '工作车道异常结束时如实说「没�
   assert.match(report, /别把这次的失败说成已经完成/);
 });
 await testWith({ config: workCfg }, '车道数量受 maxSessions 限制，占满时排队而不是无限开会话', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.ensureSession('group:456');
   const a = await h.deliverWorkTask('group:456', '任务 A');
   const b = await h.deliverWorkTask('group:456', '任务 B');
@@ -609,14 +609,14 @@ await testWith({ config: workCfg }, '车道数量受 maxSessions 限制，占满
   assert.equal(h.workSessions.size, 2, '工作车道的 DSH 会话数不超过 maxSessions');
   assert.equal(h.calls.created.length, 1 + 2, '聊天会话 1 个 + 工作车道 2 个，没有多余创建');
 });
-await testWith({ config: { socialV2: { agentPreset: 'qq-chat-v2', work: { enabled: false } } } }, 'work.enabled=false 时工作车道完全不生效', async (h) => {
-  h.setMode('reserved2');
+await testWith({ config: { socialV2: { agentPreset: 'qq-chat', work: { enabled: false } } } }, 'work.enabled=false 时工作车道完全不生效', async (h) => {
+  h.setMode('chat');
   await h.ensureSession('group:456');
   assert.equal(h.workLaneEnabled(), false);
   await assert.rejects(() => h.deliverWorkTask('group:456', '任务'), /未启用/);
 });
 await testWith({ config: workCfg }, '聊天会话退役时工作车道一起退役（避免旧权限的车道继续跑）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.ensureSession('group:456');
   const { sessionId } = await h.deliverWorkTask('group:456', '任务 A');
   h.retireWorkLanes('group:456');
@@ -633,7 +633,7 @@ await testWith({ config: workCfg }, '聊天会话退役时工作车道一起退�
 // busy 分支里被 await，异常把整个函数打断在 push **之前** —— 结果「回合进行中收到新消息」
 // 这条最常见的路径既不暂存也不补投，唤醒被静默丢掉，表现就是 AI 不回话、看起来卡死。
 await test('DSH 空闲探针不会抛异常（探针炸了也不能把唤醒弄丢）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   // 探针本身不能抛；认不出来就返回 false（= 不清理忙标记），而不是把调用方打断。
   const idle = await h.dshSessionIdleNow(sid);
@@ -641,7 +641,7 @@ await test('DSH 空闲探针不会抛异常（探针炸了也不能把唤醒弄�
   assert.equal(await h.dshSessionIdleNow(''), false, '空 sessionId 直接 false');
 });
 await test('回合进行中收到唤醒：暂存进 pendingWakeReasons（而不是丢掉）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   // 造一个「turn 正在跑」的现场：只有 collector/turn 标记，且 turn 起点很新。
   h.v2TurnStartAt.set(sid, Date.now());
@@ -659,7 +659,7 @@ await test('回合进行中收到唤醒：暂存进 pendingWakeReasons（而不�
   assert.equal(h.calls.prompts.length, 0, '繁忙期间不投递新 prompt');
 });
 await test('同样情况下若探针异常，也要退化成「暂存」而不是丢掉唤醒', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
   h.socialV2.conversations.set('private:123', {
@@ -677,7 +677,7 @@ await test('同样情况下若探针异常，也要退化成「暂存」而不�
   assert.equal(st.pendingWakeReasons?.length, 1, '探针失败不能吞掉唤醒');
 });
 await test('scheduleWakeV2 繁忙路径同样暂存（正常回合进行中）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
   h.scheduleWakeV2('private:123', 'question');
@@ -686,7 +686,7 @@ await test('scheduleWakeV2 繁忙路径同样暂存（正常回合进行中）',
   assert.equal(st.pendingWakeReason, undefined, '没有安排新的合并窗口唤醒');
 });
 await test('暂存的唤醒原因必须落盘（桥接中途重启不能把意图弄丢）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const sid = await h.ensureSession('private:123');
   h.v2TurnStartAt.set(sid, Date.now());
   h.scheduleWakeV2('private:123', 'private');
@@ -714,7 +714,7 @@ await testWith({ config: { socialV2: { profile: { enabled: false }, tools: { set
 });
 
 await testWith({ config: profileOn }, '资料：管理员上下文判定——管理员私聊永远算，群里要求最近一条是管理员发的', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const owner = '123';
   assert.equal(h.isAdminProfileContext(`private:${owner}`), true, '管理员私聊：算');
   assert.equal(h.isAdminProfileContext('group:456'), false, '群里还没人说话：不算');
@@ -741,7 +741,7 @@ await testWith({ config: profileOn }, '资料：管理员上下文判定——�
 });
 
 await testWith({ config: profileOn, globals: profileGlobals }, '资料：改昵称/签名成功，写历史、留旧值可回滚', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.noteProfileTriggers('private:123', true);
   const r = await h.applyProfileChange({ nickname: '小鲸鱼', personalNote: '在摸鱼' }, { by: 'ai:private:123' });
   assert.equal(r.current.nickname, '小鲸鱼');
@@ -760,7 +760,7 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：改昵�
 });
 
 await testWith({ config: profileOn, globals: profileGlobals }, '资料：昵称/签名内容校验（链接、冒充官方、超长、控制字符）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await assert.rejects(() => h.applyProfileChange({ nickname: '看 https://a.com' }), /不允许放链接/);
   await assert.rejects(() => h.applyProfileChange({ nickname: '加群 12345678 领福利' }), /不允许放链接/);
   await assert.rejects(() => h.applyProfileChange({ nickname: '系统' }), /冒充官方/);
@@ -777,19 +777,19 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：昵称/
 
 await testWith({ config: { socialV2: { profile: { enabled: true, minIntervalMs: 60000, maxPerDay: 10 }, tools: { setProfile: true } } }, globals: profileGlobals },
   '资料：限流（间隔 + 每日上限）', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     await h.applyProfileChange({ nickname: 'A' });
     await assert.rejects(() => h.applyProfileChange({ nickname: 'B' }), /太频繁/, '间隔没到不能改');
   });
 await testWith({ config: { socialV2: { profile: { enabled: true, minIntervalMs: 0, maxPerDay: 1 }, tools: { setProfile: true } } }, globals: profileGlobals },
   '资料：每日上限（账号级身份故意收紧）', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     await h.applyProfileChange({ nickname: 'A' });
     await assert.rejects(() => h.applyProfileChange({ nickname: 'B' }), /次数用完/);
   });
 
 await testWith({ config: profileOn, globals: profileGlobals }, '资料：换头像走 base64、备份旧头像、可回滚', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.noteProfileTriggers('private:123', true);
   const r = await h.applyProfileChange({ avatar: PNG_B64 }, { by: 'ai:private:123' });
   assert.match(r.changed.join(), /头像已更新/);
@@ -805,7 +805,7 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：换头�
 });
 
 await testWith({ config: profileOn, globals: profileGlobals }, '资料：端点层面——AI 从「非管理员上下文」调用被 403', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
@@ -839,7 +839,7 @@ await testWith({ config: profileOn, globals: profileGlobals }, '资料：端点�
 // 风险点很具体：黑话表/知识库刚喂进去一堆梗（探索学来的），模型很容易把「我认识它」
 // 变成「我来讲解它」——那样群里抛梗就换来一段释义，比没接住还破坏气氛。
 await testWith({ config: { socialV2: { taskTriage: true } } }, '每轮注入「玩梗/闲聊/正经事」三级分流，玩梗明确要求接梗、禁止科普', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = await h.withSlangContext('随便一句话', 'private:123');
   assert.match(prompt, /先分清是玩梗、闲聊还是正经事/, '分流段还在');
   assert.match(prompt, /接梗玩回去/, '玩梗的正确动作');
@@ -884,7 +884,7 @@ function topicAnswer({ name, kind, summary, terms = [], related = [] }) {
 }
 
 await testWith({ config: exploreCfgBase }, '主题探索：端到端把种子与两层关联学进黑话库 + 知识库', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const job = h.startTopicExploration('mygo', { by: 'console' });
   assert.equal(job.status, 'pending');
   assert.equal(job.maxDepth, 2);
@@ -942,7 +942,7 @@ await testWith({ config: exploreCfgBase }, '主题探索：端到端把种子与
 
 await testWith({ config: { slang: { enabled: true, explore: { enabled: true, maxDepth: 1, maxTopics: 6 } } } },
   '主题探索：maxDepth=1 时第二层关联不再排队', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const job = h.startTopicExploration('mygo', { by: 'console' });
     await h.answerLearnerTurn(() => topicAnswer({
       name: 'MyGO!!!!!', summary: 'x',
@@ -959,7 +959,7 @@ await testWith({ config: { slang: { enabled: true, explore: { enabled: true, max
   });
 
 await testWith({ config: exploreCfgBase }, '主题探索：模型输出解析不了时记失败、不许编造学习结果', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const job = h.startTopicExploration('乱码主题', { by: 'console' });
   await h.answerLearnerTurn('抱歉，我没查到这个东西，也不确定它是不是梗。');
   await h.awaitExploreChain();
@@ -971,7 +971,7 @@ await testWith({ config: exploreCfgBase }, '主题探索：模型输出解析不
 });
 
 await testWith({ config: exploreCfgBase }, '主题探索：fenced JSON + 前后夹带人话也能解析', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const job = h.startTopicExploration('mygo', { by: 'console' });
   await h.answerLearnerTurn(() => '我查到了：\n```json\n' + topicAnswer({
     name: 'MyGO!!!!!', summary: '乐队企划。', terms: [{ content: '春日影', meaning: '一首歌', sources: ['https://x.example/1'], confirmed: true }], related: []
@@ -983,7 +983,7 @@ await testWith({ config: exploreCfgBase }, '主题探索：fenced JSON + 前后�
 });
 
 await testWith({ config: exploreCfgBase }, '主题探索：停止标记被尊重，不再继续挖', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const job = h.startTopicExploration('mygo', { by: 'console' });
   // 第一轮跑完并排入关联后请求停止
   await h.answerLearnerTurn(() => topicAnswer({
@@ -997,7 +997,7 @@ await testWith({ config: exploreCfgBase }, '主题探索：停止标记被尊重
 
 await testWith({ config: { slang: { enabled: true, explore: { enabled: true, maxJobsPerHour: 2, maxConcurrent: 1 } } } },
   '主题探索：并发与频率限制（AI 也能发起，必须限流）', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const a = h.startTopicExploration('one', { by: 'console' });
     assert.throws(() => h.startTopicExploration('two', { by: 'ai:private:123' }), /已有 1 个探索任务在跑/, '同时只跑一个');
     h.stopTopicExploration(a.id);
@@ -1010,7 +1010,7 @@ await testWith({ config: { slang: { enabled: true, explore: { enabled: true, max
 
 await testWith({ config: { slang: { enabled: true, explore: { enabled: false } } } },
   '主题探索：开关关掉后拒绝发起', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     assert.equal(h.exploreCfg().enabled, false);
     assert.throws(() => h.startTopicExploration('mygo'), /未启用/);
   });
@@ -1021,7 +1021,7 @@ await testWith({ config: { slang: { enabled: true, explore: { enabled: false } }
 // 记忆全是那个圈子，于是反复开同一个话题。这里钉住「记住最近开的头 + 要求换方向」。
 await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭', '冷知识'], suggestDomains: 2 } } } },
   '主动开话题：提示词里带上最近开的头，并要求换方向', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.proactiveOpeners = [
       { text: 'S16 赛程漏出来了，凌晨开打', at: Date.now() - 60000 },
@@ -1036,10 +1036,10 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
     assert.match(prompt, /同一个人物\/战队\/作品\/圈子的后续也算重复/, '把「同圈子后续也算重复」讲清楚');
   });
 await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'], suggestDomains: 2 } } } },
-  '主动开话题（reserved2 实际路径）：buildWakePromptV2 里带上换方向 + 别拿记忆当题材', async (h) => {
+  '主动开话题（chat 实际路径）：buildWakePromptV2 里带上换方向 + 别拿记忆当题材', async (h) => {
     // buildProactivePrompt 是一代（reserved）路径；二代真正发出去的是 buildWakePromptV2
     // 的 proactiveCheck 分支。这条就是为了防止「改错了路径」——线上那次就是栽在这。
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.proactiveOpeners = [{ text: 'S16 赛程漏出来了，凌晨开打', at: Date.now() }];
     const prompt = h.buildWakePromptV2('group:456', 'proactiveCheck');
@@ -1055,7 +1055,7 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
   });
 await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭', '冷知识', '摸鱼'], suggestDomains: 2 } } } },
   '主动开话题：方向是随机抽的且数量受限', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const seen = new Set();
     for (let i = 0; i < 40; i++) {
       const m = /【这次换个方向】从这几个里挑一个你真有话说的：([^。]+)。/.exec(h.buildProactiveTopicBlock(h.getSocialV2State('group:456')));
@@ -1070,7 +1070,7 @@ await testWith({ config: { socialV2: { proactive: { domains: ['科技', '吃饭'
   });
 await testWith({ config: { socialV2: { proactive: { domains: [], suggestDomains: 0 } } } },
   '主动开话题：没配方向池时只有「别重复」那段，不会崩也不会硬塞方向', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.proactiveOpeners = [{ text: '旧话题', at: Date.now() }];
     const prompt = h.buildProactiveTopicBlock(h.getSocialV2State('group:456'));
@@ -1079,7 +1079,7 @@ await testWith({ config: { socialV2: { proactive: { domains: [], suggestDomains:
   });
 await testWith({ config: { socialV2: { proactive: { avoidRepeat: false, domains: [] } } } },
   '主动开话题：avoidRepeat=false 时连「别重复」那段也不注入', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.proactiveOpeners = [{ text: '旧话题', at: Date.now() }];
     const prompt = h.buildProactiveTopicBlock(h.getSocialV2State('group:456'));
@@ -1089,7 +1089,7 @@ await test('主动开话题：默认配置（不填任何新参数）下反重�
   // 这条是防「参数没配 → NaN → 整段静默失效」的：线上默认配置就是这种情形。
   // 曾经的写法 `Number(x) ?? 5` 里 Number(undefined)=NaN 不会被 ?? 兜住，
   // 结果 keep=NaN 让记录整段跳过、.slice(0,NaN) 让话题文本变空串，功能看着在、其实全废。
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastWakeReason = 'proactiveCheck';
   h.recordSentMessagesV2('group:456', ['默认配置下也要记住这句话']);
@@ -1139,7 +1139,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       st.proactiveOpeners = [{ text: '脑子里单曲循环了一早上，这种甩不掉的歌有个名字叫耳虫', at: Date.now() - 2 * 86400000 }];
@@ -1169,7 +1169,7 @@ await test('读消息时要能看出「谁在跟谁说话」：aboutYou / replie
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     h.appendSocialV2Message(key, 'kafka', '在吗', '在吗', false, false, 710001, [], '1374585879', [], null, null, null, false);
@@ -1222,7 +1222,7 @@ await test('动图抽帧：长动图要多抽几帧，且帧说明里必须点�
 await test('各种唤醒原因的提示文本都不能出现字面破折号', async (h) => {
   // 规则文本自己用破折号＝在示范这种句式（项目里已有同类测试，这里覆盖到「原因」那一段，
   // 因为 describeWakeReasonV2 会按原因返回不同文案，之前只在 reason='message' 下被测过）。
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   h.getSocialV2State(key);
   for (const reason of ['message', 'atMention', 'nameMention', 'speaker:kafka', 'keyword:大肥鱼', 'proactiveCheck', 'probability', 'replyCheck', 'busyRecovery', 'timeout', 'admin']) {
@@ -1232,7 +1232,7 @@ await test('各种唤醒原因的提示文本都不能出现字面破折号', as
 });
 
 await test('唤醒提示要讲清「是不是在跟你说话」', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   h.getSocialV2State(key);
   const bySpeaker = h.buildWakePromptV2(key, 'speaker:kafka');
@@ -1248,7 +1248,7 @@ await test('唤醒提示要讲清「是不是在跟你说话」', async (h) => {
 // 线上事故（2026-10-13 11:57 群 1050666134）：owner 发的 B 站卡片触发 question 唤醒，撞上频率上限，
 // 旧代码直接 return 把唤醒原因丢了 → 那条消息永远没人处理，群里看到的就是「AI 没回我」。
 await test('唤醒频率超限不能丢掉：要暂存，额度恢复后自动补投', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   const st = h.getSocialV2State(key);
   st.wakeTimes = [Date.now()]; // maxWakePerMinute 默认 1：这一分钟的额度已用掉
@@ -1290,7 +1290,7 @@ await test('旧状态补种：从已有发言推导出 selfSaid（含回复）�
 });
 
 await test('自己说过的话要进记忆：回复里的内容也算（kind=reply），开盘轮算 opener', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   const st = h.getSocialV2State(key);
   st.lastWakeReason = 'speaker:kafka';           // 回复轮
@@ -1312,7 +1312,7 @@ await testWith(
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     // 两天前「回复」里讲过耳虫；主动开盘的记忆里没有它
@@ -1373,14 +1373,14 @@ await test('主动开话题：不相干的两条开盘不该被误判成重复',
 
 await testWith({ config: { socialV2: { proactive: { avoidKeywords: ['LOL', '英雄联盟'], domains: [] } } } },
   '主动开话题：avoidKeywords 会写进提示词', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const prompt = h.buildProactiveTopicBlock(h.getSocialV2State('group:456'));
     assert.match(prompt, /【主动开话题时别碰】LOL \/ 英雄联盟/);
     assert.match(prompt, /除非群里刚有人主动聊起来/, '只在主动开口时约束，群友提起不算');
   });
 await testWith({ config: { socialV2: { proactive: { rememberOpeners: 2, openerChars: 20, domains: [] } } } },
   '主动开话题：主动回合发出的消息被记成「开的头」，条数/长度受限', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.lastWakeReason = 'proactiveCheck';
     h.recordSentMessagesV2('group:456', ['第一条主动话题内容很长很长很长很长很长很长很长很长']);
@@ -1396,7 +1396,7 @@ await testWith({ config: { socialV2: { proactive: { rememberOpeners: 2, openerCh
   });
 await testWith({ config: { socialV2: { proactive: { rememberOpeners: 3, domains: [] } } } },
   '主动开话题：记下的头会落盘（重启后仍然反重复）', async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.lastWakeReason = 'proactiveCheck';
     h.recordSentMessagesV2('group:456', ['聊过的老话题']);
@@ -1450,7 +1450,7 @@ await test('真实的出网校验器会拦掉非 http(s) 与本机地址（卡�
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：只发一个 json 段，app/view 由桥接写死（AI 给不了 JSON）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const result = await h.sendCardV2('private:123', { url: 'https://example.com/a?b=1', title: '标题', desc: '摘要' });
   const segments = h.calls.ws.filter((c) => c.action === 'send_private_msg').at(-1).params.message;
   assert.equal(segments.length, 1, '只有卡片段（一条消息只能是一张卡）');
@@ -1466,7 +1466,7 @@ await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：只发一个
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：本机/内网/非 http(s) 的链接一律拒发', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   for (const bad of ['http://127.0.0.1:3100/?token=secret', 'http://localhost:3100/', 'file:///etc/passwd', 'javascript:alert(1)']) {
     await assert.rejects(() => h.sendCardV2('private:123', { url: bad, title: 'x' }), /不允许/, `应拒绝 ${bad}`);
   }
@@ -1475,14 +1475,14 @@ await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：本机/内�
 });
 
 await testWith({ config: { socialV2: { card: { enabled: true, allowHosts: ['example.com'] } } }, globals: cardNetStub }, '卡片：allowHosts 后缀匹配且带点边界', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.sendCardV2('private:123', { url: 'https://a.example.com/x', title: 'ok' });
   await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://evil.com/x', title: 'x' }), /白名单/);
   await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://evil-example.com/x', title: 'x' }), /白名单/, 'evil-example.com 不能因为叫 example.com 就放行');
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：标题/摘要压控制字符并截断，令牌泄露被拦', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await h.sendCardV2('private:123', { url: 'https://example.com/a', title: `标题\n\n注入\u0000${'A'.repeat(300)}`, desc: '摘要\r\n换行' });
   const card = JSON.parse(h.calls.ws.filter((c) => c.action === 'send_private_msg').at(-1).params.message[0].data.data);
   assert.ok(!/[\n\r\u0000]/.test(card.meta.news.title), '控制字符被压掉');
@@ -1493,12 +1493,12 @@ await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：标题/摘�
 });
 
 await testWith({ config: { socialV2: { card: { enabled: false } } }, globals: cardNetStub }, '卡片：开关关掉后直接拒绝', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: 'x' }), /已关闭/);
 });
 
 await testWith({ config: cardCfg, globals: cardNetStub }, '卡片：空标题空摘要拒绝（否则是张空卡）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   await assert.rejects(() => h.sendCardV2('private:123', { url: 'https://example.com/a', title: '', desc: '' }), /至少要有一个/);
 });
 
@@ -1685,7 +1685,7 @@ await test('stale turn marker is detected as stuck busy and cleared', async (h) 
 // 这里钉住三条：① 二代每轮唤醒都讲清术语；② 一代只在这批真有管理员消息时讲，不白占上下文；
 // ③ 「活跃成员」接口不再输出会被误读成群主的 isOwner，改成 isBridgeAdmin + 真实 groupRole。
 await test('身份术语：二代唤醒提示分清「桥接管理员」与「QQ 群主」', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【「管理员」≠「群主」】/, '每轮钉一次术语');
   assert.match(prompt, /桥接管理员（ownerQQ/, '说明【管理员】= ownerQQ');
@@ -1705,7 +1705,7 @@ await test('身份术语：一代批次提示只在这批真有管理员消息�
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const st = h.getSocialV2State('group:456');
     st.recentMessages.push({ sender: '米哈游㍿', userId: '123', text: 'hi', isOwner: true, time: Date.now() });
     const result = await new Promise((resolve, reject) => {
@@ -1808,7 +1808,7 @@ await test('表情包（QQ 动画表情）不能被当成普通图片显示', as
   assert.equal(photoText, '[图片]');
 });
 await test('表情包提示：告诉 AI 这是表情包、重复发很正常', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const hint = h.mediaHintFor('group:456', '123', [{ kind: 'image', file: 'a.jpg', label: '[动画表情]' }]);
   assert.match(hint, /表情包/, '要点明是表情包');
   assert.match(hint, /不要指出「你发过了/, '明确禁止「你发过了/存重了」这类话');
@@ -1817,7 +1817,7 @@ await test('表情包提示：告诉 AI 这是表情包、重复发很正常', a
   assert.ok(!/不要指出/.test(photoHint), '普通图片不该带上表情包那套说明');
 });
 await test('表情包身份随消息一起进入 AI 上下文（label/subType/summary）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.appendSocialV2Message('group:456', '玄真', '[动画表情]', '[动画表情]', false, false, 998877,
     [{ kind: 'image', file: 'CC3150002E5FFB86AD5D99A7F9B0C33F.jpg', url: 'https://example.invalid/x', subType: '1', summary: '[动画表情]', label: '[动画表情]' }],
     '2814656262', [], null, null);
@@ -1829,7 +1829,7 @@ await test('表情包身份随消息一起进入 AI 上下文（label/subType/su
   assert.equal(msg.media[0].summary, '[动画表情]');
 });
 await test('唤醒提示里带上「表情包可以重复」的行为规则', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【表情包可以重复】/);
   assert.match(prompt, /不要\*\*说「你发过了/);
@@ -1840,7 +1840,7 @@ await test('唤醒提示里带上「表情包可以重复」的行为规则', as
 // 暂存唤醒有 sendWakePromptV2 与 scheduleWakeV2 两条入口，群友消息走后者，
 // 而看门狗只认 pendingSince —— 只有前者会写它。于是这个会话永远不被回收。
 await test('真的在跑回合时只暂存，但必须写 pendingSince（看门狗兜底）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   const st = h.getSocialV2State(key);
   const sid = 'session-running';
@@ -1856,7 +1856,7 @@ await test('真的在跑回合时只暂存，但必须写 pendingSince（看门�
   assert.equal(h.calls.prompts.length, 0, 'DST 真的在跑回合时不该强行投递');
 });
 await test('残留 turn 标记 + DSH 空闲：当场清掉并投递，不让群友等 8 分钟', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   const sid = 'session-stale';
   h.state.sessions[key] = sid;
@@ -1873,7 +1873,7 @@ await test('残留 turn 标记 + DSH 空闲：当场清掉并投递，不让群�
   assert.equal((h.socialV2.conversations.get(key)?.pendingWakeReasons ?? []).length, 0, '即时投递后不该再留重复的暂存意图');
 });
 await test('忙标记是 pendingWakeKey 残留时，DSH 报空闲也要能自救', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   const sid = 'session-stuck2';
   h.state.sessions[key] = sid;
@@ -1909,7 +1909,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       // 上一批已经投给 AI（水位 451）；随后 452 在两次 wait 之间到达
@@ -1932,7 +1932,7 @@ await test('mark_read 不该把从没给 AI 看过的消息静默清掉', async 
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     st.wakeConfig.mode = 'active'; // 绕开沉睡前观察闸门，本用例只验证「会不会丢消息」
@@ -1967,7 +1967,7 @@ await test('表情包管理接口：本地备注 / QQ 备注 / 置顶 / 删除 /
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
     const T = 'token=fixture-console-token';
     const key = 'group:456';
-    h.setMode('reserved2'); // AI 视角的列表接口只在二代模式允许该会话
+    h.setMode('chat'); // AI 视角的列表接口只在二代模式允许该会话
     const st = h.getSocialV2State(key);
 
     // 列表（会先从 QQ 同步一次；FakeBot 的 fetch_custom_face_detail 返回 fixture-sticker）
@@ -2022,7 +2022,7 @@ await test('表情包管理接口：本地备注 / QQ 备注 / 置顶 / 删除 /
 // 以前预览图只解析不接线，卡片在 AI 眼里就是一行文字，群里聊「封面就吓哭了」时
 // 它只能回「封面发来看看」——数据明明就在消息里。
 await test('入站卡片的预览图要挂成图片媒体，并在提示里点明是卡片封面', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const cardJson = JSON.stringify({
     app: 'com.tencent.structmsg',
     view: 'mini',
@@ -2068,7 +2068,7 @@ await test('视频段要被识别，且提示指向 qq_get_message_video', async
   assert.ok(media[0].url.includes('multimedia.nt.qq.com.cn'), '要留下视频直链');
   assert.ok(media[0].thumb.includes('thumb'), '要留下封面');
 
-  h.setMode('reserved2');
+  h.setMode('chat');
   const hint = h.mediaHintFor('group:456', '123', media);
   assert.match(hint, /qq_get_message_video/, '提示要直接给出抽帧工具');
   assert.match(hint, /没有语音转写/, '要提前说清听不到声音，免得 AI 编台词');
@@ -2100,7 +2100,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       h.appendSocialV2Message(key, '米哈游㍿', '[视频]', '[视频]', false, true, 489000,
@@ -2147,7 +2147,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       h.appendSocialV2Message(key, '米哈游㍿', '[视频]', '[视频]', false, true, 489100,
@@ -2178,7 +2178,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const key = 'group:456';
       const st = h.getSocialV2State(key);
       h.appendSocialV2Message(key, '米哈游㍿', '[视频]', '[视频]', false, true, 489101,
@@ -2202,7 +2202,7 @@ await testWith(
 // 角色卡在二代**不是每轮注入**（只给名字，正文要 qq_get_prompt 才读到），
 // 所以每轮唤醒提示里必须自带这一条，否则改了 preset 也得等会话重建才生效。
 await test('唤醒提示里给出还嘴口径（默认幽默 + 贴吧老哥风 + 边界）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /默认幽默/, '默认要幽默，别端着');
   assert.match(prompt, /贴吧老哥/, '真要还嘴时按贴吧老哥那一档');
@@ -2216,7 +2216,7 @@ await test('合并转发图片：分页取、报总数、单次上限可配', as
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     const T = 'token=fixture-console-token';
@@ -2297,7 +2297,7 @@ const UNLABELED_FIXTURE = [
   { id: 'stk-b', resId: 'stk-b', url: 'https://x/b.jpg', md5: 'BBB', desc: '', localRemark: '', localNote: '', tags: [], source: 'manual' }
 ];
 await testWith({ stickerState: UNLABELED_FIXTURE }, '自动补备注开关（默认开）：唤醒提示里有欠账与具体 id', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /还没有任何备注/, '默认要报出欠账');
   assert.match(prompt, /本次就补这 2 个/, '要给具体 id，别只给抽象指令');
@@ -2306,7 +2306,7 @@ await testWith(
   { stickerState: UNLABELED_FIXTURE, config: { socialV2: { sticker: { autoLabel: false } } } },
   '自动补备注开关（关）：唤醒提示里不再催，且不影响其它提示',
   async (h) => {
-    h.setMode('reserved2');
+    h.setMode('chat');
     const prompt = h.buildWakePromptV2('group:456', 'message');
     assert.ok(!/还没有任何备注/.test(prompt), '关掉后不该再出现欠账');
     assert.match(prompt, /【可用表情包】/, '常规表情清单照旧');
@@ -2321,7 +2321,7 @@ await testWith({ stickerState: UNLABELED_FIXTURE }, '手动触发补备注：直
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const T = 'token=fixture-console-token';
 
     const r1 = await apiRequest(server, `/api/stickers/autolabel-now?${T}`, { body: {} });
@@ -2365,7 +2365,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const r = await apiRequest(server, '/api/stickers/autolabel-now?token=fixture-console-token', { body: {} });
       assert.equal(r.status, 200, r.body?.error || '');
       assert.equal(r.body.asked, 3, 'manualLabelCount=3 时一次问 3 个');
@@ -2381,7 +2381,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const one = await apiRequest(server, '/api/stickers/autolabel-now?token=fixture-console-token', { body: { count: 1 } });
       assert.equal(one.body.asked, 1, 'body.count 优先于配置默认值');
     } finally { await new Promise((resolve) => server.close(resolve)); await h.close(); }
@@ -2394,7 +2394,7 @@ await testWith(
     const server = h.startConsoleServer();
     try {
       if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-      h.setMode('reserved2');
+      h.setMode('chat');
       const r = await apiRequest(server, '/api/stickers/autolabel-now?token=fixture-console-token', { body: { count: 999 } });
       assert.equal(r.body.asked, 6, '最多就是要补的欠账数（6 个），不会凭空要 999 个');
       assert.equal(r.body.remaining, 0);
@@ -2426,7 +2426,7 @@ await testWith({ forwardFixtures: FORWARD_FIXTURES }, '多层合并转发：递�
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     // 让这个 forward id 属于「本会话见过」，否则安全闸门会拒（真实路径也是这样）
@@ -2505,7 +2505,7 @@ await test('图片投喂安全区：超 1.5MB 或 2.5MP 必须重编码（DSH �
 // 整蛊/钓鱼：模型默认会老实地纠正/自证，那正好是对方要的效果。
 // 这条和「被挑衅可以骂回去」是同类策略（给许可 + 划边界），所以都写在每轮唤醒提示里。
 await test('唤醒提示里明确允许「被整蛊不用老实答」并划了边界', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【被整蛊不用老实答】/, '要给明确许可');
   assert.match(prompt, /不必按字面回答/, '要说清可以不老实答');
@@ -2524,7 +2524,7 @@ await test('唤醒提示里明确允许「被整蛊不用老实答」并划了�
 // 平均 40 字（群友 9.7 字）。模型自己不会觉得这些有问题，必须每轮点名禁掉。
 // 顺带：提示文本本身以前也满是破折号（在示范这种句式），已经一起清干净。
 await test('反公式化：唤醒提示点名禁用破折号与发语词，并要求短句', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【别用这些公式化句式】/);
   assert.match(prompt, /不要用破折号/, '破折号要明确禁掉（写法上不能用字面破折号，否则等于在示范）');
@@ -2538,7 +2538,7 @@ await test('反公式化：唤醒提示点名禁用破折号与发语词，并�
 
 // 群里聊得热闹但没自己的事时：发一张贴气氛的表情包冒泡，比硬接一句或直接消失都自然。
 await test('没人理时可以发表情包冒泡（提示里要有这个出口）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /没人理你时用表情包冒泡|没人理你时可以发张表情包冒泡|发一张\*\*对得上当下气氛\*\*的表情包/, '要给「用表情包冒泡」这个出口');
   assert.match(prompt, /别把情绪配反|别配反情绪/, '选图要贴气氛');
@@ -2546,7 +2546,7 @@ await test('没人理时可以发表情包冒泡（提示里要有这个出口�
 
 // 有些消息 @ 某个人比引用更合适（答他的问题、cue 他、把话抛给他）。
 await test('回复某个人时可以用 atUserId 点名', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /atUserId/, '要提到点名工具');
   assert.match(prompt, /要回的是某个人/, '说清什么场景该点名');
@@ -2555,7 +2555,7 @@ await test('回复某个人时可以用 atUserId 点名', async (h) => {
 
 // 复读是群聊常见玩法：不该惊讶/质疑，合适时自己也可以跟着复。
 await test('复读是正常玩法：不许惊讶质疑，允许跟着复', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【复读是正常玩法】/);
   assert.match(prompt, /不要惊讶也不要问/, '先禁掉「你们怎么都在复读」这种扫兴反应');
@@ -2565,7 +2565,7 @@ await test('复读是正常玩法：不许惊讶质疑，允许跟着复', async
 
 // 梗图 / 转发消息的内容常是反串玩梗，不是有人在陈述事实。
 await test('梗图/转发消息要按反串玩梗甄别，别当成待核实事实', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /【梗图\/转发消息多为反串玩梗】/);
   assert.match(prompt, /不是有人在跟你陈述事实/, '说清误判点');
@@ -2623,7 +2623,7 @@ await test('动图抽多帧投喂，不再只给第一帧', async (h) => {
 
 // 动图在提示里要写明「工具会返回多帧」，否则 AI 只看第一帧就下结论。
 await test('媒体提示要提醒可能是动图', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const hint = h.mediaHintFor('group:1', '42', [{ kind: 'image', label: '[动画表情]', file: 'x.gif' }]);
   assert.match(hint, /动图/, '要提到动图');
   assert.match(hint, /别只看第一帧/, '要明确别只看第一帧');
@@ -2631,7 +2631,7 @@ await test('媒体提示要提醒可能是动图', async (h) => {
 
 // 多帧是同一个表情的不同瞬间，不是「你发了好几张图」。
 await test('唤醒提示要说清多帧是同一个表情', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /动图会一次给你好几帧/, '要预告多帧');
   assert.match(prompt, /同一个表情/, '要说清多帧属于同一个表情');
@@ -2660,7 +2660,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true, maxMessages: 100, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, '断线期间第一条'), histMsg(102, '断线期间第二条'), histMsg(103, '断线期间第三条')] } }
 }, '掉线补拉：断线期间漏掉的消息能补回来', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100;
   st.recentMessages = [{ seq: 1, gwSeq: 100, messageId: '999', sender: '玄真', text: '断线前最后一条', time: Date.now() - 300000 }];
@@ -2682,7 +2682,7 @@ await testWith({
 // 但**已经在跑的那个回合手里还是旧令牌** → 它所有工具调用被拒（"agent token 无效"），连发消息都失败，
 // 用户看到的就是「机器人哑了」。旧令牌本来就属于同一会话，给 30 分钟宽限期。
 await test('会话重建后旧令牌要有宽限期（否则在跑的那个回合会全废）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';  // 用白名单内的群（private:456 不在装置白名单里，唤醒会被跳过）
   const st = h.getSocialV2State(key);
   // 先真建一个会话（retireSession 只对「有会话」的会话做事）
@@ -2722,7 +2722,7 @@ await testWith({
     },
   },
 }, '掉线补拉：message_seq 不单调时也要能补到（不能拿最大 seq 当水位）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('private:123');
   st.lastGwSeq = 59884; // 被一条更早、seq 更大的消息顶上去的水位
   st.recentMessages = [{ seq: 70, gwSeq: 51993, messageId: 'old-1', sender: 'owner', text: '这个是什么角色', time: Date.now() - 6 * 3600 * 1000 }];
@@ -2756,7 +2756,7 @@ await testWith({
     },
   },
 }, '掉线补拉：私聊漏掉的消息即使过了 10 分钟也要唤醒（群里仍然只入库）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('private:123');
   st.lastGwSeq = 0;
   st.recentMessages = [];
@@ -2780,7 +2780,7 @@ await testWith({
     },
   },
 }, '掉线补拉：中间缺口（比本地最新一条更早）也要补上', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 9999;
   // 本地已有更新的一条（5 分钟前），缺口在它之前
@@ -2798,7 +2798,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, 'A'), histMsg(102, 'B')] } }
 }, '掉线补拉：重复调用不会补第二次', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100;
   st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
@@ -2812,7 +2812,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, '别人发的'), histMsg(102, '机器人自己发的', { userId: BF_BOT })] } }
 }, '掉线补拉：过滤掉机器人自己发的消息', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100; st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
   const r = await h.backfillMissedMessages('test');
@@ -2824,7 +2824,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 15, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, '刚漏的一条')] } }
 }, '掉线补拉：少且新 → 唤醒 AI', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100; st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
   const r = await h.backfillMissedMessages('test');
@@ -2837,7 +2837,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true, wakeMaxMessages: 2, wakeMaxAgeMs: 600000 } } },
   history: { group: { 456: [histMsg(101, 'a'), histMsg(102, 'b'), histMsg(103, 'c'), histMsg(104, 'd')] } }
 }, '掉线补拉：补回太多 → 只入库不唤醒（别对旧账刷屏）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100; st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
   const r = await h.backfillMissedMessages('test');
@@ -2851,7 +2851,7 @@ await testWith({
     { ...histMsg(101, '很久以前漏的'), time: Math.floor(Date.now() / 1000) - 7200 }
   ] } }
 }, '掉线补拉：够旧 → 只入库不唤醒', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100; st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
   const r = await h.backfillMissedMessages('test');
@@ -2863,7 +2863,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: true } } },
   history: { group: { 456: [histMsg(101, 'A', { id: 'known-1' }), histMsg(102, 'B'), histMsg(103, 'C')] } }
 }, '掉线补拉：基线播种（重启后也能补）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   // 没有 lastGwSeq，但历史里有一条我们已认识的 messageId → 拿它当基线
   st.lastGwSeq = undefined;
@@ -2878,7 +2878,7 @@ await testWith({
   config: { socialV2: { backfill: { enabled: false } } },
   history: { group: { 456: [histMsg(101, 'A')] } }
 }, '掉线补拉：开关关闭时什么都不做', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const st = h.getSocialV2State('group:456');
   st.lastGwSeq = 100; st.recentMessages = []; st.unread = []; st.lastUnreadSeq = 0;
   const r = await h.backfillMissedMessages('test');
@@ -2890,7 +2890,7 @@ await testWith({
 // 唤醒提示里的禁则必须写成「一个都不要用」，不能是「别老用」——
 // 线上实测「别老用」被模型读成「偶尔用没关系」，规则挂了一轮「行，」照样一天出现两次。
 await test('反公式化：发语词与总结标签要绝对禁，不能写成「别老用」', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const prompt = h.buildWakePromptV2('group:456', 'message');
   assert.match(prompt, /下列写法一个都不要用/, '要写成绝对禁止');
   assert.ok(!/开场别老用/.test(prompt), '不能再留「别老用」这种软措辞');
@@ -2901,7 +2901,7 @@ await test('反公式化：发语词与总结标签要绝对禁，不能写成�
 
 // 发送收口必须真的会削——提示词压不住的确定性字符串，靠这层兜底。
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '发送收口会削掉「行，」「总结：」（提示词兜底）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   // sendMessagesV2 返回的就是「实际发出去的那几条」，直接断言它。
   const texts = await h.sendMessagesV2('group:456', ['行，我先按S31那个价位看，谢了', '总结：加钱才有那一档体验', '普通一句话'], []);
   assert.ok(texts.includes('我先按S31那个价位看，谢了'), `「行，」没被削：${JSON.stringify(texts)}`);
@@ -2911,7 +2911,7 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '发送收�
 
 // 开关关掉时不能再削（有人就想要原样）
 await testWith({ config: { socialV2: { style: { scrubFormulaic: false } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '口播清洗可以关掉', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const texts = await h.sendMessagesV2('group:456', ['行，我先按S31那个价位看'], []);
   assert.ok(texts.includes('行，我先按S31那个价位看'), `关掉后不该削：${JSON.stringify(texts)}`);
 });
@@ -2920,7 +2920,7 @@ await testWith({ config: { socialV2: { style: { scrubFormulaic: false } } }, glo
 // 线上真实需求：群里有人发了 6.3MB 的 PDF 并 @ 机器人问内容；旧版本只把它渲染成
 // `[文件 xxx.pdf]`，media 是空的，AI 完全不知道有这个文件。
 await test('文件消息：入库要带文件名/大小，提示要告诉 AI 用哪个工具读', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const key = 'group:456';
   h.appendSocialV2Message(key, '米哈游㍿', '[文件指南.pdf]', '[文件指南.pdf]', false, false, 700001,
     [{ kind: 'file', file: 'f.pdf', fileId: 'fid-1', url: 'https://x/a.pdf', name: '指南.pdf', size: 6 * 1024 * 1024 }], '1472298635');
@@ -2958,7 +2958,7 @@ await testWith({
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     h.appendSocialV2Message(key, '米哈游㿿', '[文件指南.pdf]', '[文件指南.pdf]', false, false, 700002,
@@ -2992,7 +2992,7 @@ await testWith({
 // 用群 key 调就「令牌无效」，只好拿私聊 key 配群消息 id 绕过去。读操作（看图/读文件）应允许
 // 任一有效会话令牌；写操作仍然严格按会话。
 await test('跨会话读文件：任一有效会话令牌都该放行（写操作不放开）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   const a = h.getSocialV2State('group:456');
   const b = h.getSocialV2State('private:1472298635');
   const tokenA = String(a.agentToken);
@@ -3079,7 +3079,7 @@ await testWith({
   const server = h.startConsoleServer();
   try {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
-    h.setMode('reserved2');
+    h.setMode('chat');
     const key = 'group:456';
     const st = h.getSocialV2State(key);
     const base = `/api/socialV2/send-voice?token=fixture-console-token`;
@@ -3107,7 +3107,7 @@ await testWith({
 // 并明确让模型别原样重发，模型 24 秒后照发 → 群里两条「一天念那么多字，电费你出啊」
 // （seq 38378 / 38379）。提示词劝不住，所以必须在发送侧硬拦。
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：回执不确定的那条不许原样再发', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.recordAiTextSend('group:456', '一天念那么多字，电费你出啊', 'uncertain');
   const dup = h.checkTextDupGuard('group:456', ['一天念那么多字，电费你出啊']);
   assert.ok(dup, '应当判为重复');
@@ -3119,7 +3119,7 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重�
 });
 
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：确认送达的只挡极短窗口', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   // 刚发过（0 秒前，status=sent）→ 拦
   h.recordAiTextSend('group:456', '笑死', 'sent');
   assert.ok(h.checkTextDupGuard('group:456', ['笑死']), '刚发过的原文应当拦');
@@ -3130,7 +3130,7 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重�
 });
 
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：复读别人的话不受影响', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   // 我们只发过 A；现在要发 B（群友刚说的话，AI 跟着复读）
   h.recordAiTextSend('group:456', '我发的原话', 'sent');
   assert.equal(h.checkTextDupGuard('group:456', ['群友刚才说的那句']), null, '复读别人的话不能被拦');
@@ -3140,14 +3140,14 @@ await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重�
 });
 
 await testWith({ globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门：空白差异算同一条（归一化）', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.recordAiTextSend('group:456', '一天念那么多字，电费你出啊', 'uncertain');
   assert.ok(h.checkTextDupGuard('group:456', ['  一天念那么多字，电费你出啊  ']), '前后空格不该绕过闸门');
   assert.ok(h.checkTextDupGuard('group:456', ['一天念那么多字， 电费你出啊'.replace('， ', '，')]), '归一化后仍应命中');
 });
 
 await testWith({ config: { socialV2: { send: { dupGuard: { enabled: false } } } }, globals: { scrubFormulaicSpeech, describeScrub } }, '原样重发闸门可以关掉', async (h) => {
-  h.setMode('reserved2');
+  h.setMode('chat');
   h.recordAiTextSend('group:456', '同一句', 'uncertain');
   assert.equal(h.checkTextDupGuard('group:456', ['同一句']), null, '关掉后不拦');
 });
