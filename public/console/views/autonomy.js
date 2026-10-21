@@ -5,7 +5,7 @@ export const id = 'autonomy';
 export const title = '自主性';
 export const desc = '它自己的目标、每天的自由行动预算、做过什么（L2）';
 export const icon = 'autonomy';
-export const group = '运行';
+export const group = '聊天';
 export const order = 3;
 
 import { api } from '../core/api.js';

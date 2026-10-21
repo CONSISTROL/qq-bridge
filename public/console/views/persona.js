@@ -8,7 +8,7 @@ export const id = 'persona';
 export const title = '角色设定';
 export const desc = '当前角色、角色库、静默开关';
 export const icon = 'persona';
-export const group = '运行';
+export const group = '聊天';
 export const order = 2;
 
 function renderRoleState(view, s) {

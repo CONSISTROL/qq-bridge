@@ -7,8 +7,8 @@ export const id = 'tools';
 export const title = '工具清单';
 export const desc = 'DSH 侧工具清单、后台控制端引导（向某个会话的 agent 投递提醒）';
 export const icon = 'tools';
-export const group = '总览';
-export const order = 6;
+export const group = '能力';
+export const order = 3;
 
 export async function mount(root) {
   const view = await mountFragment(root, 'tools');

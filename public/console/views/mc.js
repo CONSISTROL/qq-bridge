@@ -8,8 +8,8 @@ export const id = 'mc';
 export const title = 'Minecraft';
 export const desc = 'bot 状态 · 里程碑 · 背包 · 直播入口';
 export const icon = 'cube';
-export const group = '扩展';
-export const order = 20;
+export const group = '能力';
+export const order = 4;
 
 const MILESTONE_TITLES = {
   1: '生存开局（砍树/工作台/木镐木剑）',

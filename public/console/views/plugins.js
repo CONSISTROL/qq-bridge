@@ -5,8 +5,8 @@ export const id = 'plugins';
 export const title = '技能';
 export const desc = '声明式插件：用户添加 / AI 添加，各自的工具与定时任务';
 export const icon = 'plugins';
-export const group = '总览';
-export const order = 3;
+export const group = '能力';
+export const order = 2;
 
 import { api } from '../core/api.js';
 import { $, esc, setMsg, delegate, confirmDanger } from '../core/dom.js';

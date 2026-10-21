@@ -3,8 +3,8 @@ export const id = 'voicepack';
 export const title = '语音包';
 export const desc = '目标音色的参考音频（可从 B站视频抽取），供 TTS/变声参考';
 export const icon = 'voice';
-export const group = '语料';
-export const order = 12;
+export const group = '记忆与素材';
+export const order = 3;
 
 import { api } from '../core/api.js';
 import { $, esc, setMsg, confirmDanger, delegate } from '../core/dom.js';

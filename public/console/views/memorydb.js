@@ -4,7 +4,7 @@ export const id = 'memorydb';
 export const title = '记忆库';
 export const desc = '黑话 / 知识库 / 档案 / 成员备注 / 话题 / 想法 / 印象，全部在 state/memory.db';
 export const icon = 'memory';
-export const group = '语料';
+export const group = '记忆与素材';
 export const order = 1;
 
 import { api } from '../core/api.js';

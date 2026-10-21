@@ -11,8 +11,8 @@ export const id = 'album';
 export const title = '相册';
 export const desc = '所有图片：聊天收到 · AI 发出 · 图库 · 抓取 · 视频帧';
 export const icon = 'image';
-export const group = '语料';
-export const order = 11;
+export const group = '记忆与素材';
+export const order = 2;
 
 const PAGE = 60;
 

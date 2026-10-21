@@ -17,7 +17,7 @@ export const title = '聊天模式';
 export const desc = 'AI 工具开关、唤醒/发送/等待参数、工具日志、轻量记忆、工具级配置';
 export const icon = 'chat';
 export const group = '聊天';
-export const order = 2;
+export const order = 1;
 
 // 默认关闭的工具开关：只有 config.tools[flag] === true 才算开启（与 bridge/mcp 侧一致），
 // 也意味着「全部开启」不会顺手打开它们。目前只有真·QQ 写操作属于这一类。
