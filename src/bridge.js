@@ -6015,17 +6015,20 @@ const agentTokenOk = (key, token) => {
     }
     // 第 0 步：消息段里本身就有 QQ 图床 URL 时，直接抓（快、且不依赖网关）。
     // 为什么放在 get_image 之前：网关的 get_image 在 QQ 图床上会卡 20s 才失败，AI 等不起就报"看不到图"。
-    if (media.url) {
+    // 有些消息（表情/贴图）没有 url 字段，图片地址塞在 file 里，也要当 URL 处理
+    const mediaUrl = String(media.url || (/^https?:\/\//i.test(String(media.file || '')) ? media.file : ''));
+    if (mediaUrl) {
       try {
-        const host = new URL(String(media.url)).hostname;
-        if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$/i.test(host)) {
-          const res = await fetch(String(media.url), {
+        const host = new URL(mediaUrl).hostname;
+        // p.qpic.cn / gchat.qpic.cn 这类表情图床是 qpic.cn，不在 qq.com 域下，必须单独放行
+        if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$|(^|\.)qpic\.cn$/i.test(host)) {
+          const res = await fetch(mediaUrl, {
             headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
             signal: AbortSignal.timeout(20000)
           });
           if (res.ok) {
             const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: String(media.url) };
+            if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: mediaUrl };
           }
         }
       } catch (error) {
