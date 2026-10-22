@@ -2046,7 +2046,16 @@ async function main() {
               if (isPlaceholderImageUrl(r.url || target)) throw new Error(`抓到的是站点 404 占位图（${r.url || target}）`);
               if (!looksLikeImageBuffer(r.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
               return r;
-            } catch (error) { last = error; }
+            } catch (error) {
+              last = error;
+              // safe-fetch 超时/失败 → 直连兜底一次（外链图大多靠这条）
+              try {
+                const direct = await fetchImageDirect(target, limits.maxBytes, stageHeaders, timeoutMs);
+                if (isPlaceholderImageUrl(direct.url || target)) throw new Error('抓到的是站点 404 占位图');
+                log(`[image] safe-fetch 失败（${error?.message ?? error}），直连兜底成功：${target.hostname}`);
+                return direct;
+              } catch (err2) { last = err2; }
+            }
           }
           throw last;
         };
@@ -2105,7 +2114,16 @@ async function main() {
         throw new Error(`pixiv 图片抓取失败（不是白名单问题，pixiv 系域名始终放行；是取图通道慢/断。已试 ${tried.join('；')}）`);
       }
       // 认不出作品 id 的 pixiv 系地址（少见）也把超时放宽：默认 20s 对代理取 pixiv 太短。
-      const res = await safeFetchBuffer(raw, limits.maxBytes, fetchOpts(pixivHost ? { timeoutMs: PIXIV_IMAGE_TIMEOUT_MS * 2 } : {}));
+      let res;
+      try {
+        res = await safeFetchBuffer(raw, limits.maxBytes, fetchOpts(pixivHost ? { timeoutMs: PIXIV_IMAGE_TIMEOUT_MS * 2 } : {}));
+      } catch (error) {
+        if (pixivHost) throw error;   // pixiv 有自己的代理链，别乱兜底
+        // safe-fetch 按自己的 DNS/IP 直连，对不少 CDN 会超时；这里用普通 fetch 再试一次，
+        // 仍做公网校验 + 图片魔数 + 体积上限（见 fetchImageDirect）
+        log(`[image] safe-fetch 失败（${error?.message ?? error}），改用直连`);
+        res = await fetchImageDirect(raw, limits.maxBytes, headers, 20000);
+      }
       if (isPlaceholderImageUrl(res.url)) throw new Error(`抓到的是站点 404 占位图（${res.url}）`);
       if (!looksLikeImageBuffer(res.buffer)) throw new Error('抓到的内容不是有效图片（PNG/JPEG/GIF/WebP）');
       return { buffer: res.buffer, via: 'url', url: res.url, referer: headers.referer || '' };
@@ -6232,6 +6250,33 @@ const agentTokenOk = (key, token) => {
    * `maxCount` 默认沿用单条消息的上限（MAX_MEDIA_COUNT）；合并转发那种「一条消息里
    * 塞了几十张图」的场景由调用方显式放宽，但**不会**无限放宽，见 forward-media 端点。
    */
+  /**
+   * 远程图片「直连兜底」：safe-fetch 走自己的 DNS/IP 直连，对不少 CDN（腾讯图床、Cloudflare、
+   * 部分自建图片站）会 20s 超时；这里用普通 fetch 再试一次，但仍然做三道校验：
+   *   ① 只允许 http(s) 且域名解析到公网地址（挡 SSRF）；
+   *   ② 内容必须是合法图片魔数；
+   *   ③ 体积不超过上限。
+   */
+  async function fetchImageDirect(urlString, maxBytes, headers = {}, timeoutMs = 20000) {
+    const target = new URL(String(urlString));
+    if (!/^https?:$/i.test(target.protocol)) throw new Error('协议不允许');
+    const dnsMod = await import('node:dns/promises');
+    const addrs = await dnsMod.lookup(target.hostname, { all: true }).catch(() => []);
+    if (!addrs.length) throw new Error(`DNS 解析失败：${target.hostname}`);
+    const isPrivate = (ip) => /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|::1$|fc|fd|fe80)/i.test(String(ip));
+    if (addrs.every((a) => isPrivate(a.address))) throw new Error(`目标解析到内网地址，已拒绝：${target.hostname}`);
+    const res = await fetch(target, {
+      headers: { 'user-agent': 'Mozilla/5.0', ...headers },
+      signal: AbortSignal.timeout(Math.max(5000, timeoutMs))
+    });
+    if (!res.ok) throw new Error(`直连返回 ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) throw new Error('直连返回空内容');
+    if (buf.length > maxBytes) throw new Error(`图片超出体积上限（${Math.round(buf.length / 1024)}KB）`);
+    if (!looksLikeImageBuffer(buf)) throw new Error('直连抓到的不是有效图片');
+    return { buffer: buf, url: String(urlString) };
+  }
+
   // ── 图片落盘缓存 ──────────────────────────────────────────────
   // 为什么要缓存：QQ 图床的下载链接是带签名、有时效的，几小时后就 400 失效，
   // 于是"历史图片看不到"，只能让群友重发。收图时立刻存一份本地副本即可根治。

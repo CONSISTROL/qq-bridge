@@ -39,6 +39,8 @@ export function hostnameOf(url) {
 export function hostInImageAllowList(hostname, allowList) {
   const list = Array.isArray(allowList) ? allowList : [];
   if (!list.length) return true;
+  // 显式写 "*" = 放开所有站点（仅在 allowRemoteUrl=true 时才需要，SSRF 防护仍在 fetch 层）
+  if (list.some((entry) => String(entry ?? '').trim() === '*')) return true;
   const host = String(hostname ?? '').toLowerCase();
   if (!host) return false;
   return list.some((entry) => {
