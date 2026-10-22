@@ -542,7 +542,7 @@ export function createConsoleCoreRoutes(deps) {
       try {
         const body = await readBody();
         const key = String(body.key ?? '').trim();
-        const r = await generateImage({ cfg, prompt: body.prompt, size: body.size });
+        const r = await generateImage({ cfg: { ...cfg, stateDir: STATE_DIR }, prompt: body.prompt, size: body.size });
         if (!r.ok) { sendJson(r, 400); return; }
         if (!key) {
           // 没给 key 时把图落盘供控制台预览，不发送

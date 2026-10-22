@@ -1,16 +1,16 @@
-// 画图：接入火山引擎方舟（豆包 Seedream）文生图。
+// 画图：网页版 ChatGPT 优先 + Pollinations 免费兜底。（豆包/Ark 通道已按 owner 要求移除）
 //
 // 为什么走桥接而不是 MCP 侧直连：密钥只在桥接的 config.json 里（不进 DSH 侧配置），
 // 出图后直接复用现有的图片发送链路（缩放/体积上限/防重复都在那里）。
 //
 // 接口（OpenAI 兼容风格）：
-//   POST https://ark.cn-beijing.volces.com/api/v3/images/generations
 //   Authorization: Bearer <ARK_API_KEY>
 //   { model, prompt, size: '1024x1024', response_format: 'url'|'b64_json', watermark: false }
 import { safeFetchBuffer } from './safe-fetch.js';
+import { generateImageChatgpt } from './draw-web.js';
 
-const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-const DEFAULT_MODEL = 'doubao-seedream-3-0-t2i-250415';
+// 已按 owner 要求移除豆包（Ark）通道；现在只有 chatgpt-web 与 pollinations 两条。
+const DEFAULT_MODEL = 'chatgpt-web';
 const SIZES = new Set(['1024x1024', '864x1152', '1152x864', '1280x720', '720x1280', '832x1248', '1248x832']);
 
 
@@ -37,7 +37,7 @@ async function generatePollinations({ prompt, size, timeoutMs }) {
 export function drawConfig(cfg) {
   const d = cfg?.draw ?? {};
   return {
-    provider: String(d.provider || '').trim() || (d.apiKey ? 'ark' : 'pollinations'),
+    provider: String(d.provider || '').trim() || 'auto',
     enabled: d.enabled === true,
     apiKey: String(d.apiKey ?? '').trim(),
     model: String(d.model ?? '').trim() || DEFAULT_MODEL,
@@ -53,33 +53,23 @@ export function drawConfig(cfg) {
 export async function generateImage({ cfg, prompt, size, timeoutMs = 120000 } = {}) {
   const c = drawConfig(cfg);
   if (!c.enabled) return { ok: false, error: '画图未启用（config.json → draw.enabled）' };
-  // 免费通道：不需要 key，直接走 Pollinations
   if (c.provider === 'pollinations') return generatePollinations({ prompt, size: size || c.size, timeoutMs });
-  if (!c.apiKey) return { ok: false, error: '画图缺少密钥（config.json → draw.apiKey）' };
+  // chatgpt / auto：先试网页版 ChatGPT，失败自动回落 Pollinations（免费），保证"画得出图"
+  if (c.provider === 'chatgpt' || c.provider === 'auto') {
+    const web = await generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, timeoutMs });
+    if (web.ok) return web;
+    if (c.provider === 'chatgpt') return web;
+    const fb = await generatePollinations({ prompt, size: size || c.size, timeoutMs });
+    return fb.ok ? { ...fb, fallback: true, note: `ChatGPT 失败（${web.error}），已自动回落免费通道` } : { ...web, fallbackError: fb.error };
+  }
+  return { ok: false, error: `未知 provider：${c.provider}` };
   const p = String(prompt ?? '').trim().slice(0, 800);
   if (!p) return { ok: false, error: 'prompt 不能为空' };
   const sz = SIZES.has(String(size ?? '')) ? String(size) : c.size;
 
   // 注意：这里不能用 safe-fetch —— 它只支持 GET 且会剥掉 Authorization 头（安全设计）。
   // 目标是我们自己配置的固定可信域名，用 Node 内置 fetch + 超时即可。
-  let res;
-  try {
-    res = await fetch(ARK_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${c.apiKey}` },
-      body: JSON.stringify({ model: c.model, prompt: p, size: sz, response_format: 'url', watermark: c.watermark }),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-  } catch (error) {
-    return { ok: false, error: `出图请求失败：${error?.message ?? error}` };
-  }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    return { ok: false, error: `出图接口 ${res.status}：${body.slice(0, 300)}` };
-  }
-  let data;
-  try { data = await res.json(); } catch (error) { return { ok: false, error: `出图响应不是 JSON：${error?.message ?? error}` }; }
-
+  return { ok: false, error: 'Ark 通道已移除（改用 chatgpt/pollinations）' };
   const first = Array.isArray(data?.data) ? data.data[0] : null;
   if (!first) return { ok: false, error: `出图响应里没有图片：${JSON.stringify(data).slice(0, 200)}` };
 
