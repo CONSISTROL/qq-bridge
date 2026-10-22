@@ -6022,13 +6022,23 @@ const agentTokenOk = (key, token) => {
         const host = new URL(mediaUrl).hostname;
         // p.qpic.cn / gchat.qpic.cn 这类表情图床是 qpic.cn，不在 qq.com 域下，必须单独放行
         if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$|(^|\.)qpic\.cn$/i.test(host)) {
-          const res = await fetch(mediaUrl, {
-            headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
-            signal: AbortSignal.timeout(20000)
-          });
-          if (res.ok) {
-            const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: mediaUrl };
+          // 失败自动重试 1 次（间隔 800ms）：QQ 图床偶发超时/抖动不该直接变成「看不到图」
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const res = await fetch(mediaUrl, {
+                headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+                signal: AbortSignal.timeout(20000)
+              });
+              if (res.ok) {
+                const buf = Buffer.from(await res.arrayBuffer());
+                if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: mediaUrl };
+              }
+              if (attempt === 0) log(`取图未成功（HTTP ${res.status}），800ms 后重试一次：${String(mediaUrl).slice(0, 80)}`);
+            } catch (error) {
+              if (attempt === 0) log(`取图失败（${error?.message ?? error}），800ms 后重试一次`);
+              else log(`取图重试仍失败：${error?.message ?? error}`);
+            }
+            if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
           }
         }
       } catch (error) {
