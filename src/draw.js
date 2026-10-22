@@ -56,7 +56,7 @@ export async function generateImage({ cfg, prompt, size, timeoutMs = 120000 } = 
   if (c.provider === 'pollinations') return generatePollinations({ prompt, size: size || c.size, timeoutMs });
   // chatgpt / auto：先试网页版 ChatGPT，失败自动回落 Pollinations（免费），保证"画得出图"
   if (c.provider === 'chatgpt' || c.provider === 'auto') {
-    const web = await generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, timeoutMs });
+    const web = await generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, projectUrl: cfg?.draw?.chatgptProjectUrl || '', timeoutMs });
     if (web.ok) return web;
     if (c.provider === 'chatgpt') return web;
     const fb = await generatePollinations({ prompt, size: size || c.size, timeoutMs });
