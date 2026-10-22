@@ -95,6 +95,8 @@ async function doGenerate({ stateDir, prompt, projectUrl, timeoutMs }) {
 
     const baseline = await page.evaluate(() => [...document.querySelectorAll('img')].map((i) => i.src)).catch(() => []);
     const baselineBlobCount = baseline.filter((u) => String(u).startsWith('blob:')).length;
+    const readTurns = () => page.evaluate(() => document.querySelectorAll('article[data-testid^="conversation-turn"]').length).catch(() => 0);
+    const baselineTurns = await readTurns();
 
     // ChatGPT 的输入框是 #prompt-textarea（ProseMirror），项目页/新会话页都可能有可见延迟
     await page.waitForSelector('#prompt-textarea, div[contenteditable="true"], textarea', { timeout: 45000 }).catch(() => {});
@@ -111,31 +113,32 @@ async function doGenerate({ stateDir, prompt, projectUrl, timeoutMs }) {
     await page.keyboard.type(text, { delay: 20 });
     await page.keyboard.press('Enter');
 
-    // 等这一轮真正跑完：生成中会出现 stop 按钮 / 发送按钮消失；结束后反过来。
+    // 判据：出现**新的助手消息**（article 数增加）且流式已结束（stop 按钮消失）。
+    // 只看 stop/send 按钮会在 9 秒就误判完成（踩过），必须等消息条数真的增加。
     const deadline = Date.now() + timeoutMs;
-    let done = false;
+    let ready = false;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2500));
-      const st = await page.evaluate(() => ({
-        stop: !!document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop"]'),
-        send: !!document.querySelector('button[data-testid="send-button"], button[aria-label*="Send"]'),
-        len: (document.body.innerText || '').length
-      })).catch(() => null);
-      if (st && !st.stop && st.send) { done = true; break; }
+      const turns = await readTurns();
+      const streaming = await page.evaluate(() => !!document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop"]')).catch(() => true);
+      if (turns > baselineTurns && !streaming) { ready = true; break; }
     }
-    if (!done) {
+    if (!ready) {
       await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
-      return { ok: false, error: '这一轮没跑完（超时），已留截图 state/chatgpt-draw-last.png' };
+      return { ok: false, error: '这一轮没跑完（没出现新回复），已留截图 state/chatgpt-draw-last.png' };
     }
-    // 完成后：取 DOM 里**最后一张**大图（最新消息在最下面），再按字节校验
+    // 取最后一条助手消息里的图（最新消息在最下面），拿不到再看整页最后一张大图
     const lastSrc = await page.evaluate(() => {
-      const imgs = [...document.querySelectorAll('img')].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
-      const last = imgs[imgs.length - 1];
-      return last ? (last.currentSrc || last.src || '') : '';
+      const arts = [...document.querySelectorAll('article[data-testid^="conversation-turn"]')];
+      const last = arts[arts.length - 1];
+      const imgs = [...(last ? last.querySelectorAll('img') : [])].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
+      if (imgs.length) return imgs[imgs.length - 1].currentSrc || imgs[imgs.length - 1].src;
+      const all = [...document.querySelectorAll('img')].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
+      return all.length ? (all[all.length - 1].currentSrc || all[all.length - 1].src) : '';
     }).catch(() => '');
     if (!lastSrc) {
       await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
-      return { ok: false, error: '这一轮没有生成图片，已留截图 state/chatgpt-draw-last.png' };
+      return { ok: false, error: '新回复里没有图片，已留截图 state/chatgpt-draw-last.png' };
     }
     const b64 = await page.evaluate(async (u) => {
       try {
