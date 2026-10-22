@@ -7124,6 +7124,7 @@ const agentTokenOk = (key, token) => {
           deliveredSeq: Number(st.deliveredSeq) || 0,
           // 暂存队列必须落盘：见 loadSocialV2State 里的说明（重启丢掉等于那条消息没人处理）。
           pendingWakeReasons: Array.isArray(st.pendingWakeReasons) ? st.pendingWakeReasons.slice(-20) : [],
+          turnStartedAt: Number(st.turnStartedAt) || 0,
           pendingSince: Number(st.pendingSince) || 0,
           // 主动开过的话题：反重复要用，必须跨重启保留（否则重启后又开始复读）。
           proactiveOpeners: Array.isArray(st.proactiveOpeners)
@@ -9465,7 +9466,7 @@ const agentTokenOk = (key, token) => {
         if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
         const seq = st.lastUnreadSeq || 0;
         if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
-          st.pendingWakeReasons.push({ reason, seq });
+          st.pendingWakeReasons.push({ reason, seq, at: Date.now() });
           // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
           if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
         }
@@ -9488,7 +9489,7 @@ const agentTokenOk = (key, token) => {
       if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
       const seq = st.lastUnreadSeq || 0;
       if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
-        st.pendingWakeReasons.push({ reason, seq });
+        st.pendingWakeReasons.push({ reason, seq, at: Date.now() });
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
       const minuteOldest = (st.wakeTimes || []).filter((t) => now - t < 60000).sort((a, b) => a - b)[0] || now;
@@ -9519,6 +9520,9 @@ const agentTokenOk = (key, token) => {
     st.lastWakeReason = reason;
     saveSocialV2State();
     const promptText = buildWakePromptChat(key, reason);
+    // 记下这一轮的开始时间：回合期间到达的消息要用它判断「模型有没有可能看到」
+    st.turnStartedAt = Date.now();
+    saveSocialV2State();
     log(`[chat] 唤醒 ${key}（${reason}）`);
     const rollbackWakeTime = () => {
       const idx = st.wakeTimes.lastIndexOf(wakeTime);
@@ -9643,11 +9647,24 @@ const agentTokenOk = (key, token) => {
    * 曾写成 `seq >= item.seq`，于是任何一条更新的未读都会让陈旧意图「仍然相关」，
    * 会话卡死恢复后暂存队列常积压 20 条旧意图，那会变成每回合结束补一刀、连叫十几次。
    */
+  /**
+   * 这条暂存的唤醒还要不要补投？
+   *
+   * 曾经的判据是「seq 还在 unread 里」——但回合进行中 AI 经常顺手把消息标成已读，
+   * 于是「到达时正在跑回合」的新消息被判定成「已被当前回合处理」直接丢掉：
+   * 那一轮的提示词在开跑时就定了，模型根本没见过它（线上：群 1050666134 连丢 seq444/446/449）。
+   *
+   * 现在的判据：
+   *   ① 该 seq 仍在 unread → 要补；
+   *   ② 该意图是在**当前回合开始之后**排进来的 → 模型必然没看到，也要补。
+   *      （回合开始时间存在 st.turnStartedAt，每次真正投递唤醒时刷新）
+   */
   function pendingWakeStillRelevantChat(st, item) {
     if (!item || typeof item !== 'object') return false;
-    const seq = Number(item.seq);
-    if (!Number.isFinite(seq)) return false;
-    return Array.isArray(st?.unread) && st.unread.some((m) => m && Number(m.seq) === seq);
+    if (Array.isArray(st?.unread) && st.unread.some((m) => m && Number(m.seq) === Number(item.seq))) return true;
+    const queuedAt = Number(item.at) || 0;
+    const startedAt = Number(st?.turnStartedAt) || 0;
+    return queuedAt > 0 && startedAt > 0 && queuedAt > startedAt;
   }
 
   /**
@@ -9778,7 +9795,7 @@ const agentTokenOk = (key, token) => {
       if (!Array.isArray(st.pendingWakeReasons)) st.pendingWakeReasons = [];
       const seq = st.lastUnreadSeq || 0;
       if (!st.pendingWakeReasons.some((r) => r && r.reason === reason && r.seq === seq)) {
-        st.pendingWakeReasons.push({ reason, seq });
+        st.pendingWakeReasons.push({ reason, seq, at: Date.now() });
         // 有界队列：最多保留 20 条，防止消息洪峰下无限增长。
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
