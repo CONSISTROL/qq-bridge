@@ -267,5 +267,13 @@ renderNav();
 renderMobileBar();
 renderSheet();
 bindMobileNav();
-startRouter({ root: $('#view-root'), fallback: 'overview', onNavigate: highlightNav });
+startRouter({
+  root: $('#view-root'),
+  fallback: 'overview',
+  onNavigate: (view) => {
+    highlightNav?.(view);
+    // 某些视图要"整页原生内容"（如服务状态）：去掉顶栏和 main 的内边距
+    document.body.classList.toggle('view-fullbleed', view?.id === 'status');
+  }
+});
 startStatusPoll(5000, updatePendingBadge);
