@@ -9143,6 +9143,12 @@ const agentTokenOk = (key, token) => {
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationChat(st);
+    // 线上：它常常"看到了但决定不回"，而群友的感受就是"装死"。
+    // 所以给一条硬边界：只要是接它的话、或直接问它，必须回。
+    const mustReplyLine = '【必须回的情形】① 有人接着你上一条话往下说（回应/质疑/追问）；'
+      + '② 直接 @ 你、叫你名字、或问句明显是问你；③ 你说的内容被人反驳了。'
+      + '这三种情况**不能装死**，要么回一句，要么明确表示不接（但要有反应）。'
+      + '只有群友互相聊、没人理你时才可以安静待着。\n\n';
     const participationLine = participationText ? `${participationText}\n\n` : '';
     const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n'
       // 线上统计：AI 18.7% 的消息带破折号、5.5% 以「行，」开头、平均 40 字，群友是 0% / 0% / 9.7 字。
@@ -9282,7 +9288,7 @@ const agentTokenOk = (key, token) => {
       if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
       return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查归档（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
-    const base = memoryHint + voiceLine + roleLine + tokenLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    const base = memoryHint + voiceLine + roleLine + tokenLine + mustReplyLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
