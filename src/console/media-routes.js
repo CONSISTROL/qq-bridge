@@ -1437,7 +1437,25 @@ export function createMediaRoutes(deps) {
           .slice(-80) || 'file';
       const filePath = path.join(tmpDir, safeName);
       try {
-        const got = await safeFetchToFile(item.url, maxBytes, filePath, {
+        // QQ 自己的文件 CDN（njc-download.ftn.qq.com 等）走 safe-fetch 会超时（同图片那次），
+        // 这里对 QQ 域名优先用普通 fetch，失败再回落 safe-fetch。
+        let qqGot = null;
+        try {
+          const host = new URL(String(item.url)).hostname;
+          if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$|(^|\.)qpic\.cn$/i.test(host)) {
+            const res = await fetch(String(item.url), {
+              headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+              signal: AbortSignal.timeout(90000)
+            });
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              if (buf.length && buf.length <= maxBytes) { fs.writeFileSync(filePath, buf); qqGot = { size: buf.length }; }
+            }
+          }
+        } catch (error) {
+          log(`[file] QQ 直连失败（继续 safe-fetch）：${error?.message ?? error}`);
+        }
+        const got = qqGot || await safeFetchToFile(item.url, maxBytes, filePath, {
           timeoutMs: Math.max(5000, Number(fcfg.timeoutMs) || 60000),
         });
         const result = await extractFileContent({
