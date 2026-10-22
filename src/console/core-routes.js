@@ -1,3 +1,4 @@
+import { readUsage } from '../usage.js';
 import { startLive, stopLive, liveShot, liveClick, livePointer, liveText, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
 import { generateImage, drawConfig } from '../draw.js';
 import { listUpgrades, proposeUpgrade, decideUpgrade, activePromptHints } from '../self-upgrade.js';
@@ -564,6 +565,38 @@ export function createConsoleCoreRoutes(deps) {
       if (!name || !fs.existsSync(file)) { res.writeHead(404); res.end('not found'); return; }
       res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
       fs.createReadStream(file).pipe(res);
+      return;
+    }
+    // DeepSeek 余额读取（60 秒缓存；只读接口，不消耗 token）
+    const getDeepseekBalance = async () => {
+      const now = Date.now();
+      if (globalThis.__dsBalanceCache && now - globalThis.__dsBalanceCache.at < 60000) return globalThis.__dsBalanceCache.data;
+      const key = String(cfg?.deepseek?.apiKey ?? '').trim();
+      if (!key) return { ok: false, error: '未配置 key（config.json → deepseek.apiKey）' };
+      const res = await fetch('https://api.deepseek.com/user/balance', {
+        headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) return { ok: false, error: `余额接口 ${res.status}` };
+      const j = await res.json().catch(() => ({}));
+      const info = (Array.isArray(j?.balance_infos) ? j.balance_infos.find((b) => b.currency === 'CNY') : null) || (j?.balance_infos || [])[0] || {};
+      const out = {
+        ok: true, available: j?.is_available !== false, currency: info.currency || 'CNY',
+        total: Number(info.total_balance) || 0, granted: Number(info.granted_balance) || 0,
+        toppedUp: Number(info.topped_up_balance) || 0, at: now
+      };
+      globalThis.__dsBalanceCache = { at: now, data: out };
+      return out;
+    };
+
+    // ── 用量统计（余额走官方接口；每日 token/花费是本地估算）──────────────────
+    if (url.pathname === '/api/usage/stats') {
+      try {
+        const days = Math.max(3, Math.min(60, Number(url.searchParams.get('days')) || 14));
+        const stats = readUsage({ stateDir: STATE_DIR, days, pricing: cfg?.deepseek?.pricing ?? {} });
+        let balance = null;
+        try { const b = await getDeepseekBalance(); balance = b?.ok ? b : null; } catch { /* 忽略 */ }
+        sendJson({ ok: true, balance, ...stats });
+      } catch (error) { sendJson({ ok: false, error: `读取用量失败：${error?.message ?? error}` }, 500); }
       return;
     }
     // ── DeepSeek 余额（只读）：apiKey 只用于 /user/balance，不跑推理、不消耗 token ──

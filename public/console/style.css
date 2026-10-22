@@ -1507,3 +1507,21 @@ body.view-fullbleed #dsStatusFrame {
   border-radius: 0;
   display: block;
 }
+
+/* ── 用量与余额页 ─────────────────────────────────────────── */
+.usage-bal { display: flex; gap: 28px; align-items: baseline; flex-wrap: wrap; }
+.usage-bal-main b { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+.usage-bal-main span, .usage-bal-item span { display: block; }
+.usage-bal-item b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-chart { display: flex; align-items: flex-end; gap: 6px; height: 190px; padding: 6px 2px 0; }
+.usage-bar { flex: 1 1 0; min-width: 8px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
+.usage-stack { width: 100%; max-width: 34px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+.usage-seg { width: 100%; border-radius: 3px 3px 0 0; min-height: 2px; }
+.usage-seg.in { background: #3b82f6; }
+.usage-seg.out { background: #22c55e; }
+.usage-day { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.usage-legend { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.usage-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.usage-legend i.in { background: #3b82f6; }
+.usage-legend i.out { background: #22c55e; margin-left: 10px; }
+.usage-totals { margin-top: 10px; font-size: 13px; }

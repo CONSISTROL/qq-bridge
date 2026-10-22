@@ -1,0 +1,27 @@
+<section class="card span-all">
+  <h2>余额 <span class="meta" id="uBalMeta">加载中…</span>
+    <span class="card-actions"><button id="uRefresh" class="small" type="button">刷新</button></span>
+  </h2>
+  <div class="usage-bal">
+    <div class="usage-bal-main"><b id="uTotal">—</b><span class="meta">可用余额</span></div>
+    <div class="usage-bal-item"><b id="uToppedUp">—</b><span class="meta">充值余额</span></div>
+    <div class="usage-bal-item"><b id="uGranted">—</b><span class="meta">赠送余额</span></div>
+  </div>
+</section>
+
+<section class="card span-all">
+  <h2>用量趋势 <span class="meta">最近 14 天 · 本地估算</span>
+    <span class="card-actions">
+      <select id="uDays" class="w-xs" aria-label="统计天数">
+        <option value="7">7 天</option>
+        <option value="14" selected>14 天</option>
+        <option value="30">30 天</option>
+      </select>
+    </span>
+  </h2>
+  <div id="uChart" class="usage-chart"></div>
+  <div class="usage-legend"><i class="in"></i> 输入 <i class="out"></i> 输出</div>
+  <div class="usage-totals" id="uTotals"></div>
+  <div class="meta mt-8">口径：按字符数折算 token（中文约 1 字 1 token，英文约 4 字符 1 token），价格可改 config.deepseek.pricing。
+    <b>这是本地估算，不是官方账单</b>；官方明细请到 platform.deepseek.com/usage 查看。</div>
+</section>

@@ -35,6 +35,7 @@ import { scanPlugins, pluginToolName } from './plugin-host.js';
 import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUGINS } from './capabilities.js';
 import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallForPrompt, decayMemories } from './memdb.js';
 import { activePromptHints } from './self-upgrade.js';
+import { recordUsage } from './usage.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -9788,6 +9789,7 @@ const agentTokenOk = (key, token) => {
     const promptText = buildWakePromptChat(key, reason);
     // 记下这一轮的开始时间：回合期间到达的消息要用它判断「模型有没有可能看到」
     st.turnStartedAt = Date.now();
+    try { recordUsage({ stateDir: STATE_DIR, dir: 'in', chars: String(promptText || '').length, turns: 1 }); } catch { /* 忽略 */ }
     saveSocialV2State();
     log(`[chat] 唤醒 ${key}（${reason}）`);
     const rollbackWakeTime = () => {
@@ -11140,6 +11142,7 @@ const agentTokenOk = (key, token) => {
                 }
               }
               if (ended.reason.kind === 'completed' && ended.text.trim()) {
+                try { recordUsage({ stateDir: STATE_DIR, dir: 'out', chars: String(ended.text).length }); } catch { /* 忽略 */ }
                 const plain = mdToPlain(ended.text);
                 // 纯 Markdown/空白输出按“无文本”处理，避免后续 planSocialTimeline 拿空串崩溃。
                 if (!plain.trim()) {
