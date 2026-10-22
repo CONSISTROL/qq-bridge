@@ -536,6 +536,7 @@ async function segmentsToText(segments, options = {}) {
       case 'face': out.push(`[表情${d.id ?? ''}]`); break;
       case 'image': out.push(imageSegmentLabel(d)); break;
       case 'record': out.push(d.pttText ? `[语音]「${String(d.pttText).slice(0, 300)}」` : '[语音]'); break;
+      case 'audio': out.push(d.asrText ? `[音频]「${String(d.asrText).slice(0, 300)}」` : '[音频]'); break;
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -8540,6 +8541,11 @@ const agentTokenOk = (key, token) => {
       });
   }
 
+  /** 文件名看着像音频？用于把「音频文件」和「文档」区分开（mp3/m4a/wav/aac/amr/ogg/flac/silk）。 */
+  function kind0Audio(name) {
+    return /\.(mp3|m4a|wav|aac|amr|ogg|oga|flac|opus|silk|slk|ape|wma)$/i.test(String(name || ''));
+  }
+
   function appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, messageId, media = [], userId = null, forwardIds = [], quoteMessageId = null, card = null, gwSeq = null, atSelf = false) {
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
@@ -8559,7 +8565,13 @@ const agentTokenOk = (key, token) => {
     }    const safeMedia = Array.isArray(media) ? media.map((m) => {
       // 注意 kind 要保真：以前这里把非 face/video 一律当 image，
       // 于是**文件段**（PDF 等）会被悄悄降级成图片，AI 再也看不到「有文件」这件事。
-      const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : (m?.kind === 'record' ? 'record' : (m?.kind === 'file' ? 'file' : 'image')));
+      const audioName = String(m?.file || m?.name || '').toLowerCase();
+      const isAudioFile = kind0Audio(audioName);
+      const kind = m?.kind === 'face' ? 'face'
+        : (m?.kind === 'video' ? 'video'
+        : (m?.kind === 'record' ? 'record'
+        : (isAudioFile ? 'audio'
+        : (m?.kind === 'file' ? 'file' : 'image'))));
       return {
         kind,
         file: m?.file ? String(m.file) : undefined,
@@ -8575,16 +8587,55 @@ const agentTokenOk = (key, token) => {
         } : {}),
         // 表情包（QQ 动画表情）与普通图片必须让 AI 分得清：默认的 [图片] 标签会把
         // 「玄真又发了一遍同一个表情包」误判成「你在重复发同一张照片」。
-        label: kind === 'face' ? '表情' : (kind === 'record' ? '语音' : (kind === 'video' ? '视频' : (kind === 'file' ? '[文件]' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary }))))),
+        label: kind === 'face' ? '表情' : (kind === 'audio' ? '音频' : (kind === 'record' ? '语音' : (kind === 'video' ? '视频' : (kind === 'file' ? '[文件]' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary })))))),
         ...(kind === 'image' ? { subType: m?.subType ? String(m.subType) : undefined, summary: m?.summary ? String(m.summary) : undefined } : {})
       };
     }).filter((m) => {
       if (m.kind === 'face') return !!m.faceId;
       if (m.kind === 'record') return !!(m.file || m.url);
+      if (m.kind === 'audio') return !!(m.file || m.url);
       if (m.kind === 'video') return !!(m.file || m.url || m.thumb);
       if (m.kind === 'file') return !!(m.url || m.file || m.fileId);
       return !!(m.file || m.url);
     }) : [];
+    // 音频文件（mp3/m4a/wav…）：下载到缓存 → 本地 faster-whisper 转写 → 写回 asrText。
+    // 注意：silk 语音走上面的 fetch_ptt_text，这里只处理真正的音频文件（ffmpeg 能解的那些）。
+    if (safeMedia.some((m) => m.kind === 'audio') && messageId) {
+      void (async () => {
+        try {
+          const target = safeMedia.find((m) => m.kind === 'audio');
+          const url = String(target?.url || (/^https?:\/\//i.test(String(target?.file || '')) ? target.file : ''));
+          if (!url) return;
+          const host = new URL(url).hostname;
+          if (!/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$|(^|\.)qpic\.cn$/i.test(host)) return;
+          if (!fs.existsSync(MEDIA_CACHE_DIR)) fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true });
+          const ext = (/\.([a-z0-9]{2,5})(?:\?|$)/i.exec(url)?.[1] || 'mp3').toLowerCase();
+          const file = mediaCacheFile(messageId, '.' + ext);
+          if (!file) return;
+          if (!fs.existsSync(file)) {
+            const res = await fetch(url, {
+              headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+              signal: AbortSignal.timeout(60000)
+            });
+            if (!res.ok) { log(`[audio] 下载失败 HTTP ${res.status}`); return; }
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (!buf.length || buf.length > 40 * 1024 * 1024) return;
+            fs.writeFileSync(file, buf);
+          }
+          const text = await transcribeMediaAudio(file);
+          if (!text) { log(`[audio] 转写为空（${messageId}）`); return; }
+          const st3 = getSocialV2State(key);
+          for (const box of [st3.recentMessages, st3.unread]) {
+            const hit = Array.isArray(box) ? box.find((m) => String(m?.messageId ?? m?.id ?? '') === String(messageId)) : null;
+            if (hit && Array.isArray(hit.media)) for (const mm of hit.media) if (mm && mm.kind === 'audio') { mm.asrText = text; mm.cachePath = file; }
+          }
+          saveSocialV2State();
+          log(`[audio] 转写成功（${key} ${messageId}）：${text.slice(0, 40)}`);
+        } catch (error) {
+          log(`[audio] 转写失败（${key} ${messageId}）：${error?.message ?? error}`);
+        }
+      })();
+    }
     // 语音消息：QQ 客户端自带语音转文字，网关有 fetch_ptt_text 可以直接取，
     // 不必下载音频、也不必本地 ASR（QQ 语音是 silk，ffmpeg 解不了）。
     if (safeMedia.some((m) => m.kind === 'record') && messageId) {
