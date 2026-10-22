@@ -117,6 +117,25 @@ export async function mount(root) {
     }
   })();
 
+  // DeepSeek 余额（只读，60 秒缓存）
+  const refreshDsBalance = async () => {
+    const el = $('#dsBalance', view);
+    const det = $('#dsBalanceDetail', view);
+    if (!el) return;
+    const r = await api('/api/usage/deepseek').catch(() => null);
+    if (!r || r.ok === false) {
+      el.textContent = '未配置/查询失败';
+      if (det) det.textContent = r?.error || '';
+      return;
+    }
+    const money = (n) => '¥' + Number(n || 0).toFixed(2);
+    el.textContent = money(r.total) + (r.available ? ' · 可用 ✅' : ' · 不可用 ⚠️');
+    if (!r.available) el.className = 'meta warn';
+    if (det) det.textContent = `充值 ${money(r.toppedUp)} + 赠送 ${money(r.granted)}`;
+  };
+  refreshDsBalance();
+  $('#dsBalanceRefresh', view)?.addEventListener('click', refreshDsBalance);
+
   // 重启桥接（按钮从已删除的「运维」页搬到这里）
   delegate(view, 'click', '#restartBtn', async () => {
     if (!confirmDanger('确定重启桥接？\n\n守护模式下退出后 5 秒自动拉起；重启期间群消息会排队。')) return;

@@ -566,6 +566,37 @@ export function createConsoleCoreRoutes(deps) {
       fs.createReadStream(file).pipe(res);
       return;
     }
+    // ── DeepSeek 余额（只读）：apiKey 只用于 /user/balance，不跑推理、不消耗 token ──
+    if (url.pathname === '/api/usage/deepseek') {
+      try {
+        const now = Date.now();
+        if (globalThis.__dsBalanceCache && now - globalThis.__dsBalanceCache.at < 60000) {
+          sendJson(globalThis.__dsBalanceCache.data);
+          return;
+        }
+        const key = String(cfg?.deepseek?.apiKey ?? '').trim();
+        if (!key) { sendJson({ ok: false, error: '未配置 key（config.json → deepseek.apiKey）' }, 400); return; }
+        const res = await fetch('https://api.deepseek.com/user/balance', {
+          headers: { authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(15000)
+        });
+        if (!res.ok) { sendJson({ ok: false, error: `余额接口 ${res.status}` }, 502); return; }
+        const j = await res.json().catch(() => ({}));
+        const info = (Array.isArray(j?.balance_infos) ? j.balance_infos.find((b) => b.currency === 'CNY') : null) || (j?.balance_infos || [])[0] || {};
+        const out = {
+          ok: true,
+          available: j?.is_available !== false,
+          currency: info.currency || 'CNY',
+          total: Number(info.total_balance) || 0,
+          granted: Number(info.granted_balance) || 0,
+          toppedUp: Number(info.topped_up_balance) || 0,
+          at: now
+        };
+        globalThis.__dsBalanceCache = { at: now, data: out };
+        sendJson(out);
+      } catch (error) { sendJson({ ok: false, error: `查询余额失败：${error?.message ?? error}` }, 502); }
+      return;
+    }
     // ── 服务状态（DeepSeek status page，FlashCat）：总体状态 + 最近事件 ──────
     if (url.pathname === '/api/status/deepseek') {
       try {
