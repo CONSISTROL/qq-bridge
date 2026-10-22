@@ -8559,7 +8559,7 @@ const agentTokenOk = (key, token) => {
     }    const safeMedia = Array.isArray(media) ? media.map((m) => {
       // 注意 kind 要保真：以前这里把非 face/video 一律当 image，
       // 于是**文件段**（PDF 等）会被悄悄降级成图片，AI 再也看不到「有文件」这件事。
-      const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : (m?.kind === 'file' ? 'file' : 'image'));
+      const kind = m?.kind === 'face' ? 'face' : (m?.kind === 'video' ? 'video' : (m?.kind === 'record' ? 'record' : (m?.kind === 'file' ? 'file' : 'image')));
       return {
         kind,
         file: m?.file ? String(m.file) : undefined,
@@ -8575,11 +8575,12 @@ const agentTokenOk = (key, token) => {
         } : {}),
         // 表情包（QQ 动画表情）与普通图片必须让 AI 分得清：默认的 [图片] 标签会把
         // 「玄真又发了一遍同一个表情包」误判成「你在重复发同一张照片」。
-        label: kind === 'face' ? '表情' : (kind === 'video' ? '视频' : (kind === 'file' ? '[文件]' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary })))),
+        label: kind === 'face' ? '表情' : (kind === 'record' ? '语音' : (kind === 'video' ? '视频' : (kind === 'file' ? '[文件]' : (m?.label || imageSegmentLabel({ sub_type: m?.subType, summary: m?.summary }))))),
         ...(kind === 'image' ? { subType: m?.subType ? String(m.subType) : undefined, summary: m?.summary ? String(m.summary) : undefined } : {})
       };
     }).filter((m) => {
       if (m.kind === 'face') return !!m.faceId;
+      if (m.kind === 'record') return !!(m.file || m.url);
       if (m.kind === 'video') return !!(m.file || m.url || m.thumb);
       if (m.kind === 'file') return !!(m.url || m.file || m.fileId);
       return !!(m.file || m.url);
