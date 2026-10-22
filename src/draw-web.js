@@ -94,6 +94,7 @@ async function doGenerate({ stateDir, prompt, projectUrl, timeoutMs }) {
     if (needLogin) return { ok: false, error: 'ChatGPT 未登录（需要重新登录）' };
 
     const baseline = await page.evaluate(() => [...document.querySelectorAll('img')].map((i) => i.src)).catch(() => []);
+    const baselineBlobCount = baseline.filter((u) => String(u).startsWith('blob:')).length;
 
     // ChatGPT 的输入框是 #prompt-textarea（ProseMirror），项目页/新会话页都可能有可见延迟
     await page.waitForSelector('#prompt-textarea, div[contenteditable="true"], textarea', { timeout: 45000 }).catch(() => {});
@@ -110,35 +111,43 @@ async function doGenerate({ stateDir, prompt, projectUrl, timeoutMs }) {
     await page.keyboard.type(text, { delay: 20 });
     await page.keyboard.press('Enter');
 
+    // 等这一轮真正跑完：生成中会出现 stop 按钮 / 发送按钮消失；结束后反过来。
     const deadline = Date.now() + timeoutMs;
-    let best = null;
+    let done = false;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 3000));
-      // 取所有「新出现」的大图候选（按面积降序），逐个 fetch 校验真实字节数：
-      // 之前只按 naturalWidth 判断，会抓到 24px 图标（解码出来才 1KB），所以必须看字节。
-      const cands = await page.evaluate((seen) => [...document.querySelectorAll('img')]
-        .filter((i) => !seen.includes(i.src) && i.naturalWidth >= 512 && i.naturalHeight >= 512)
-        .sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight)
-        .map((i) => i.currentSrc || i.src).slice(0, 4), baseline).catch(() => []);
-      for (const u of cands) {
-        const b64 = await page.evaluate(async (src) => {
-          try {
-            const r = await fetch(src); const b = await r.blob();
-            if (b.size < 20000) return '';   // 太小：图标/占位，继续等
-            return await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b); });
-          } catch { return ''; }
-        }, u).catch(() => '');
-        if (!b64 || !/^data:image\//.test(b64)) continue;
-        const buf = Buffer.from(b64.split(',')[1] || '', 'base64');
-        if (buf.length >= 20000) { best = { buffer: buf, mime: /^data:(image\/[a-z+]+);/i.exec(b64)?.[1] || 'image/png', src: u }; break; }
-      }
-      if (best) break;
+      await new Promise((r) => setTimeout(r, 2500));
+      const st = await page.evaluate(() => ({
+        stop: !!document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop"]'),
+        send: !!document.querySelector('button[data-testid="send-button"], button[aria-label*="Send"]'),
+        len: (document.body.innerText || '').length
+      })).catch(() => null);
+      if (st && !st.stop && st.send) { done = true; break; }
     }
-    if (!best) {
+    if (!done) {
       await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
-      return { ok: false, error: '等不到成图（可能还在生成/被拦），已留截图 state/chatgpt-draw-last.png' };
+      return { ok: false, error: '这一轮没跑完（超时），已留截图 state/chatgpt-draw-last.png' };
     }
-    return { ok: true, buffer: best.buffer, mime: best.mime, model: 'chatgpt-web', size: 'auto' };
+    // 完成后：取 DOM 里**最后一张**大图（最新消息在最下面），再按字节校验
+    const lastSrc = await page.evaluate(() => {
+      const imgs = [...document.querySelectorAll('img')].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
+      const last = imgs[imgs.length - 1];
+      return last ? (last.currentSrc || last.src || '') : '';
+    }).catch(() => '');
+    if (!lastSrc) {
+      await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
+      return { ok: false, error: '这一轮没有生成图片，已留截图 state/chatgpt-draw-last.png' };
+    }
+    const b64 = await page.evaluate(async (u) => {
+      try {
+        const r = await fetch(u); const b = await r.blob();
+        return await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b); });
+      } catch { return ''; }
+    }, lastSrc).catch(() => '');
+    if (!b64 || !/^data:image\//.test(b64)) return { ok: false, error: '取图失败（dataURL 为空）' };
+    const buffer = Buffer.from(b64.split(',')[1] || '', 'base64');
+    if (!buffer.length) return { ok: false, error: '图片数据为空' };
+    const mime = /^data:(image\/[a-z+]+);/i.exec(b64)?.[1] || 'image/png';
+    return { ok: true, buffer, mime, model: 'chatgpt-web', size: 'auto' };
   } catch (error) {
     return { ok: false, error: `ChatGPT 网页出图失败：${error?.message ?? error}` };
   } finally {
