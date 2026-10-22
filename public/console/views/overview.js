@@ -117,30 +117,6 @@ export async function mount(root) {
     }
   })();
 
-  // 服务状态（DeepSeek status page）
-  const refreshDsStatus = async () => {
-    const el = $('#dsStatusSummary', view);
-    const box = $('#dsStatusRecent', view);
-    if (!el) return;
-    el.textContent = '加载中…';
-    const r = await api('/api/status/deepseek').catch(() => null);   // 用 core/api 统一处理反代前缀
-    if (!r || r.ok === false) { el.textContent = '读取失败'; if (box) box.textContent = r?.error || ''; return; }
-    el.textContent = r.healthy ? '全部正常' : `有 ${r.activeCount} 个进行中的事件`;
-    el.className = 'meta ' + (r.healthy ? '' : 'warn');
-    if (box) {
-      const items = (r.recent || []).slice(0, 3).map((c) => {
-        const d = c.at ? new Date(c.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
-        return `${d} ${c.title}`;
-      });
-      box.textContent = items.length ? ('最近事件：' + items.join(' ｜ ')) : '';
-    }
-  };
-  refreshDsStatus();
-  $('#dsStatusRefresh', view)?.addEventListener('click', () => {
-    const f = $('#dsStatusFrame', view); if (f) f.src = f.src;
-    refreshDsStatus();
-  });
-
   // 重启桥接（按钮从已删除的「运维」页搬到这里）
   delegate(view, 'click', '#restartBtn', async () => {
     if (!confirmDanger('确定重启桥接？\n\n守护模式下退出后 5 秒自动拉起；重启期间群消息会排队。')) return;
