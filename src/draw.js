@@ -53,16 +53,8 @@ export function drawConfig(cfg) {
 export async function generateImage({ cfg, prompt, size, timeoutMs = 120000 } = {}) {
   const c = drawConfig(cfg);
   if (!c.enabled) return { ok: false, error: '画图未启用（config.json → draw.enabled）' };
-  if (c.provider === 'pollinations') return generatePollinations({ prompt, size: size || c.size, timeoutMs });
-  // chatgpt / auto：先试网页版 ChatGPT，失败自动回落 Pollinations（免费），保证"画得出图"
-  if (c.provider === 'chatgpt' || c.provider === 'auto') {
-    const web = await generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, projectUrl: cfg?.draw?.chatgptProjectUrl || '', timeoutMs });
-    if (web.ok) return web;
-    if (c.provider === 'chatgpt') return web;
-    const fb = await generatePollinations({ prompt, size: size || c.size, timeoutMs });
-    return fb.ok ? { ...fb, fallback: true, note: `ChatGPT 失败（${web.error}），已自动回落免费通道` } : { ...web, fallbackError: fb.error };
-  }
-  return { ok: false, error: `未知 provider：${c.provider}` };
+  // 按 owner 要求：**不做兜底**，只走 ChatGPT 网页版；失败就把原因如实返回。
+  return generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, projectUrl: cfg?.draw?.chatgptProjectUrl || '', timeoutMs });
   const p = String(prompt ?? '').trim().slice(0, 800);
   if (!p) return { ok: false, error: 'prompt 不能为空' };
   const sz = SIZES.has(String(size ?? '')) ? String(size) : c.size;
