@@ -113,44 +113,47 @@ async function doGenerate({ stateDir, prompt, projectUrl, timeoutMs }) {
     await page.keyboard.type(text, { delay: 20 });
     await page.keyboard.press('Enter');
 
-    // 判据：出现**新的助手消息**（article 数增加）且流式已结束（stop 按钮消失）。
-    // 只看 stop/send 按钮会在 9 秒就误判完成（踩过），必须等消息条数真的增加。
+    // 判据（不依赖具体 DOM 结构）：
+    // ① 先等「生成中」出现（stop 按钮 / 停止生成），最多 30 秒；
+    // ② 再等它消失（这一轮结束）；
+    // ③ 然后循环取「页面里最后一张 >=512 的图」，fetch 成字节并校验 >=20KB（图标只有 1KB）。
+    const hasStop = () => page.evaluate(() => !!document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="停止"]')).catch(() => false);
+    const t0 = Date.now();
+    let started = false;
+    while (Date.now() - t0 < 30000) {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (await hasStop()) { started = true; break; }
+    }
+    if (!started) {
+      await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
+      return { ok: false, error: '消息没发出去（页面上没出现生成中状态），已留截图' };
+    }
     const deadline = Date.now() + timeoutMs;
-    let ready = false;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2500));
-      const turns = await readTurns();
-      const streaming = await page.evaluate(() => !!document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop"]')).catch(() => true);
-      if (turns > baselineTurns && !streaming) { ready = true; break; }
+      if (await hasStop()) continue;      // 还在生成
+      const src = await page.evaluate(() => {
+        const imgs = [...document.querySelectorAll('img')]
+          .filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
+        const last = imgs[imgs.length - 1];
+        return last ? (last.currentSrc || last.src || '') : '';
+      }).catch(() => '');
+      if (!src) continue;
+      const b64 = await page.evaluate(async (u) => {
+        try {
+          const r = await fetch(u); const b = await r.blob();
+          if (b.size < 20000) return '';
+          return await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b); });
+        } catch { return ''; }
+      }, src).catch(() => '');
+      if (!b64 || !/^data:image\//.test(b64)) continue;
+      const buf = Buffer.from(b64.split(',')[1] || '', 'base64');
+      if (buf.length >= 20000) {
+        return { ok: true, buffer: buf, mime: /^data:(image\/[a-z+]+);/i.exec(b64)?.[1] || 'image/png', model: 'chatgpt-web', size: 'auto' };
+      }
     }
-    if (!ready) {
-      await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
-      return { ok: false, error: '这一轮没跑完（没出现新回复），已留截图 state/chatgpt-draw-last.png' };
-    }
-    // 取最后一条助手消息里的图（最新消息在最下面），拿不到再看整页最后一张大图
-    const lastSrc = await page.evaluate(() => {
-      const arts = [...document.querySelectorAll('article[data-testid^="conversation-turn"]')];
-      const last = arts[arts.length - 1];
-      const imgs = [...(last ? last.querySelectorAll('img') : [])].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
-      if (imgs.length) return imgs[imgs.length - 1].currentSrc || imgs[imgs.length - 1].src;
-      const all = [...document.querySelectorAll('img')].filter((i) => i.naturalWidth >= 512 && i.naturalHeight >= 512);
-      return all.length ? (all[all.length - 1].currentSrc || all[all.length - 1].src) : '';
-    }).catch(() => '');
-    if (!lastSrc) {
-      await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
-      return { ok: false, error: '新回复里没有图片，已留截图 state/chatgpt-draw-last.png' };
-    }
-    const b64 = await page.evaluate(async (u) => {
-      try {
-        const r = await fetch(u); const b = await r.blob();
-        return await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b); });
-      } catch { return ''; }
-    }, lastSrc).catch(() => '');
-    if (!b64 || !/^data:image\//.test(b64)) return { ok: false, error: '取图失败（dataURL 为空）' };
-    const buffer = Buffer.from(b64.split(',')[1] || '', 'base64');
-    if (!buffer.length) return { ok: false, error: '图片数据为空' };
-    const mime = /^data:(image\/[a-z+]+);/i.exec(b64)?.[1] || 'image/png';
-    return { ok: true, buffer, mime, model: 'chatgpt-web', size: 'auto' };
+    await page.screenshot({ path: path.join(stateDir, 'chatgpt-draw-last.png') }).catch(() => {});
+    return { ok: false, error: '这一轮没等到成图，已留截图 state/chatgpt-draw-last.png' };
   } catch (error) {
     return { ok: false, error: `ChatGPT 网页出图失败：${error?.message ?? error}` };
   } finally {
