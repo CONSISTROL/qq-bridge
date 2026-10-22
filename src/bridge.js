@@ -6015,6 +6015,13 @@ const agentTokenOk = (key, token) => {
     }
     // 第 0 步：消息段里本身就有 QQ 图床 URL 时，直接抓（快、且不依赖网关）。
     // 为什么放在 get_image 之前：网关的 get_image 在 QQ 图床上会卡 20s 才失败，AI 等不起就报"看不到图"。
+    // 第 -1 步：本地缓存优先（收图时已经落盘，永久有效，不受链接过期影响）
+    try {
+      if (media.cachePath && fs.existsSync(media.cachePath)) {
+        const buf = fs.readFileSync(media.cachePath);
+        if (buf.length && looksLikeImageBuffer(buf)) return { buffer: buf, url: '' };
+      }
+    } catch { /* 忽略，继续走网络 */ }
     // 有些消息（表情/贴图）没有 url 字段，图片地址塞在 file 里，也要当 URL 处理
     const mediaUrl = String(media.url || (/^https?:\/\//i.test(String(media.file || '')) ? media.file : ''));
     if (mediaUrl) {
@@ -6190,6 +6197,53 @@ const agentTokenOk = (key, token) => {
    * `maxCount` 默认沿用单条消息的上限（MAX_MEDIA_COUNT）；合并转发那种「一条消息里
    * 塞了几十张图」的场景由调用方显式放宽，但**不会**无限放宽，见 forward-media 端点。
    */
+  // ── 图片落盘缓存 ──────────────────────────────────────────────
+  // 为什么要缓存：QQ 图床的下载链接是带签名、有时效的，几小时后就 400 失效，
+  // 于是"历史图片看不到"，只能让群友重发。收图时立刻存一份本地副本即可根治。
+  const MEDIA_CACHE_DIR = path.join(STATE_DIR, 'media-cache');
+  const MEDIA_CACHE_KEEP_DAYS = 7;
+
+  function mediaCacheFile(messageId, ext) {
+    const id = String(messageId || '').replace(/[^0-9A-Za-z_-]/g, '');
+    if (!id) return '';
+    return path.join(MEDIA_CACHE_DIR, `${id}${ext || '.jpg'}`);
+  }
+
+  async function cacheMediaSoon(messageId, mediaList) {
+    if (!Array.isArray(mediaList) || !mediaList.length) return;
+    try { fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true }); } catch { /* 忽略 */ }
+    for (const m of mediaList) {
+      const url = String(m?.url || (/^https?:\/\//i.test(String(m?.file || '')) ? m.file : ''));
+      if (!url) continue;
+      try {
+        const host = new URL(url).hostname;
+        if (!/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$|(^|\.)qpic\.cn$/i.test(host)) continue;
+        const res = await fetch(url, {
+          headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(20000)
+        });
+        if (!res.ok) continue;
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (!buf.length || buf.length > MAX_MEDIA_FETCH_BYTES) continue;
+        const file = mediaCacheFile(messageId, '.jpg');
+        if (file) { fs.writeFileSync(file, buf); m.cachePath = file; }
+      } catch { /* 缓存失败不影响主流程，AI 看时再兜底抓 */ }
+    }
+  }
+
+  function pruneMediaCache() {
+    try {
+      if (!fs.existsSync(MEDIA_CACHE_DIR)) return;
+      const cutoff = Date.now() - MEDIA_CACHE_KEEP_DAYS * 86400000;
+      let removed = 0;
+      for (const name of fs.readdirSync(MEDIA_CACHE_DIR)) {
+        const f = path.join(MEDIA_CACHE_DIR, name);
+        try { if (fs.statSync(f).mtimeMs < cutoff) { fs.unlinkSync(f); removed++; } } catch { /* 忽略 */ }
+      }
+      if (removed) log(`[media-cache] 清理过期图片 ${removed} 张`);
+    } catch { /* 忽略 */ }
+  }
+
   async function fetchMediaData(mediaList, { maxCount = MAX_MEDIA_COUNT, maxTotalBytes = imagePassthroughBytes() } = {}) {
     const cap = Math.max(1, Math.min(64, Number(maxCount) || MAX_MEDIA_COUNT));
     const byteBudget = Math.max(256 * 1024, Math.min(64 * 1024 * 1024, Number(maxTotalBytes) || imagePassthroughBytes()));
@@ -8530,6 +8584,10 @@ const agentTokenOk = (key, token) => {
       if (m.kind === 'file') return !!(m.url || m.file || m.fileId);
       return !!(m.file || m.url);
     }) : [];
+    // 收图即落盘：不等 AI 要看（那时链接可能已过期）
+    if (safeMedia.some((m) => m.kind === 'image' || m.kind === 'face')) {
+      void cacheMediaSoon(messageId, safeMedia.filter((m) => m.kind === 'image' || m.kind === 'face'));
+    }
     const safeForwardIds = (Array.isArray(forwardIds) ? forwardIds : []).map(sanitizeForwardId).filter(Boolean);
     if (safeForwardIds.length) {
       let set = seenForwardIds.get(key);
@@ -11804,6 +11862,9 @@ const agentTokenOk = (key, token) => {
 
   // LSTM 式遗忘门：每 6 小时衰减一次（弱的淡出/淘汰，人/群稳定事实保留）
   setInterval(() => { try { const r = decayMemories({ stateDir: STATE_DIR }); if (r.decayed || r.dropped) log(`[memdb] 遗忘门：衰减 ${r.decayed} 条，淘汰 ${r.dropped} 条`); } catch { /* 忽略 */ } }, 6 * 60 * 60 * 1000).unref?.();
+  // 图片缓存清理：每 6 小时清一次 7 天前的（缓存是为了对抗 QQ 图床链接过期）
+  setInterval(() => { try { pruneMediaCache(); } catch { /* 忽略 */ } }, 6 * 60 * 60 * 1000).unref?.();
+  try { pruneMediaCache(); } catch { /* 忽略 */ }
   applyWakePolicy('startup');
   setInterval(() => applyWakePolicy('tick'), 10 * 60 * 1000).unref?.();
   // 一次性迁移：旧 socialData.tools（扁平 47 个开关）→ socialData.plugins（插件→能力）。
