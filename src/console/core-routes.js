@@ -566,6 +566,40 @@ export function createConsoleCoreRoutes(deps) {
       fs.createReadStream(file).pipe(res);
       return;
     }
+    // ── 服务状态（DeepSeek status page，FlashCat）：总体状态 + 最近事件 ──────
+    if (url.pathname === '/api/status/deepseek') {
+      try {
+        const now = Date.now();
+        if (globalThis.__dsStatusCache && now - globalThis.__dsStatusCache.at < 60000) {
+          sendJson(globalThis.__dsStatusCache.data);
+          return;
+        }
+        const base = 'https://status.deepseek.com/api/status-page/6410630422455';
+        const [actRes, chgRes] = await Promise.all([
+          fetch(`${base}/summary/active`, { signal: AbortSignal.timeout(15000) }),
+          fetch(`${base}/change/list?start_at_seconds=${Math.floor(now / 1000) - 30 * 86400}&end_at_seconds=${Math.floor(now / 1000) + 86400}`, { signal: AbortSignal.timeout(15000) })
+        ]);
+        const act = await actRes.json().catch(() => ({}));
+        const chg = await chgRes.json().catch(() => ({}));
+        const active = Array.isArray(act?.data?.active_changes) ? act.data.active_changes : [];
+        const changes = Array.isArray(chg?.data?.items) ? chg.data.items : (Array.isArray(chg?.data?.list) ? chg.data.list : (Array.isArray(chg?.data) ? chg.data : []));
+        const out = {
+          ok: true,
+          page: act?.data?.page?.name || 'DeepSeek',
+          healthy: active.length === 0,
+          activeCount: active.length,
+          active: active.slice(0, 5).map((c) => ({ title: c.title || c.name || '', status: c.status || '' })),
+          recent: changes.slice(0, 5).map((c) => ({
+            title: c.title || '', type: c.type || '',
+            impact: c.impact || c.status || '',
+            at: Number(c.start_at_seconds || c.created_at_seconds || 0) * 1000
+          })).filter((c) => c.title)
+        };
+        globalThis.__dsStatusCache = { at: now, data: out };
+        sendJson(out);
+      } catch (error) { sendJson({ ok: false, error: `读取状态失败：${error?.message ?? error}` }, 502); }
+      return;
+    }
     // ── 自主升级（从对话里自己发现问题并升级）───────────────────
     if (url.pathname === '/api/self-upgrade' || url.pathname.startsWith('/api/self-upgrade/')) {
       const action = url.pathname === '/api/self-upgrade' ? '' : url.pathname.slice('/api/self-upgrade/'.length);

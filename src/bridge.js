@@ -4817,7 +4817,8 @@ const agentTokenOk = (key, token) => {
         // img/media 要放开外部域名：控制台会显示 QQ 头像（q1.qlogo.cn）、B站封面、相册/语音包里的远程图，
         // 原来只写 default-src 'self' 会把这些全拦掉（线上真事：头像被 CSP 拦，控制台报错）。
         'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-          + "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self'",
+          + "img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self'; "
+          + "frame-src https:",   // 总览里要嵌 status.deepseek.com
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
         'Referrer-Policy': 'no-referrer'
