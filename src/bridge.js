@@ -6013,6 +6013,25 @@ const agentTokenOk = (key, token) => {
         return { buffer: buf, url: '' };
       }
     }
+    // 第 0 步：消息段里本身就有 QQ 图床 URL 时，直接抓（快、且不依赖网关）。
+    // 为什么放在 get_image 之前：网关的 get_image 在 QQ 图床上会卡 20s 才失败，AI 等不起就报"看不到图"。
+    if (media.url) {
+      try {
+        const host = new URL(String(media.url)).hostname;
+        if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$/i.test(host)) {
+          const res = await fetch(String(media.url), {
+            headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(20000)
+          });
+          if (res.ok) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: String(media.url) };
+          }
+        }
+      } catch (error) {
+        log(`图片直连（get_image 之前）失败：${error?.message ?? error}`);
+      }
+    }
     // 优先使用 OneBot get_image 获取网关侧信息；只有 file 是安全缓存文件名时才允许交给网关。
     if (media.kind === 'image' && media.file && isProbablySafeImageFileRef(media.file)) {
       try {
@@ -6048,6 +6067,23 @@ const agentTokenOk = (key, token) => {
     }
     // 其次直接用消息段里的 URL
     if (media.url) {
+      // ① QQ 自家图床：直接 fetch（safe-fetch 在这儿会卡 15s 超时，实测普通 fetch 0.3s 就好）
+      try {
+        const host = new URL(String(media.url)).hostname;
+        if (/(^|\.)qq\.com$|(^|\.)qq\.com\.cn$/i.test(host)) {
+          const res = await fetch(String(media.url), {
+            headers: { referer: 'https://qzone.qq.com/', 'user-agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(20000)
+          });
+          if (res.ok) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.length && buf.length <= MAX_MEDIA_FETCH_BYTES) return { buffer: buf, url: String(media.url) };
+          }
+        }
+      } catch (error) {
+        log(`图片直连失败（继续走 safe-fetch）：${error?.message ?? error}`);
+      }
+      // ② 其它域名：走带 SSRF 防护的 safe-fetch
       try {
         const fetched = await safeFetchBuffer(String(media.url), MAX_MEDIA_FETCH_BYTES);
         if (fetched?.buffer?.length) return { buffer: fetched.buffer, url: String(media.url) };
