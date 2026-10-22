@@ -11350,6 +11350,7 @@ const agentTokenOk = (key, token) => {
     KNOWN_AGENT_TOKENS,
     ROOT,
     STATE_DIR,
+    sendImageChat,
     allowed,
     api,
     bot,

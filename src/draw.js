@@ -13,9 +13,31 @@ const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
 const DEFAULT_MODEL = 'doubao-seedream-3-0-t2i-250415';
 const SIZES = new Set(['1024x1024', '864x1152', '1152x864', '1280x720', '720x1280', '832x1248', '1248x832']);
 
+
+/** 免费通道：Pollinations（无需 key，返回 JPEG，通常 5–15 秒一张）。 */
+async function generatePollinations({ prompt, size, timeoutMs }) {
+  const [w, h] = String(size || '1024x1024').split('x').map((n) => Math.max(256, Math.min(1536, parseInt(n, 10) || 1024)));
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`
+    + `?width=${w}&height=${h}&nologo=true&model=flux`;
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(Math.min(timeoutMs, 90000)) });
+  } catch (error) {
+    return { ok: false, error: `免费出图请求失败：${error?.message ?? error}` };
+  }
+  if (!res.ok) return { ok: false, error: `免费出图接口 ${res.status}` };
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length) return { ok: false, error: '免费出图返回空数据' };
+  if (!(buffer[0] === 0xff && buffer[1] === 0xd8) && !(buffer[0] === 0x89 && buffer[1] === 0x50)) {
+    return { ok: false, error: '免费出图返回的不是图片' };
+  }
+  return { ok: true, buffer, mime: buffer[0] === 0x89 ? 'image/png' : 'image/jpeg', model: 'pollinations-flux', size: `${w}x${h}` };
+}
+
 export function drawConfig(cfg) {
   const d = cfg?.draw ?? {};
   return {
+    provider: String(d.provider || '').trim() || (d.apiKey ? 'ark' : 'pollinations'),
     enabled: d.enabled === true,
     apiKey: String(d.apiKey ?? '').trim(),
     model: String(d.model ?? '').trim() || DEFAULT_MODEL,
@@ -31,6 +53,8 @@ export function drawConfig(cfg) {
 export async function generateImage({ cfg, prompt, size, timeoutMs = 120000 } = {}) {
   const c = drawConfig(cfg);
   if (!c.enabled) return { ok: false, error: '画图未启用（config.json → draw.enabled）' };
+  // 免费通道：不需要 key，直接走 Pollinations
+  if (c.provider === 'pollinations') return generatePollinations({ prompt, size: size || c.size, timeoutMs });
   if (!c.apiKey) return { ok: false, error: '画图缺少密钥（config.json → draw.apiKey）' };
   const p = String(prompt ?? '').trim().slice(0, 800);
   if (!p) return { ok: false, error: 'prompt 不能为空' };

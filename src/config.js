@@ -56,6 +56,16 @@ export function loadConfig(root = ROOT) {
       ...(file.dsh ?? {})
     },
     snowluma: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', ...(file.snowluma ?? {}) },
+    // 画图（文生图）：provider=pollinations（免费、无 key）或 ark（豆包 Seedream，要 key）
+    draw: {
+      enabled: false,
+      provider: 'pollinations',
+      apiKey: '',
+      model: 'doubao-seedream-3-0-t2i-250415',
+      size: '1024x1024',
+      watermark: false,
+      ...(file.draw ?? {})
+    },
     // 空 => 每个会话在 state/agents/<key> 下建独立工作目录
     sessionCwd: file.sessionCwd ?? '',
     agentPreset: file.agentPreset ?? 'qq-chat',
