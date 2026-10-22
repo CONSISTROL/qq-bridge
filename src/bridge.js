@@ -535,7 +535,7 @@ async function segmentsToText(segments, options = {}) {
       }
       case 'face': out.push(`[表情${d.id ?? ''}]`); break;
       case 'image': out.push(imageSegmentLabel(d)); break;
-      case 'record': out.push('[语音]'); break;
+      case 'record': out.push(d.pttText ? `[语音]「${String(d.pttText).slice(0, 300)}」` : '[语音]'); break;
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -8585,6 +8585,28 @@ const agentTokenOk = (key, token) => {
       if (m.kind === 'file') return !!(m.url || m.file || m.fileId);
       return !!(m.file || m.url);
     }) : [];
+    // 语音消息：QQ 客户端自带语音转文字，网关有 fetch_ptt_text 可以直接取，
+    // 不必下载音频、也不必本地 ASR（QQ 语音是 silk，ffmpeg 解不了）。
+    if (safeMedia.some((m) => m.kind === 'record') && messageId) {
+      void (async () => {
+        try {
+          const r = await bot.call('fetch_ptt_text', { message_id: String(messageId) });
+          const text = String(r?.text ?? r?.data?.text ?? '').trim();
+          if (!text) return;
+          const st2 = getSocialV2State(key);
+          for (const box of [st2.recentMessages, st2.unread]) {
+            const hit = Array.isArray(box) ? box.find((m) => String(m?.messageId ?? m?.id ?? '') === String(messageId)) : null;
+            if (hit && Array.isArray(hit.media)) {
+              for (const mm of hit.media) if (mm && mm.kind === 'record') mm.pttText = text;
+            }
+          }
+          saveSocialV2State();
+          log(`[voice] 语音转写成功（${key} ${messageId}）：${text.slice(0, 40)}`);
+        } catch (error) {
+          log(`[voice] 语音转写失败（${key} ${messageId}）：${error?.message ?? error}`);
+        }
+      })();
+    }
     // 收图即落盘：不等 AI 要看（那时链接可能已过期）
     if (safeMedia.some((m) => m.kind === 'image' || m.kind === 'face')) {
       void cacheMediaSoon(messageId, safeMedia.filter((m) => m.kind === 'image' || m.kind === 'face'));
