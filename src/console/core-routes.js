@@ -1,3 +1,4 @@
+import { listSites, startLogin, submitCode, loginStatus, loginShot, closeSession } from '../login-assist.js';
 import { readUsage } from '../usage.js';
 import { startLive, stopLive, liveShot, liveClick, livePointer, liveText, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
 import { generateImage, drawConfig } from '../draw.js';
@@ -588,6 +589,27 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 登录助手：填手机号 → 发验证码 → 填码登录（浏览器在隐藏屏里跑）──────────
+    if (url.pathname.startsWith('/api/login/')) {
+      const act = url.pathname.slice('/api/login/'.length);
+      try {
+        if (act === 'sites') { sendJson({ ok: true, sites: listSites() }); return; }
+        if (act === 'shot') {
+          const buf = await loginShot({ site: String(url.searchParams.get('site') || '') });
+          if (!buf) { sendJson({ ok: false, error: '没有活动会话' }, 409); return; }
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+          res.end(buf);
+          return;
+        }
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        if (act === 'start') { sendJson(await startLogin({ site: body.site, phone: body.phone })); return; }
+        if (act === 'code') { sendJson(await submitCode({ site: body.site, code: body.code })); return; }
+        if (act === 'status') { sendJson(await loginStatus({ site: body.site || url.searchParams.get('site') })); return; }
+        if (act === 'close') { sendJson(await closeSession({ site: body.site })); return; }
+        sendJson({ ok: false, error: '未知操作' }, 404);
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 用量统计（余额走官方接口；每日 token/花费是本地估算）──────────────────
     if (url.pathname === '/api/usage/stats') {
       try {

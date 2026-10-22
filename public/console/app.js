@@ -23,8 +23,9 @@ import * as capabilities from './views/capabilities.js';
 import * as mc from './views/mc.js';
 import * as status from './views/status.js';
 import * as usage from './views/usage.js';
+import * as settings from './views/settings.js';
 
-const VIEWS = [overview, chat, memorydb, album, voicepack, persona, autonomy, security, status, usage, tools, capabilities, plugins, mc];
+const VIEWS = [overview, chat, memorydb, album, voicepack, persona, autonomy, security, status, usage, settings, tools, capabilities, plugins, mc];
 const GROUP_ORDER = ['总览', '聊天', '能力', '记忆与素材', '系统'];
 const GROUP_FALLBACK = '系统';
 // 手机底栏只放最常用的四个分区；其余进「更多」抽屉。
