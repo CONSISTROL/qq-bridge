@@ -74,6 +74,38 @@ export async function mount(root) {
     }
   });
 
+  // ── 画图浏览器（豆包）：截图 + 点击转发（过验证码用）──────────────────
+  const drawBox = $('#drawShotBox', view);
+  const loadDrawShot = async () => {
+    if (!drawBox) return;
+    const r = await fetch('/api/draw/browser/shot?t=' + Date.now(), { headers: { 'x-console-token': localStorage.getItem('consoleToken') || '' } }).catch(() => null);
+    if (!r || !r.ok) { drawBox.innerHTML = '<span class="meta">没有画面（先点「打开」）</span>'; return; }
+    const blob = await r.blob();
+    drawBox.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(blob);
+    img.style.cssText = 'max-width:100%;border-radius:8px;border:1px solid #30363d;cursor:crosshair';
+    img.addEventListener('click', async (ev) => {
+      const rect = img.getBoundingClientRect();
+      const x = Math.round((ev.clientX - rect.left) * (1280 / rect.width));
+      const y = Math.round((ev.clientY - rect.top) * (1000 / rect.height));
+      await api('/api/draw/browser/click', 'POST', { x, y }).catch(() => {});
+      setTimeout(loadDrawShot, 400);
+    });
+    drawBox.appendChild(img);
+    $('#drawState', view) && ($('#drawState', view).textContent = '运行中');
+  };
+  $('#drawOpen', view)?.addEventListener('click', async () => {
+    await api('/api/draw/browser/open', 'POST', {}).catch(() => {});
+    setTimeout(loadDrawShot, 1500);
+  });
+  $('#drawShotBtn', view)?.addEventListener('click', loadDrawShot);
+  $('#drawClose', view)?.addEventListener('click', async () => {
+    await api('/api/draw/browser/close', 'POST', {}).catch(() => {});
+    if ($('#drawState', view)) $('#drawState', view).textContent = '未打开';
+    if (drawBox) drawBox.innerHTML = '<span class="meta">已关闭</span>';
+  });
+
   $('#lgShot', view)?.addEventListener('click', async () => {
     const site = $('#lgShotSite', view)?.value.trim() || 'deepseek';
     const out = $('#lgShotBox', view);

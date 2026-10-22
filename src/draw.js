@@ -1,4 +1,4 @@
-// 画图：网页版 ChatGPT 优先 + Pollinations 免费兜底。（豆包/Ark 通道已按 owner 要求移除）
+// 画图：豆包网页版（浏览器自动化，无兜底）——失败如实报错；验证码需人工在控制台点掉。
 //
 // 为什么走桥接而不是 MCP 侧直连：密钥只在桥接的 config.json 里（不进 DSH 侧配置），
 // 出图后直接复用现有的图片发送链路（缩放/体积上限/防重复都在那里）。
@@ -7,32 +7,12 @@
 //   Authorization: Bearer <ARK_API_KEY>
 //   { model, prompt, size: '1024x1024', response_format: 'url'|'b64_json', watermark: false }
 import { safeFetchBuffer } from './safe-fetch.js';
-import { generateImageChatgpt } from './draw-web.js';
+import { generateImageWeb } from './draw-web.js';
 
-// 已按 owner 要求移除豆包（Ark）通道；现在只有 chatgpt-web 与 pollinations 两条。
-const DEFAULT_MODEL = 'chatgpt-web';
+// 现在只有豆包网页版一条通道（无兜底）。
+const DEFAULT_MODEL = 'doubao-web';
 const SIZES = new Set(['1024x1024', '864x1152', '1152x864', '1280x720', '720x1280', '832x1248', '1248x832']);
 
-
-/** 免费通道：Pollinations（无需 key，返回 JPEG，通常 5–15 秒一张）。 */
-async function generatePollinations({ prompt, size, timeoutMs }) {
-  const [w, h] = String(size || '1024x1024').split('x').map((n) => Math.max(256, Math.min(1536, parseInt(n, 10) || 1024)));
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`
-    + `?width=${w}&height=${h}&nologo=true&model=flux`;
-  let res;
-  try {
-    res = await fetch(url, { signal: AbortSignal.timeout(Math.min(timeoutMs, 90000)) });
-  } catch (error) {
-    return { ok: false, error: `免费出图请求失败：${error?.message ?? error}` };
-  }
-  if (!res.ok) return { ok: false, error: `免费出图接口 ${res.status}` };
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (!buffer.length) return { ok: false, error: '免费出图返回空数据' };
-  if (!(buffer[0] === 0xff && buffer[1] === 0xd8) && !(buffer[0] === 0x89 && buffer[1] === 0x50)) {
-    return { ok: false, error: '免费出图返回的不是图片' };
-  }
-  return { ok: true, buffer, mime: buffer[0] === 0x89 ? 'image/png' : 'image/jpeg', model: 'pollinations-flux', size: `${w}x${h}` };
-}
 
 export function drawConfig(cfg) {
   const d = cfg?.draw ?? {};
@@ -53,15 +33,9 @@ export function drawConfig(cfg) {
 export async function generateImage({ cfg, prompt, size, timeoutMs = 120000 } = {}) {
   const c = drawConfig(cfg);
   if (!c.enabled) return { ok: false, error: '画图未启用（config.json → draw.enabled）' };
-  // 按 owner 要求：**不做兜底**，只走 ChatGPT 网页版；失败就把原因如实返回。
-  return generateImageChatgpt({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, projectUrl: cfg?.draw?.chatgptProjectUrl || '', timeoutMs });
-  const p = String(prompt ?? '').trim().slice(0, 800);
-  if (!p) return { ok: false, error: 'prompt 不能为空' };
-  const sz = SIZES.has(String(size ?? '')) ? String(size) : c.size;
+  // 按 owner 要求：**不做兜底**，只走豆包网页版；失败就把原因如实返回。
+  return generateImageWeb({ stateDir: cfg?.stateDir || path.join(process.cwd(), 'state'), prompt, timeoutMs });
 
-  // 注意：这里不能用 safe-fetch —— 它只支持 GET 且会剥掉 Authorization 头（安全设计）。
-  // 目标是我们自己配置的固定可信域名，用 Node 内置 fetch + 超时即可。
-  return { ok: false, error: 'Ark 通道已移除（改用 chatgpt/pollinations）' };
   const first = Array.isArray(data?.data) ? data.data[0] : null;
   if (!first) return { ok: false, error: `出图响应里没有图片：${JSON.stringify(data).slice(0, 200)}` };
 

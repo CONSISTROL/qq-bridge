@@ -1,4 +1,5 @@
-import { listSites, startLogin, submitCode, loginStatus, loginShot, closeSession } from '../login-assist.js';
+import { openDrawBrowser, drawShot, drawClick, closeDrawBrowser } from '../draw-web.js';
+import { listSites, startLogin, submitCode, loginStatus, loginShot, loginClick, closeSession } from '../login-assist.js';
 import { readUsage } from '../usage.js';
 import { startLive, stopLive, liveShot, liveClick, livePointer, liveText, livePrompt, liveGrab, liveStatus } from '../draw-live.js';
 import { generateImage, drawConfig } from '../draw.js';
@@ -589,6 +590,25 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 画图浏览器（豆包 web）：打开/截图/转发点击（人工过验证码）─────────────
+    if (url.pathname.startsWith('/api/draw/browser/')) {
+      const act = url.pathname.slice('/api/draw/browser/'.length);
+      try {
+        if (act === 'open') { sendJson(await openDrawBrowser({ stateDir: STATE_DIR })); return; }
+        if (act === 'shot') {
+          const buf = await drawShot({ stateDir: STATE_DIR });
+          if (!buf) { sendJson({ ok: false, error: '浏览器没开' }, 409); return; }
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+          res.end(buf);
+          return;
+        }
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        if (act === 'click') { sendJson(await drawClick({ x: body.x, y: body.y, stateDir: STATE_DIR })); return; }
+        if (act === 'close') { sendJson(await closeDrawBrowser()); return; }
+        sendJson({ ok: false, error: '未知操作' }, 404);
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 登录助手：填手机号 → 发验证码 → 填码登录（浏览器在隐藏屏里跑）──────────
     if (url.pathname.startsWith('/api/login/')) {
       const act = url.pathname.slice('/api/login/'.length);
@@ -605,6 +625,7 @@ export function createConsoleCoreRoutes(deps) {
         if (act === 'start') { sendJson(await startLogin({ site: body.site, phone: body.phone })); return; }
         if (act === 'code') { sendJson(await submitCode({ site: body.site, code: body.code })); return; }
         if (act === 'status') { sendJson(await loginStatus({ site: body.site || url.searchParams.get('site') })); return; }
+        if (act === 'click') { sendJson(await loginClick({ site: body.site, x: body.x, y: body.y })); return; }
         if (act === 'close') { sendJson(await closeSession({ site: body.site })); return; }
         sendJson({ ok: false, error: '未知操作' }, 404);
       } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }

@@ -1,6 +1,6 @@
 // 登录助手：在隐藏虚拟屏里开一个持久浏览器的「登录会话」，
 // 主人在控制台填手机号 → 点「发送验证码」→ 收到短信后填验证码 → 点「登录」。
-// 之所以这么绕：这些站点（DeepSeek 平台 / ChatGPT）都要求短信或邮箱验证码，
+// 之所以这么绕：这些站点（如 DeepSeek 平台）要求短信验证码，
 // 自动化没法替人收短信，但可以把「填表 + 点按钮」全自动，人只负责收码。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,16 +14,11 @@ const SITES = {
     cookieHost: 'platform.deepseek.com',
     loginPath: /sign_in|login/i
   },
-  chatgpt: {
-    name: 'ChatGPT',
-    url: 'https://chatgpt.com/',
-    profile: 'chatgpt-profile',
-    cookieHost: 'chatgpt.com',
-    loginPath: /auth|login/i
-  }
 };
 
 const DISPLAY = process.env.LOGIN_DISPLAY || ':44';
+export const VIEW_W = 1400;
+export const VIEW_H = 1000;
 const sessions = new Map();   // site -> { browser, page, at, lastAction }
 
 export function listSites() {
@@ -66,7 +61,7 @@ export async function ensureSession(siteId) {
     userDataDir: dir,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--lang=zh-CN',
       '--window-size=1400,1000', '--window-position=0,0',
-      siteId === 'chatgpt' ? `--proxy-server=${process.env.DRAW_PROXY || 'http://127.0.0.1:7897'}` : '--disable-features=IsolateOrigins'],
+      '--disable-features=IsolateOrigins'],
     defaultViewport: { width: 1400, height: 1000 },
     env: { ...process.env, DISPLAY }
   });
@@ -155,6 +150,16 @@ export async function loginStatus({ site }) {
   const loggedIn = !cfg.loginPath.test(url);
   const bodyOk = await page.evaluate(() => !/登录|sign in|log in/i.test((document.body?.innerText || '').slice(0, 300))).catch(() => true);
   return { ok: true, active: true, loggedIn: loggedIn || bodyOk, url, lastAction: sess.lastAction };
+}
+
+/** 把点击转发到登录浏览器（人工过验证码用：控制台看截图 → 点位置 → 这里转发）。 */
+export async function loginClick({ site, x, y }) {
+  const sess = sessions.get(site);
+  if (!sess) return { ok: false, error: '没有活动会话' };
+  const px = Math.max(0, Math.round(Number(x) || 0));
+  const py = Math.max(0, Math.round(Number(y) || 0));
+  try { await sess.page.mouse.click(px, py); return { ok: true }; }
+  catch (error) { return { ok: false, error: String(error?.message ?? error) }; }
 }
 
 export async function loginShot({ site }) {
