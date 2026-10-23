@@ -131,7 +131,7 @@ export function migrateFromJson({ stateDir, log = () => {} } = {}) {
  */
 export function recallForPrompt({ stateDir, key = '', query = '', limit = 10 } = {}) {
   const d = openMemoryDb({ stateDir });
-  const rows = d.prepare(`SELECT * FROM items WHERE kind IN ('fact','knowledge','remark','slang','impression','topic')`).all();
+  const rows = d.prepare(`SELECT * FROM items WHERE kind IN ('fact','knowledge','remark','slang','impression','topic','summary')`).all();
   const q = String(query || '').toLowerCase();
   const now = Date.now();
   const scored = rows.map((r) => {

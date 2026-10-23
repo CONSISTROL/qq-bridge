@@ -7401,7 +7401,26 @@ const agentTokenOk = (key, token) => {
       const dropped = st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
       try {
         const sum = summarizeRecords(dropped, { maxChars: 600 });
-        if (sum) st.rollingSummary = mergeSummary(st.rollingSummary, sum, { maxChars: 1200 });
+        if (sum) {
+          // A 方案：摘要切片入记忆库（kind=summary），由相关度召回决定要不要注入；
+          // 不再整段常驻注入，省 token，也让"命中才展开"成立。
+          const first = dropped[0]?.time || dropped[0]?.at || dropped[0]?.t || Date.now();
+          const last = dropped[dropped.length - 1]?.time || dropped[dropped.length - 1]?.at || dropped[dropped.length - 1]?.t || Date.now();
+          const fmt = (t) => new Date(Number(t) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const tags = [...new Set((sum.match(/高频词：([^；]+)/)?.[1] || '').split('、').filter(Boolean))].slice(0, 8);
+          upsertItem({
+            stateDir: STATE_DIR,
+            item: {
+              id: `summary:${key}:${last}`,
+              kind: 'summary',
+              scope: key,   // 摘要只在本会话召回，避免把一个群的历史串到另一个群
+              text: `【${key}】${fmt(first)} ~ ${fmt(last)} 的聊天（${dropped.length} 条）：${sum}`,
+              tags,
+              at: Number(last) || Date.now()
+            }
+          });
+          st.rollingSummary = '';   // 旧机制清空，避免重复注入
+        }
       } catch { /* 忽略 */ }
       return;
     }
@@ -9435,10 +9454,10 @@ const agentTokenOk = (key, token) => {
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
-    const summaryText = String(st.rollingSummary || '').trim();
-    const summaryLine = summaryText
-      ? `【更早的聊天摘要】\n${summaryText.slice(-1200)}\n（要看原文就用 qq_search_history / qq_recall 查归档）\n\n`
-      : '';
+    // 更早的聊天已经压成 kind=summary 的记忆条目，按相关度自动召回（见 buildMemoryRecallLine）；
+    // 这里只留一句"可以查"，不再整段常驻注入。
+    const summaryLine = '【更早的聊天】超出上下文的历史已压缩成记忆条目（按相关度自动召回）；'
+      + '要原文细节就用 qq_search_history / qq_recall 查归档（永久保留）。\n\n';
     const memoryText = formatMemoryChat(st);
     const memoryLine = summaryLine + (memoryText ? `${memoryText}\n\n` : '');
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
