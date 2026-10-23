@@ -1380,25 +1380,27 @@ defineTool(
 // ── 画图（豆包 Seedream）──────────────────────────────────────────────────
 defineTool(
   'qq_draw',
-  '**自己画一张图**并发到这个会话（文生图，豆包 Seedream）。适合：群友要图但没有现成素材、'
-    + '梗图/表情牌、示意图、带文字的图、二次元插画。写法上用具体的中文描述：主体+动作+风格+构图+画幅，'
-    + '例如「一只戴墨镜的蓝色鲸鱼蹲在沙滩上，像素风，正方形」。'
-    + '注意：① 这是生成图，不是搜图（想找现成的用 qq_search_images）；② 一张要几秒到几十秒；'
-    + '③ 不要在群里刷图，一次一张；④ 生成失败会把原因告诉你（没配密钥时直接说明）。',
+  '**自己画一张图**并发到这个会话：方式是你**写一段 HTML/CSS/SVG**，桥接用无头浏览器渲染成 PNG。'
+    + '适合：梗图、表情牌、海报、对比表、图表、示意图、带文字的图、简单漫画分镜。'
+    + '要求：① 只传 body 片段或整页都行，内联样式最稳（不需要外部 CSS）；② 固定画布尺寸靠 width/height，'
+    + '内容用 100vw/100vh 铺满；③ 可以用 https 的远程图片和内联 <svg>；页面 JS 会被禁掉（别写脚本）；'
+    + '④ 中文直接写，字体建议 font-family: "PingFang SC","Microsoft YaHei",sans-serif；'
+    + '⑤ 这是生成图，不是搜图（找现成素材用 qq_search_images）；⑥ 一张几秒，别在群里刷图。',
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
-    prompt: z.string().describe('画面描述（中文，具体一点，最多 800 字）'),
-    size: z.enum(['1024x1024', '864x1152', '1152x864', '1280x720', '720x1280']).optional()
-      .describe('画幅：正方形（默认）/ 竖版 / 横版 / 宽屏 / 手机竖屏')
+    html: z.string().describe('要渲染的 HTML（内联样式；可用 svg/远程图片；最多 400KB）'),
+    width: z.number().optional().describe('画布宽（像素，默认 1080，200~2400）'),
+    height: z.number().optional().describe('画布高（像素，默认 1080，200~2400）'),
+    scale: z.number().optional().describe('清晰度倍率 1~2（默认 1；要更清晰可传 2，体积更大）')
   },
-  async ({ key, token, prompt, size }) => {
+  async ({ key, token, html, width, height, scale }) => {
     try {
-      const d = await agentApi('/api/draw', {
-        method: 'POST', body: JSON.stringify({ key, prompt, size }), headers: { 'x-agent-token': token }, timeoutMs: 180000
+      const d = await agentApi('/api/draw/html', {
+        method: 'POST', body: JSON.stringify({ key, html, width, height, scale }), headers: { 'x-agent-token': token }, timeoutMs: 60000
       });
       if (!d.ok) return { content: [{ type: 'text', text: `画图失败：${d.error || d.sent?.error || '未知原因'}` }], isError: true };
-      return { content: [{ type: 'text', text: `画好了并发出去：${d.model || ''} ${d.size || ''}` }] };
+      return { content: [{ type: 'text', text: `画好了并发出去（HTML 渲染，${d.width}x${d.height}）` }] };
     } catch (error) { return { content: [{ type: 'text', text: `画图失败：${error?.message ?? error}` }], isError: true }; }
   }
 );

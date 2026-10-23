@@ -1,3 +1,4 @@
+import { renderHtmlToImage } from '../draw-html.js';
 import { openDrawBrowser, drawShot, drawClick, closeDrawBrowser } from '../draw-web.js';
 import { listSites, startLogin, submitCode, loginStatus, loginShot, loginClick, closeSession } from '../login-assist.js';
 import { readUsage } from '../usage.js';
@@ -590,6 +591,26 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 画图（HTML 渲染）：AI 写 HTML → 本地无头浏览器渲染成 PNG ──────────────
+    if (url.pathname === '/api/draw/html' && req.method === 'POST') {
+      try {
+        const body = await readBody();
+        const r = await renderHtmlToImage({ html: body.html, width: body.width, height: body.height, scale: body.scale, stateDir: STATE_DIR });
+        if (!r.ok) { sendJson(r, 400); return; }
+        const key = String(body.key ?? '').trim();
+        if (!key) {
+          const name = `draw-${Date.now()}.png`;
+          const dir = path.join(STATE_DIR, 'draw');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, name), r.buffer);
+          sendJson({ ok: true, file: name, url: `/api/draw/file?name=${encodeURIComponent(name)}`, width: r.width, height: r.height });
+          return;
+        }
+        const sent = await sendImageChat(key, `data:image/png;base64,${r.buffer.toString('base64')}`, {});
+        sendJson({ ok: sent?.ok !== false, sent, width: r.width, height: r.height, model: 'html' });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 画图浏览器（豆包 web）：打开/截图/转发点击（人工过验证码）─────────────
     if (url.pathname.startsWith('/api/draw/browser/')) {
       const act = url.pathname.slice('/api/draw/browser/'.length);

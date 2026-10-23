@@ -9387,8 +9387,11 @@ const agentTokenOk = (key, token) => {
     const profileLine = buildMemoryRecallLine(key);
     // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
     let upgradeLine = '';
-    upgradeLine += '【会画图】群友要图、要梗图/表情牌/示意图时，可以用 qq_draw 直接生成一张（中文描述，写清主体/动作/风格/画幅）；'
-      + '找现成素材才用 qq_search_images。一张几秒到几十秒，别在群里刷图。\n\n'
+    upgradeLine += '【会画图（写 HTML）】群友要图、要梗图/表情牌/海报/图表时，用 qq_draw 自己画：'
+      + '你写一段 HTML/CSS/SVG，桥接用无头浏览器渲染成图片发出去（页面 JS 会被禁用，尽量内联样式）。'
+      + '示例：`<div style="width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;'
+      + 'background:#0f172a;color:#fff;font:800 96px PingFang SC,sans-serif">哈哈哈哈</div>`。'
+      + '尺寸用 width/height 传（默认 1080x1080）；找现成素材才用 qq_search_images。别在群里刷图。\n\n'
       + '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
       + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
     try {
@@ -9584,8 +9587,11 @@ const agentTokenOk = (key, token) => {
     const profileLine = buildMemoryRecallLine(key);
     // 自主升级：把它自己总结出来的改进提示注入（低风险、立即生效，最多 12 条/1500 字）
     let upgradeLine = '';
-    upgradeLine += '【会画图】群友要图、要梗图/表情牌/示意图时，可以用 qq_draw 直接生成一张（中文描述，写清主体/动作/风格/画幅）；'
-      + '找现成素材才用 qq_search_images。一张几秒到几十秒，别在群里刷图。\n\n'
+    upgradeLine += '【会画图（写 HTML）】群友要图、要梗图/表情牌/海报/图表时，用 qq_draw 自己画：'
+      + '你写一段 HTML/CSS/SVG，桥接用无头浏览器渲染成图片发出去（页面 JS 会被禁用，尽量内联样式）。'
+      + '示例：`<div style="width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;'
+      + 'background:#0f172a;color:#fff;font:800 96px PingFang SC,sans-serif">哈哈哈哈</div>`。'
+      + '尺寸用 width/height 传（默认 1080x1080）；找现成素材才用 qq_search_images。别在群里刷图。\n\n'
       + '【可以自己升级】发现反复出现的问题（总答不好一类问题、缺个功能、某个规矩该记住）时，'
       + '用 qq_self_upgrade 给自己提一条：prompt-hint 立即生效，skill/tune 需要管理员批准。不用每次都说出来。\n\n';
     try {
