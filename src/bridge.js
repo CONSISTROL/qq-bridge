@@ -7392,9 +7392,20 @@ const agentTokenOk = (key, token) => {
   function trimRecentMessagesChat(st) {
     const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
     const hardLimit = Math.max(recentLimit, Number(cfg.socialData?.context?.recentHardLimit) || recentLimit * 3);
+    // token 预算：V4.1 支持 1M 上下文，但 prompt 越大越慢越贵（缓存价也要钱），
+    // 所以按「估算 token」再压一道闸，而不是只按条数。
+    const tokenBudget = Math.max(8000, Number(cfg.socialData?.context?.promptTokenBudget) || 150000);
     if (!Array.isArray(st.recentMessages)) return;
     if (st.recentMessages.length > hardLimit) {
       st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+      return;
+    }
+    // 粗估：中文约 1.8 字符/token（与 usage 估算同口径）
+    const estimate = (list) => Math.round(list.reduce((n, m) => n + String(m?.text || '').length + 20, 0) / 1.8);
+    if (estimate(st.recentMessages) > tokenBudget) {
+      let cut = 0;
+      while (cut < st.recentMessages.length - recentLimit && estimate(st.recentMessages.slice(cut)) > tokenBudget) cut += 50;
+      if (cut > 0) st.recentMessages.splice(0, cut);
     }
   }
 
