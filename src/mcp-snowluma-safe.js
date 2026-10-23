@@ -1790,7 +1790,7 @@ defineTool(
     key: z.string().describe('会话 key'),
     query: z.string().describe('关键词（多个词用空格分隔，全部命中才算）'),
     token: z.string().describe('会话令牌'),
-    sinceDays: z.number().optional().describe('只看最近 N 天（默认全部保留期）'),
+    sinceDays: z.number().optional().describe('只看最近 N 天（默认全部；归档现为永久保留）'),
     limit: z.number().optional().describe('最多返回几条（默认 20）')
   },
   async ({ key, query, token, sinceDays, limit }) => {
