@@ -7393,44 +7393,51 @@ const agentTokenOk = (key, token) => {
   function trimRecentMessagesChat(st) {
     const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
     const hardLimit = Math.max(recentLimit, Number(cfg.socialData?.context?.recentHardLimit) || recentLimit * 3);
-    // token 预算：V4.1 支持 1M 上下文，但 prompt 越大越慢越贵（缓存价也要钱），
-    // 所以按「估算 token」再压一道闸，而不是只按条数。
-    const tokenBudget = Math.max(8000, Number(cfg.socialData?.context?.promptTokenBudget) || 150000);
+    // 上下文预算：V4.1 支持 1M，但每轮都按 token 计费，所以设一个"接近满才压缩"的闸门。
+    const tokenBudget = Math.max(8000, Number(cfg.socialData?.context?.promptTokenBudget) || 500000);
+    // 压缩后保留多少：按预算比例（默认 30%），保证压缩一次能撑很久，不用频繁压。
+    const keepRatio = Math.min(0.9, Math.max(0.1, Number(cfg.socialData?.context?.compactKeepRatio) || 0.3));
     if (!Array.isArray(st.recentMessages)) return;
-    if (st.recentMessages.length > hardLimit) {
-      const dropped = st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-      try {
-        const sum = summarizeRecords(dropped, { maxChars: 600 });
-        if (sum) {
-          // A 方案：摘要切片入记忆库（kind=summary），由相关度召回决定要不要注入；
-          // 不再整段常驻注入，省 token，也让"命中才展开"成立。
-          const first = dropped[0]?.time || dropped[0]?.at || dropped[0]?.t || Date.now();
-          const last = dropped[dropped.length - 1]?.time || dropped[dropped.length - 1]?.at || dropped[dropped.length - 1]?.t || Date.now();
-          const fmt = (t) => new Date(Number(t) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-          const tags = [...new Set((sum.match(/高频词：([^；]+)/)?.[1] || '').split('、').filter(Boolean))].slice(0, 8);
-          upsertItem({
-            stateDir: STATE_DIR,
-            item: {
-              id: `summary:${key}:${last}`,
-              kind: 'summary',
-              scope: key,   // 摘要只在本会话召回，避免把一个群的历史串到另一个群
-              text: `【${key}】${fmt(first)} ~ ${fmt(last)} 的聊天（${dropped.length} 条）：${sum}`,
-              tags,
-              at: Number(last) || Date.now()
-            }
-          });
-          st.rollingSummary = '';   // 旧机制清空，避免重复注入
-        }
-      } catch { /* 忽略 */ }
-      return;
+    const est = (list) => Math.round(list.reduce((n, m) => n + String(m?.text || '').length + 20, 0) / 1.8);
+
+    const tooMany = st.recentMessages.length > hardLimit;
+    const tooBig = est(st.recentMessages) > tokenBudget;
+    if (!tooMany && !tooBig) return;   // 没接近上限：什么都不做（不压缩、不裁剪）
+
+    // 压缩目标：从尾部往前留到 "keepRatio × 预算" 所需的消息量
+    const keepBudget = Math.round(tokenBudget * keepRatio);
+    let keepFrom = st.recentMessages.length;
+    let acc = 0;
+    for (let i = st.recentMessages.length - 1; i >= 0; i--) {
+      acc += Math.round((String(st.recentMessages[i]?.text || '').length + 20) / 1.8);
+      if (acc > keepBudget) { keepFrom = i + 1; break; }
+      keepFrom = i;
+      if (st.recentMessages.length - i >= hardLimit) { keepFrom = i; break; }
     }
-    // 粗估：中文约 1.8 字符/token（与 usage 估算同口径）
-    const estimate = (list) => Math.round(list.reduce((n, m) => n + String(m?.text || '').length + 20, 0) / 1.8);
-    if (estimate(st.recentMessages) > tokenBudget) {
-      let cut = 0;
-      while (cut < st.recentMessages.length - recentLimit && estimate(st.recentMessages.slice(cut)) > tokenBudget) cut += 50;
-      if (cut > 0) st.recentMessages.splice(0, cut);
-    }
+    keepFrom = Math.min(keepFrom, Math.max(0, st.recentMessages.length - recentLimit));
+    if (keepFrom <= 0) return;
+    const dropped = st.recentMessages.splice(0, keepFrom);
+    try {
+      const sum = summarizeRecords(dropped, { maxChars: 600 });
+      if (sum) {
+        const first = dropped[0]?.time || dropped[0]?.at || dropped[0]?.t || Date.now();
+        const last = dropped[dropped.length - 1]?.time || dropped[dropped.length - 1]?.at || dropped[dropped.length - 1]?.t || Date.now();
+        const fmt = (t) => new Date(Number(t) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const tags = [...new Set((sum.match(/高频词：([^；]+)/)?.[1] || '').split('、').filter(Boolean))].slice(0, 8);
+        upsertItem({
+          stateDir: STATE_DIR,
+          item: {
+            id: `summary:${st.key || ''}:${last}`,
+            kind: 'summary',
+            scope: st.key || '',
+            text: `【${st.key || ''}】${fmt(first)} ~ ${fmt(last)} 的聊天（${dropped.length} 条）：${sum}`,
+            tags,
+            at: Number(last) || Date.now()
+          }
+        });
+      }
+      log(`[context] 压缩 ${dropped.length} 条旧消息 → 1 条摘要（保留 ${st.recentMessages.length} 条；预算 ${Math.round(tokenBudget / 1000)}k token）`);
+    } catch { /* 忽略 */ }
   }
 
   function formatMemoryChat(st) {
