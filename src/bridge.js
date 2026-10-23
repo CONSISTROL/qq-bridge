@@ -36,6 +36,7 @@ import { capabilityEnabled, migrateLegacyTools, pluginCatalog, OPT_IN_CAPS, PLUG
 import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallForPrompt, decayMemories } from './memdb.js';
 import { activePromptHints } from './self-upgrade.js';
 import { recordUsage } from './usage.js';
+import { summarizeRecords, mergeSummary } from './chat-summary.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -7397,7 +7398,11 @@ const agentTokenOk = (key, token) => {
     const tokenBudget = Math.max(8000, Number(cfg.socialData?.context?.promptTokenBudget) || 150000);
     if (!Array.isArray(st.recentMessages)) return;
     if (st.recentMessages.length > hardLimit) {
-      st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+      const dropped = st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+      try {
+        const sum = summarizeRecords(dropped, { maxChars: 600 });
+        if (sum) st.rollingSummary = mergeSummary(st.rollingSummary, sum, { maxChars: 1200 });
+      } catch { /* 忽略 */ }
       return;
     }
     // 粗估：中文约 1.8 字符/token（与 usage 估算同口径）
@@ -9430,8 +9435,12 @@ const agentTokenOk = (key, token) => {
       + '可以调 qq_get_member_avatar（userId 传你自己的号）看自己的头像，照你看到的描述；不确定就先查再答，别瞎编。\n\n';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用状态工具时请在参数中带上此令牌）\n\n`;
+    const summaryText = String(st.rollingSummary || '').trim();
+    const summaryLine = summaryText
+      ? `【更早的聊天摘要】\n${summaryText.slice(-1200)}\n（要看原文就用 qq_search_history / qq_recall 查归档）\n\n`
+      : '';
     const memoryText = formatMemoryChat(st);
-    const memoryLine = memoryText ? `${memoryText}\n\n` : '';
+    const memoryLine = summaryLine + (memoryText ? `${memoryText}\n\n` : '');
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationChat(st);
