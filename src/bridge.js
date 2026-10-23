@@ -7206,6 +7206,7 @@ const agentTokenOk = (key, token) => {
                 .slice(-20)
               : [],
             pendingSince: Number(val.pendingSince) || 0,
+            lastBiliHotAt: Number(val.lastBiliHotAt) || 0,
             proactiveOpeners: Array.isArray(val.proactiveOpeners)
               ? val.proactiveOpeners
                 .filter((o) => o && typeof o === 'object' && typeof o.text === 'string' && o.text.trim())
@@ -7311,6 +7312,7 @@ const agentTokenOk = (key, token) => {
           pendingWakeReasons: Array.isArray(st.pendingWakeReasons) ? st.pendingWakeReasons.slice(-20) : [],
           turnStartedAt: Number(st.turnStartedAt) || 0,
           pendingSince: Number(st.pendingSince) || 0,
+          lastBiliHotAt: Number(st.lastBiliHotAt) || 0,
           // 主动开过的话题：反重复要用，必须跨重启保留（否则重启后又开始复读）。
           proactiveOpeners: Array.isArray(st.proactiveOpeners)
             ? st.proactiveOpeners.filter((o) => o && o.text).slice(-20).map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0 }))
@@ -9370,6 +9372,8 @@ const agentTokenOk = (key, token) => {
         + saidRecent.map((o) => `- [${relativeTimeLabel(o.at)}] ${String(o.text).replace(/\s+/g, ' ').slice(0, 34)}`).join('\n')
         + '\n这些是你自己讲过的内容：要接着聊就明确接着说，别换个说法当成新发现再讲一遍。\n\n';
     }
+    const lastHot = Number(st?.lastBiliHotAt) || 0;
+    const hoursSinceHot = lastHot ? (Date.now() - lastHot) / 3600000 : 999;
     // 自主行动（L2）：冷场时除了说话，还能自己挑一件"有作为"的事做；但有每日预算与"什么都不做"选项。
     try {
       const b = budgetStatus({ stateDir: STATE_DIR, limit: Math.max(0, Number(cfg.socialData?.autonomy?.dailyBudget ?? 5)) });
@@ -9377,7 +9381,10 @@ const agentTokenOk = (key, token) => {
       out += '【自主时间（L2）】群冷了，你可以只说话，也可以自己挑一件事做：\n'
         + `· 今日自由行动预算：剩余 ${b.left} / ${b.limit} 次（说话不算，发动态/刷B站/学东西这类算）\n`
         + (gs.length ? `· 你自己的待办：${gs.map((g) => g.text).join(' / ')}\n` : '')
-        + '· **题材来源**：要开口前先 `qq_bili_hot` 看 B站 现在什么在火，从里面挑一个你真有话说的（别空想）；\n'
+                + `· **题材来源（硬要求）**：这次开口前**必须**先调 \`qq_bili_hot\` 看一眼 B站 现在什么在火`
+        + `${hoursSinceHot >= 4 ? '（你已经 ' + Math.round(hoursSinceHot) + ' 小时没看过了，这轮一定要看）' : '（刚看过就挑上次没聊的那几条）'}，`
+        + '从里面挑一个你真有话说的；新闻/热榜/赛事/新游戏这类**优先**，'
+        + '实在没有合适的再走领域池（生活吐槽/吃喝/游戏等）。别自己空想题材。\n'
         + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
         + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
         + '规则：做之前先用 qq_autonomy_status 看预算，做完用 qq_autonomy_spend 记一次；预算没了就只能聊天。'
@@ -11501,6 +11508,8 @@ const agentTokenOk = (key, token) => {
     KNOWN_AGENT_TOKENS,
     ROOT,
     STATE_DIR,
+    getSocialV2State,
+    saveSocialV2State,
     sendImageChat,
     allowed,
     api,

@@ -1312,7 +1312,7 @@ defineTool(
   { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), limit: z.number().optional().describe('取几条（默认 12，最多 20）') },
   async ({ key, token, limit }) => {
     try {
-      const d = await agentApi(`/api/socialData/bili-hot?limit=${Number(limit) || 12}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 40000 });
+      const d = await agentApi(`/api/socialData/bili-hot?limit=${Number(limit) || 12}${key ? `&key=${encodeURIComponent(key)}` : ''}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 40000 });
       const lines = (d.items || []).map((v, i) => `${i + 1}. ${v.title}（${v.owner}，${Math.round((v.view || 0) / 10000)}万播放）${v.url}`).join('\n');
       return { content: [{ type: 'text', text: lines || '（拿不到热门榜）' }] };
     } catch (error) { return { content: [{ type: 'text', text: `查 B站热门失败：${error?.message ?? error}` }], isError: true }; }

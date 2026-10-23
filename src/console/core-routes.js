@@ -377,6 +377,15 @@ export function createConsoleCoreRoutes(deps) {
     if (url.pathname === '/api/socialData/bili-hot') {
       const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 12));
       const now = Date.now();
+      // 记「上次看热榜时间」：主动冒泡的提示会据此要求"几小时没看就必须先看"
+      try {
+        const askKey = String(url.searchParams.get('key') || '').trim();
+        if (askKey && deps.getSocialV2State) {
+          const stHot = deps.getSocialV2State(askKey);
+          stHot.lastBiliHotAt = now;
+          deps.saveSocialV2State?.();
+        }
+      } catch { /* 忽略 */ }
       if (
         deps.biliHotCache.items.length &&
         now - deps.biliHotCache.at < 10 * 60 * 1000 &&
