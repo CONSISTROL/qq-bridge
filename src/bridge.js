@@ -7381,6 +7381,23 @@ const agentTokenOk = (key, token) => {
     return defaultMs;
   }
 
+  /**
+   * 最近消息的**批量淘汰**（前缀缓存友好）。
+   *
+   * 原来每来一条新消息就把最旧的一条从数组头部删掉 → 喂给模型的「最近消息」块每次从头部少一条，
+   * 整块前缀都变了，DeepSeek 的 prefix cache 从变化处往后全部失效（长 prompt 反而更贵）。
+   * 现在：允许涨到 hardLimit，超过时一次性裁回 recentLimit，两次裁剪之间前缀只追加不改写，
+   * 缓存能持续命中。
+   */
+  function trimRecentMessagesChat(st) {
+    const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
+    const hardLimit = Math.max(recentLimit, Number(cfg.socialData?.context?.recentHardLimit) || recentLimit * 3);
+    if (!Array.isArray(st.recentMessages)) return;
+    if (st.recentMessages.length > hardLimit) {
+      st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+    }
+  }
+
   function formatMemoryChat(st) {
     if (!st) return '';
     const lines = [];
@@ -8796,7 +8813,7 @@ const agentTokenOk = (key, token) => {
     st.preSleepWaitObservedAt = 0;
     st.preSleepWaitAccumMs = 0;
     st.recentMessages.push(msg);
-    if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+    trimRecentMessagesChat(st);
     st.unread.push(msg);
     if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
     const lowerPlain = String(plainContent ?? textContent ?? '');
@@ -8845,7 +8862,7 @@ const agentTokenOk = (key, token) => {
     st.preSleepWaitObservedAt = 0;
     st.preSleepWaitAccumMs = 0;
     st.recentMessages.push(msg);
-    if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+    trimRecentMessagesChat(st);
     st.unread.push(msg);
     if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
     saveSocialV2State();
@@ -8881,7 +8898,7 @@ const agentTokenOk = (key, token) => {
         time: now + i * 1000
       });
     }
-    if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+    trimRecentMessagesChat(st);
     // **自己说过的话**（不只是主动开盘）：线上问题，同一话题先在「回复」里讲过，过几天又当新话题
     // 开了一遍（真实案例：电车服务区充电，先说在回复里，5 天后又主动开一次，相似度 0.76），而旧的
     // 反重复记忆只记 proactiveCheck 那一轮，回复里的内容完全不在防重复的参照池里。
@@ -8957,7 +8974,7 @@ const agentTokenOk = (key, token) => {
         ...(undelivered ? { undelivered: true } : {}),
         time: Date.now()
       });
-      if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+      trimRecentMessagesChat(st);
       saveSocialV2State();
     } catch (error) {
       log(`[image] 记录自己发出的媒体失败：${error?.message ?? error}`);
