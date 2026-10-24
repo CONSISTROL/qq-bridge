@@ -28,6 +28,29 @@ export async function mount(root) {
   const view = await mountFragment(root, 'memorydb');
   let state = { kind: '', q: '', items: [], counts: {} };
 
+  // ── 记忆笔记（MEMORY.md）：读 / 存 ──────────────────────────────
+  const docBox = $('#mdDocText', view);
+  const docMeta = $('#mdDocMeta', view);
+  const loadDoc = async () => {
+    if (!docBox) return;
+    docMeta && (docMeta.textContent = '加载中…');
+    const r = await api('/api/memory/doc').catch(() => null);
+    if (!r || r.ok === false) { docMeta && (docMeta.textContent = '读取失败'); return; }
+    docBox.value = r.content || '';
+    docMeta && (docMeta.textContent = `${(r.content || '').length} 字 · 修改后点保存`);
+  };
+  const saveDoc = async () => {
+    if (!docBox) return;
+    docMeta && (docMeta.textContent = '保存中…');
+    const r = await api('/api/memory/doc', 'POST', { content: docBox.value }).catch(() => null);
+    if (r && r.ok) { docMeta && (docMeta.textContent = `已保存 · ${(docBox.value || '').length} 字`); toast?.('记忆笔记已保存'); }
+    else { docMeta && (docMeta.textContent = '保存失败：' + (r?.error || '未知原因')); }
+  };
+  await loadDoc();
+  $('#mdDocReload', view)?.addEventListener('click', loadDoc);
+  $('#mdDocSave', view)?.addEventListener('click', saveDoc);
+
+
   const renderTabs = () => {
     const box = $('#mdTabs', view);
     if (!box) return;
