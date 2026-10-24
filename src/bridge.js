@@ -9577,6 +9577,33 @@ const agentTokenOk = (key, token) => {
       + '这三种情况**不能装死**，要么回一句，要么明确表示不接（但要有反应）。'
       + '只有群友互相聊、没人理你时才可以安静待着。\n\n';
     const participationLine = participationText ? `${participationText}\n\n` : '';
+    // ── 对另一个 bot（AI 对练）模式 ────────────────────────────────────
+    // 线上观察：在 1050666134 群里跟另一个 bot 互斗嘴时，每句都是包袱、节奏工整，
+    // 连发几十条交替，真人看着就是"两个 AI 在对练"。真人聊天里有走神、有岔开、有只回一个「？」。
+    const aiPeers = (Array.isArray(cfg.socialData?.aiPeers) ? cfg.socialData.aiPeers : []).map((x) => String(x || '').trim()).filter(Boolean);
+    const isAiSender = (m) => !!m && !m.isSelf && aiPeers.some((n) => String(m.from || m.sender || '').includes(n));
+    let aiPeerLine = '';
+    if (aiPeers.length) {
+      const recentMsgs = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+      const lastIn = [...recentMsgs].reverse().find((m) => m && !m.isSelf && m.text);
+      const talkingToAi = isAiSender(lastIn);
+      // 连续「我 / 它」交替了多少条（中间没有真人插话）
+      let altRun = 0;
+      for (let i = recentMsgs.length - 1; i >= 0; i--) {
+        const m = recentMsgs[i];
+        if (!m || !m.text) continue;
+        if (m.isSelf || isAiSender(m)) altRun += 1; else break;
+      }
+      if (talkingToAi) {
+        aiPeerLine = '【这轮对面是另一个 AI（不是人）】群友看两个 bot 互相接梗，最容易觉得"人机"。所以这轮按真人的节奏来：\n'
+          + '· **可以不接**：回一个「？」「嗯」「草」也行，或者干脆只对具体的事说一句，别每句都回敬；\n'
+          + '· **别镜像它的句式**：它爱对称、爱短句挑衅，你别跟着用一样的节奏和结构，也别接它的韵；\n'
+          + '· **要有信息**：最近几条里至少一条得带实质内容（时间/数字/具体的人或事/明确的评价），不能全是机灵话；\n'
+          + '· **允许冷场**：' + (altRun >= 6 ? `你们已经来回 ${altRun} 条了，这轮**该停了**，最多回一句短的，或者干脆不说话。` : '接两三句就可以放手，把舞台留给真人。') + '\n\n';
+        log(`[chat] 对 AI 模式（对面=${String(lastIn?.from || '')}，连续交替 ${altRun} 条）`);
+      }
+    }
+
     const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n'
       // 线上统计：AI 18.7% 的消息带破折号、5.5% 以「行，」开头、平均 40 字，群友是 0% / 0% / 9.7 字。
       // 这些句式就是「公式化」的显性特征，模型自己不会觉得有问题，必须点名禁掉。
@@ -9715,7 +9742,7 @@ const agentTokenOk = (key, token) => {
       if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
       return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查归档（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
-    const base = memoryHint + voiceLine + roleLine + tokenLine + mustReplyLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    const base = aiPeerLine + memoryHint + voiceLine + roleLine + tokenLine + mustReplyLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -11605,6 +11632,7 @@ const agentTokenOk = (key, token) => {
     saveSocialV2State,
     recallChunksForText,
     refreshChunkIndex,
+    buildWakePromptChat,
     sendImageChat,
     allowed,
     api,

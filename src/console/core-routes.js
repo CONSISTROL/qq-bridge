@@ -601,6 +601,17 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 唤醒提示词预览（调试用：看它这轮到底收到什么）─────────────────────
+    if (url.pathname === '/api/socialData/wake-prompt') {
+      try {
+        const key = String(url.searchParams.get('key') || '');
+        if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+        const reason = String(url.searchParams.get('reason') || 'anyMessage');
+        const text = deps.buildWakePromptChat?.(key, reason) ?? '';
+        sendJson({ ok: true, length: text.length, text });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 记忆笔记（MEMORY.md）：AI 自己维护、人也可直接编辑 ──────────────────
     if (url.pathname === '/api/memory/doc') {
       try {

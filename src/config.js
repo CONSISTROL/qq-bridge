@@ -56,6 +56,8 @@ export function loadConfig(root = ROOT) {
       ...(file.dsh ?? {})
     },
     snowluma: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', ...(file.snowluma ?? {}) },
+    // AI 同伴名单：对面是这些名字时按「对 AI 模式」说话（少回敬、可冷场、要信息）
+    aiPeers: ['肥鱼姬'],
     // DeepSeek 平台（只读余额用）：apiKey 只用来查 /user/balance，不跑推理
     deepseek: { apiKey: '', ...(file.deepseek ?? {}) },
     // 画图（文生图）：provider=pollinations（免费、无 key）或 ark（豆包 Seedream，要 key）
