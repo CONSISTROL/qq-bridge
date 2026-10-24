@@ -600,6 +600,23 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 归档原文召回（chunk RAG）调试/验证接口 ────────────────────────────
+    if (url.pathname === '/api/chunk/recall') {
+      try {
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        const key = String(body.key || url.searchParams.get('key') || '');
+        const text = String(body.text || url.searchParams.get('text') || '');
+        if (!text) { sendJson({ ok: false, error: '缺少 text' }, 400); return; }
+        const chunks = await deps.recallChunksForText(key, text, Math.max(1, Math.min(8, Number(body.limit) || 3)));
+        sendJson({ ok: true, count: chunks.length, chunks });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    if (url.pathname === '/api/chunk/rebuild') {
+      try { await deps.refreshChunkIndex?.(true); sendJson({ ok: true }); }
+      catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 画图（HTML 渲染）：AI 写 HTML → 本地无头浏览器渲染成 PNG ──────────────
     if (url.pathname === '/api/draw/html' && req.method === 'POST') {
       try {

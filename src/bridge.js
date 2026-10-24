@@ -37,6 +37,7 @@ import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallF
 import { activePromptHints } from './self-upgrade.js';
 import { recordUsage } from './usage.js';
 import { summarizeRecords, mergeSummary } from './chat-summary.js';
+import { updateChunkIndex, searchChunks } from './chunk-index.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
 import { listGoals, addGoal, completeGoal, budgetStatus, spendBudget, recentLog } from './autonomy.js';
@@ -735,6 +736,83 @@ async function main() {
   let ragRebuild = null;        // 正在进行中的重建 promise（去重用）
   let ragDirty = true;          // 词条有增删改，需要补向量
   let ragLastError = '';
+
+  // ── 原文分块索引（chunk RAG）：归档按 40 条切块存向量，召回时拿原文注入 ──
+  let chunkIndexBusy = null;
+  let chunkIndexLastAt = 0;
+  const chunkQueryCache = new Map();   // 查询文本 → 向量（避免同一句话重复编码）
+  async function refreshChunkIndex(force = false) {
+    if (chunkIndexBusy) return chunkIndexBusy;
+    const now = Date.now();
+    if (!force && now - chunkIndexLastAt < 10 * 60 * 1000) return null;
+    chunkIndexBusy = (async () => {
+      try {
+        if (!embedder.ready) await embedder.start();
+        const res = await updateChunkIndex({
+          stateDir: STATE_DIR,
+          embed: async (text) => (await embedder.embed(String(text).slice(0, 400)))?.[0] || [],
+          maxChunks: 4000
+        });
+        chunkIndexLastAt = Date.now();
+        if (res?.added) log(`[chunk] 归档分块索引 +${res.added} 块（共 ${res.total}）`);
+      } catch (error) {
+        log(`[chunk] 索引更新失败：${error?.message ?? error}`);
+      } finally {
+        chunkIndexBusy = null;
+      }
+    })();
+    return chunkIndexBusy;
+  }
+
+  /** 针对某句话去归档里找最相关的原文块（同步返回，靠内存里的索引）。 */
+  async function recallChunksForText(key, text, limit = 3) {
+    const q = String(text ?? '').trim();
+    if (!q || q.length < 4) return [];
+    try {
+      let qvec = chunkQueryCache.get(q);
+      if (!qvec) {
+        if (!embedder.ready) await embedder.start();
+        qvec = (await embedder.embed(q.slice(0, 200)))?.[0];
+        if (!Array.isArray(qvec) || !qvec.length) return [];
+        if (chunkQueryCache.size > 200) chunkQueryCache.clear();
+        chunkQueryCache.set(q, qvec);
+      }
+      return searchChunks({ stateDir: STATE_DIR, key, qvec, limit, minScore: 0.45 });
+    } catch { return []; }
+  }
+
+  const chunkRecallTimer = new Map();
+  /** 收到新消息 → 去抖 1.5s → 用这条消息去归档找相关原文块，结果写进 st.chunkRecallText。 */
+  function scheduleChunkRecall(key, text, at) {
+    const q = String(text || '').trim();
+    if (q.length < 4) return;
+    const prev = chunkRecallTimer.get(key);
+    if (prev) clearTimeout(prev);
+    const timer = setTimeout(() => {
+      chunkRecallTimer.delete(key);
+      void (async () => {
+        try {
+          const chunks = await recallChunksForText(key, q, 3);
+          const st = socialState(key);
+          st.chunkRecallText = formatChunkRecall(chunks);
+        } catch { /* 忽略 */ }
+      })();
+    }, 1500);
+    timer.unref?.();
+    chunkRecallTimer.set(key, timer);
+  }
+
+  /** 把召回到的原文块渲染成提示词段落（带时间、来源会话）。 */
+  function formatChunkRecall(chunks) {
+    if (!Array.isArray(chunks) || !chunks.length) return '';
+    const fmt = (t) => new Date(Number(t) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const body = chunks.map((c) => `【${fmt(c.from)}~${fmt(c.to)} · ${c.key}】${String(c.text).slice(0, 700)}`).join('\n');
+    return `【相关历史原文（从归档里按语义找出来的原话）】\n${body}\n这些是当时的真实对话，可以直接引用；要更多细节再用 qq_search_history。\n\n`;
+  }
+
+  // 归档分块索引：启动后补一次，之后每 10 分钟增量更新（无新消息时几乎零开销）
+  setTimeout(() => { void refreshChunkIndex(true); }, 8000).unref?.();
+  setInterval(() => { void refreshChunkIndex(false); }, 10 * 60 * 1000).unref?.();
 
   const ragEnabled = () => cfg.rag?.enabled !== false && cfg.slang?.enabled !== false;
   const ragReady = () => ragEnabled() && embedder.ready;
@@ -8858,6 +8936,7 @@ const agentTokenOk = (key, token) => {
     st.preSleepWaitAccumMs = 0;
     st.recentMessages.push(msg);
     trimRecentMessagesChat(st);
+    scheduleChunkRecall(key, String(plainContent ?? textContent ?? ''), Date.now());
     st.unread.push(msg);
     if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
     const lowerPlain = String(plainContent ?? textContent ?? '');
@@ -8907,6 +8986,7 @@ const agentTokenOk = (key, token) => {
     st.preSleepWaitAccumMs = 0;
     st.recentMessages.push(msg);
     trimRecentMessagesChat(st);
+    scheduleChunkRecall(key, String(plainContent ?? textContent ?? ''), Date.now());
     st.unread.push(msg);
     if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
     saveSocialV2State();
@@ -9472,8 +9552,11 @@ const agentTokenOk = (key, token) => {
     // 这里只留一句"可以查"，不再整段常驻注入。
     const summaryLine = '【更早的聊天】超出上下文的历史已压缩成记忆条目（按相关度自动召回）；'
       + '要原文细节就用 qq_search_history / qq_recall 查归档（永久保留）。\n\n';
+    // 原文分块召回：内容由 recordIncomingForChunkRecall() 异步预取到 st.chunkRecallText，
+    // 这里同步读（builder 是同步函数，不能 await）
+    const chunkRecallLine = String(st.chunkRecallText || '');
     const memoryText = formatMemoryChat(st);
-    const memoryLine = summaryLine + (memoryText ? `${memoryText}\n\n` : '');
+    const memoryLine = summaryLine + chunkRecallLine + (memoryText ? `${memoryText}\n\n` : '');
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationChat(st);
@@ -11510,6 +11593,8 @@ const agentTokenOk = (key, token) => {
     STATE_DIR,
     getSocialV2State,
     saveSocialV2State,
+    recallChunksForText,
+    refreshChunkIndex,
     sendImageChat,
     allowed,
     api,
