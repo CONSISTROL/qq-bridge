@@ -1451,6 +1451,44 @@ defineTool(
 );
 
 defineTool(
+  'qq_memory_read',
+  '看你自己的记忆笔记（MEMORY.md）：谁是谁、群里的梗、跟主人的约定。开新话题/聊到某个人之前先看一眼，避免重复问同一件事。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi('/api/memory/doc', { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 12000 });
+      if (!d.ok) return { content: [{ type: 'text', text: `读笔记失败：${d.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: `你的记忆笔记：\n${d.content || '（空）'}` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `读笔记失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_memory_write',
+  '维护你的记忆笔记（MEMORY.md）。只记**长期有用的结论**：谁是谁 / 群里的梗 / 跟主人的约定 / 重要事件，一条十几字即可。'
+    + 'op=add 加一条；replace 改一条（match 传旧条目里的几个字）；remove 删一条。别记流水账。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    op: z.enum(['add', 'replace', 'remove']).describe('add 新增 / replace 改 / remove 删'),
+    section: z.enum(['人物', '群梗', '约定', '事件']).optional().describe('add 时的分区，默认 事件'),
+    text: z.string().optional().describe('条目内容（add/replace 必填）'),
+    match: z.string().optional().describe('replace/remove 时用来定位旧条目的几个字')
+  },
+  async ({ key, token, op, section, text, match }) => {
+    try {
+      const d = await agentApi('/api/memory/doc', {
+        method: 'POST',
+        body: JSON.stringify({ op, section, text, match }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 12000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `没改成：${d.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: d.unchanged ? '这条早就记着了' : `已记录（${op}）` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `写笔记失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+defineTool(
   'qq_profile_list',
   '看档案里有什么（跨会话共享的事实）。可按关键词搜。',
   { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), q: z.string().optional().describe('关键词') },

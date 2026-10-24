@@ -37,6 +37,7 @@ import { listItems, countItems, upsertItem, deleteItem, migrateFromJson, recallF
 import { activePromptHints } from './self-upgrade.js';
 import { recordUsage } from './usage.js';
 import { summarizeRecords, mergeSummary } from './chat-summary.js';
+import { readMemoryDoc } from './memory-doc.js';
 import { updateChunkIndex, searchChunks } from './chunk-index.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
@@ -9554,9 +9555,18 @@ const agentTokenOk = (key, token) => {
       + '要原文细节就用 qq_search_history / qq_recall 查归档（永久保留）。\n\n';
     // 原文分块召回：内容由 recordIncomingForChunkRecall() 异步预取到 st.chunkRecallText，
     // 这里同步读（builder 是同步函数，不能 await）
+    // 你自己维护的笔记（MEMORY.md）：常驻注入，几百字
+    let memoryDocLine = '';
+    try {
+      const docText = readMemoryDoc({ stateDir: STATE_DIR });
+      const bodyDoc = docText.replace(/^#.*$/m, '').replace(/^>.*$/gm, '').trim();
+      if (bodyDoc && bodyDoc.replace(/##\s*\S+/g, '').trim().length > 10) {
+        memoryDocLine = `【你的记忆笔记（自己维护的，用 qq_memory_write 增改）】\n${bodyDoc.slice(0, 1500)}\n\n`;
+      }
+    } catch { /* 忽略 */ }
     const chunkRecallLine = String(st.chunkRecallText || '');
     const memoryText = formatMemoryChat(st);
-    const memoryLine = summaryLine + chunkRecallLine + (memoryText ? `${memoryText}\n\n` : '');
+    const memoryLine = memoryDocLine + summaryLine + chunkRecallLine + (memoryText ? `${memoryText}\n\n` : '');
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationChat(st);

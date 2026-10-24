@@ -1,3 +1,4 @@
+import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { renderHtmlToImage } from '../draw-html.js';
 import { openDrawBrowser, drawShot, drawClick, closeDrawBrowser } from '../draw-web.js';
 import { listSites, startLogin, submitCode, loginStatus, loginShot, loginClick, closeSession } from '../login-assist.js';
@@ -600,6 +601,26 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 记忆笔记（MEMORY.md）：AI 自己维护、人也可直接编辑 ──────────────────
+    if (url.pathname === '/api/memory/doc') {
+      try {
+        if (req.method === 'POST') {
+          const body = await readBody();
+          if (body.op) {
+            const r = body.op === 'add'
+              ? addNote({ stateDir: STATE_DIR, section: body.section, text: body.text })
+              : body.op === 'replace' ? replaceNote({ stateDir: STATE_DIR, match: body.match, text: body.text })
+                : removeNote({ stateDir: STATE_DIR, match: body.match });
+            sendJson(r);
+            return;
+          }
+          sendJson(writeMemoryDoc({ stateDir: STATE_DIR, content: body.content }));
+          return;
+        }
+        sendJson({ ok: true, content: readMemoryDoc({ stateDir: STATE_DIR }) });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 归档原文召回（chunk RAG）调试/验证接口 ────────────────────────────
     if (url.pathname === '/api/chunk/recall') {
       try {
