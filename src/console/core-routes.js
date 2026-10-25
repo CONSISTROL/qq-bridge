@@ -1,5 +1,7 @@
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { recallForPrompt } from '../memdb.js';
+import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
+import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
 import { openDrawBrowser, drawShot, drawClick, closeDrawBrowser } from '../draw-web.js';
 import { listSites, startLogin, submitCode, loginStatus, loginShot, loginClick, closeSession } from '../login-assist.js';
@@ -602,6 +604,40 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 记忆候选（待核实）：列 / 加 / 处理 ────────────────────────────────
+    if (url.pathname.startsWith('/api/memory/pending')) {
+      try {
+        if (url.pathname === '/api/memory/pending' && req.method === 'GET') {
+          const key = String(url.searchParams.get('key') || '');
+          sendJson({ ok: true, items: key ? listPending({ stateDir: STATE_DIR, key, limit: 50 }) : allPending({ stateDir: STATE_DIR }) });
+          return;
+        }
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        if (url.pathname === '/api/memory/pending/add') {
+          sendJson(addCandidate({ stateDir: STATE_DIR, key: body.key, text: body.text, evidence: body.evidence, kind: body.kind }));
+          return;
+        }
+        if (url.pathname === '/api/memory/pending/resolve') {
+          const r = resolveCandidate({ stateDir: STATE_DIR, id: body.id, verdict: body.verdict, text: body.text, source: body.source });
+          // confirmed 或「原判断有误但给了正确表述」都算已核实 → 入库
+          if (r.ok && (r.item?.status === 'confirmed' || (r.item?.status === 'wrong' && r.item?.text))) {
+            // 核实通过 → 写入条目库（带来源），并进 MEMORY.md 由 AI 自己决定是否也记一行
+            upsertItem({
+              stateDir: STATE_DIR,
+              item: {
+                id: `cand:${r.item.id}`, kind: r.item.kind || 'fact', scope: r.item.key || 'all',
+                text: r.item.text, tags: ['verified'], at: Date.now(),
+                extra: { source: r.item.source || '' }
+              }
+            });
+          }
+          sendJson(r);
+          return;
+        }
+        sendJson({ ok: false, error: '未知操作' }, 404);
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 记忆条目召回（和 bot 用的是同一个 recallForPrompt）──────────────────
     if (url.pathname === '/api/memory/recall') {
       try {

@@ -1379,6 +1379,44 @@ defineTool(
 
 // ── 画图（豆包 Seedream）──────────────────────────────────────────────────
 defineTool(
+  'qq_memory_resolve',
+  '处理一条「待核实的记忆候选」：**核实之后**再决定记不记。verdict=confirmed 表示查证属实（会把 text 作为准确表述写入长期记忆），'
+    + 'wrong 表示原判断有误（可给出正确 text），skip 表示没查到/不值得记。source 填你查证的来源（链接/百科/群里谁说的）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    id: z.string().describe('候选 id（形如 c1abc23）'),
+    verdict: z.enum(['confirmed', 'wrong', 'skip']).describe('confirmed 属实 / wrong 有误 / skip 不记'),
+    text: z.string().optional().describe('核实后的准确表述（confirmed/wrong 时建议给）'),
+    source: z.string().optional().describe('来源：链接 / 百科名 / 「群里 XX 说的」')
+  },
+  async ({ key, token, id, verdict, text, source }) => {
+    try {
+      const d = await agentApi('/api/memory/pending/resolve', {
+        method: 'POST', body: JSON.stringify({ key, id, verdict, text, source }),
+        headers: { 'x-agent-token': token }, timeoutMs: 12000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `处理失败：${d.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: verdict === 'confirmed' ? '已核实并写入记忆' : verdict === 'wrong' ? '已按正确内容修正' : '已跳过（不记）' }] };
+    } catch (error) { return { content: [{ type: 'text', text: `处理失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+
+defineTool(
+  'qq_memory_candidates',
+  '看「待核实的记忆候选」列表：规则从聊天里挑出来、但还没查证的内容。要核实就用 qq_memory_resolve 收尾。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },
+  async ({ key, token }) => {
+    try {
+      const d = await agentApi(`/api/memory/pending?key=${encodeURIComponent(key)}`, { method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 12000 });
+      if (!d.ok) return { content: [{ type: 'text', text: `读取失败：${d.error || '未知原因'}` }], isError: true };
+      const items = d.items || [];
+      if (!items.length) return { content: [{ type: 'text', text: '没有待核实的候选' }] };
+      return { content: [{ type: 'text', text: items.map((c) => `[${c.id}] ${c.text}${c.evidence ? `（原话：${String(c.evidence).slice(0, 60)}）` : ''}`).join('\n') }] };
+    } catch (error) { return { content: [{ type: 'text', text: `读取失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+defineTool(
   'qq_draw',
   '**自己画一张图**并发到这个会话：方式是你**写一段 HTML/CSS/SVG**，桥接用无头浏览器渲染成 PNG。'
     + '适合：梗图、表情牌、海报、对比表、图表、示意图、带文字的图、简单漫画分镜。'

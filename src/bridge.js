@@ -38,6 +38,7 @@ import { activePromptHints } from './self-upgrade.js';
 import { recordUsage } from './usage.js';
 import { summarizeRecords, mergeSummary } from './chat-summary.js';
 import { readMemoryDoc } from './memory-doc.js';
+import { listPending } from './memory-pending.js';
 import { updateChunkIndex, searchChunks } from './chunk-index.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
@@ -9555,6 +9556,21 @@ const agentTokenOk = (key, token) => {
       + '要原文细节就用 qq_search_history / qq_recall 查归档（永久保留）。\n\n';
     // 原文分块召回：内容由 recordIncomingForChunkRecall() 异步预取到 st.chunkRecallText，
     // 这里同步读（builder 是同步函数，不能 await）
+    // 待核实的记忆候选：**先查证、再入库**（线上事故：把「369 打瓦」总结错了）
+    let pendingLine = '';
+    try {
+      const pend = listPending({ stateDir: STATE_DIR, key, limit: 5 });
+      if (pend.length) {
+        pendingLine = '【待核实的记忆候选 · 先查证再记】以下是规则从聊天里挑出来的"可能值得记"的内容，'
+          + '但**还没核实**。凭印象直接写进长期记忆会把错误固化（真实翻车：把「369 打瓦」总结成"两个不同的人"，'
+          + '实际 369 就是 LoL 选手白家浩，后来转型打无畏契约被嘲）。处理方式：\n'
+          + pend.map((c) => `- [${c.id}] ${c.text}${c.evidence ? `（原话：${String(c.evidence).slice(0, 80)}）` : ''}`).join('\n')
+          + '\n核实手段（按顺序选）：① qq_lookup_meme 查梗义；② web 搜索/查百科；'
+          + '③ qq_search_history 翻群里的前因后果；④ 直接在群里问一句。'
+          + '核实后用 qq_memory_resolve(id, verdict=confirmed/wrong/skip, text=准确表述, source=来源) 收尾；'
+          + '**没核实出来就别记**，标 skip 即可。\n\n';
+      }
+    } catch { /* 忽略 */ }
     // 你自己维护的笔记（MEMORY.md）：常驻注入，几百字
     let memoryDocLine = '';
     try {
@@ -9566,7 +9582,7 @@ const agentTokenOk = (key, token) => {
     } catch { /* 忽略 */ }
     const chunkRecallLine = String(st.chunkRecallText || '');
     const memoryText = formatMemoryChat(st);
-    const memoryLine = memoryDocLine + summaryLine + chunkRecallLine + (memoryText ? `${memoryText}\n\n` : '');
+    const memoryLine = pendingLine + memoryDocLine + summaryLine + chunkRecallLine + (memoryText ? `${memoryText}\n\n` : '');
     // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationChat(st);
