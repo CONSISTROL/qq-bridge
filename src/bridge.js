@@ -4272,7 +4272,10 @@ async function main() {
       // 因此调整策略不需要重启 DSH。同步查询有硬预算，不会拖慢回复。
       if (cfg.socialData?.tools?.lookupMeme !== false) {
         parts.push([
-          '【碰到不认识的梗/黑话】先查再回：用 mcp__snowluma__qq_lookup_meme（key/token/word）。',
+          '【赛事/主播/游戏梗：不许凭印象】只要涉及战队、选手、主播、游戏圈的事情（比如「369 打瓦」「S16 拳头玩梗」），'
+    + '回答和写记忆**之前必须先调 qq_lookup_meme**（它内部搜的就是 B站，Bing 搜不到这类中文圈内梗）；'
+    + '查到就把标题/链接当来源，查不到就说"没查到"，别自己拼一个说法。\n\n'
+    +   '【碰到不认识的梗/黑话】先查再回：用 mcp__snowluma__qq_lookup_meme（key/token/word）。',
           '本地已有释义会立刻返回；没有的话会去 B 站相关视频与高赞评论现学，几秒内出结果，不会拖慢你的回复。',
           '查不到就按上下文自然接话，别硬套术语、也别自己编含义；用过一次后同一条梗有缓存，可直接复用结论。'
         ].join(''));
@@ -9569,7 +9572,7 @@ const agentTokenOk = (key, token) => {
           + '教训：① 中文赛事/圈内梗**先搜 B站**（qq_video / qq_lookup_meme），不要一上来用网页搜索；'
           + '② 核实不出来就不要写猜测性补充，只写你查到的。处理方式：\n'
           + pend.map((c) => `- [${c.id}] ${c.text}${c.evidence ? `（原话：${String(c.evidence).slice(0, 80)}）` : ''}`).join('\n')
-          + '\n核实手段（按顺序选）：① qq_lookup_meme 查梗义；② web 搜索/查百科；'
+          + '\n核实手段（按顺序选）：① **qq_lookup_meme（内部搜 B站，中文圈内梗只有它能搜到）**；② web 搜索/查百科；'
           + '③ qq_search_history 翻群里的前因后果；④ 直接在群里问一句。'
           + '核实后用 qq_memory_resolve(id, verdict=confirmed/wrong/skip, text=准确表述, source=来源) 收尾；'
           + '**没核实出来就别记**，标 skip 即可。\n\n';
