@@ -2045,6 +2045,7 @@ export function createMediaRoutes(deps) {
         sendJson({ ok: false, error: '工具未启用：qq_lookup_meme' }, 403);
         return;
       }
+      try { deps.stampVerified?.(key); } catch { /* 忽略 */ }
       const lower = word.toLowerCase();
       // ① 内存缓存（10 分钟）：同一个梗连着查不再打网络
       const cached = memeDigestCache.get(lower);

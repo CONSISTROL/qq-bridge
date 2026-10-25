@@ -4200,6 +4200,15 @@ async function main() {
    * 但本地黑话表、知识库、记忆笔记里都没有 → 明确提醒它先 qq_lookup_meme。
    * 背景：369 打瓦那次，它没查就凭印象总结；Bing 也搜不到，只有 B站 能搜到。
    */
+  /** 查证工具被调用了（lookup_meme / qq_video / web 搜索）→ 打点，供出站软检查用。 */
+  function stampVerified(key) {
+    try {
+      const st = socialState(key);
+      st.lastVerifyAt = Date.now();
+      saveSocialV2State();
+    } catch { /* 忽略 */ }
+  }
+
   function buildMemeGateLine(key) {
     try {
       const st = socialState(key);
@@ -4282,6 +4291,14 @@ async function main() {
       '· 看着像"事实"但你不确定 → 先 qq_lookup_meme（搜 B站）或用 qq_search_history 翻前因后果，再决定；\n',
       '· 确认对方说错了且这件事重要（价格、时间、比赛结果、人名） → 可以轻轻纠一句，但别上价值；\n',
       '· **只有核实过的内容才能写进记忆**（qq_memory_write / qq_profile_save）；拿不准就不记。'
+    ].join(''));
+    // 实时数据（比分/赛程/价格/版本号）一律不许猜——线上真实翻车：把 HLE 说成 1-1，被群友当场纠正
+    parts.push([
+      '【比分/赛程/赛果/价格/版本号/开服时间：一律不许猜】这些是**实时事实**，你的内部知识必然是旧的。',
+      '规则：① 没查到就不说；要说就必须这一轮先查（赛事用 qq_video 搜 B站，其他用 web 查官方）；',
+      '② **主动冒泡时不要播报比分/赛果**，可以聊选手状态、聊梗、聊看法，但别说"X 打到 1-1 了"这种具体数据；',
+      '③ 不确定就说"实时比分我没查到"，这比编一个强得多；',
+      '④ 说错了被指出来，直接认错并给出你实际查到的，不要嘴硬。'
     ].join(''));
     // 专有名词闸门：这句里出现了你库里没有的战队/选手/游戏名 → 先查过再说
     try {
@@ -5605,7 +5622,20 @@ const agentTokenOk = (key, token) => {
       if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
       segments.push({ type: 'at', data: { qq: at } });
     }
-    const rawMessage = String(message ?? '');
+    let rawMessage = String(message ?? '');
+    // 出站软检查：比分/赛果这类实时数据，本轮没调过查证工具 → 标一句"未核实"（不拦发送）
+    try {
+      const key = `${kind}:${id}`;
+      const st = socialState(key);
+      const verifiedAt = Number(st.lastVerifyAt) || 0;
+      const looksLikeResult = /\d+\s*[-:：]\s*\d+/.test(rawMessage)
+        && /(HLE|TES|BLG|IG|G2|GEN|LYON|AL|KC|T1|JDG|LPL|LCK|VCT)/i.test(rawMessage);
+      const recentlyVerified = Date.now() - verifiedAt < 30 * 60 * 1000;
+      if (looksLikeResult && !recentlyVerified && !/未核实|没核|不确定/.test(rawMessage)) {
+        rawMessage += '\n（这条比分我没核过，可能记错）';
+        log(`[audit] 比分说法但本轮没查证 → 已加"未核实"标注（${key}）`);
+      }
+    } catch { /* 忽略 */ }
     const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && rawMessage.includes(t));
     if (hasKnownToken) {
       log(`发送内容包含会话令牌，已阻止发送 (${kind}:${id})`);
@@ -7346,6 +7376,7 @@ const agentTokenOk = (key, token) => {
               : [],
             pendingSince: Number(val.pendingSince) || 0,
             lastBiliHotAt: Number(val.lastBiliHotAt) || 0,
+            lastVerifyAt: Number(val.lastVerifyAt) || 0,
             proactiveOpeners: Array.isArray(val.proactiveOpeners)
               ? val.proactiveOpeners
                 .filter((o) => o && typeof o === 'object' && typeof o.text === 'string' && o.text.trim())
@@ -7452,6 +7483,7 @@ const agentTokenOk = (key, token) => {
           turnStartedAt: Number(st.turnStartedAt) || 0,
           pendingSince: Number(st.pendingSince) || 0,
           lastBiliHotAt: Number(st.lastBiliHotAt) || 0,
+          lastVerifyAt: Number(st.lastVerifyAt) || 0,
           // 主动开过的话题：反重复要用，必须跨重启保留（否则重启后又开始复读）。
           proactiveOpeners: Array.isArray(st.proactiveOpeners)
             ? st.proactiveOpeners.filter((o) => o && o.text).slice(-20).map((o) => ({ text: String(o.text).slice(0, 400), at: Number(o.at) || 0 }))
@@ -9524,7 +9556,7 @@ const agentTokenOk = (key, token) => {
         + (gs.length ? `· 你自己的待办：${gs.map((g) => g.text).join(' / ')}\n` : '')
                 + `· **题材来源（硬要求）**：这次开口前**必须**先调 \`qq_bili_hot\` 看一眼 B站 现在什么在火`
         + `${hoursSinceHot >= 4 ? '（你已经 ' + Math.round(hoursSinceHot) + ' 小时没看过了，这轮一定要看）' : '（刚看过就挑上次没聊的那几条）'}，`
-        + '从里面挑一个你真有话说的；新闻/热榜/赛事/新游戏这类**优先**，'
+        + '从里面挑一个你真有话说的；新闻/热榜/赛事/新游戏这类**优先**（但**只聊感受和梗，不许播报比分/赛程/赛果**——那些是实时数据，你没查就一定是错的），'
         + '实在没有合适的再走领域池（生活吐槽/吃喝/游戏等）。别自己空想题材。\n'
         + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
         + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
@@ -11711,6 +11743,7 @@ const agentTokenOk = (key, token) => {
     saveSocialV2State,
     recallChunksForText,
     refreshChunkIndex,
+    stampVerified,
     buildWakePromptChat,
     sendImageChat,
     allowed,
