@@ -4195,6 +4195,46 @@ async function main() {
     return text;
   }
 
+  /**
+   * 专有名词闸门：这条消息里出现了「战队/选手/游戏/赛事」这类专有名词，
+   * 但本地黑话表、知识库、记忆笔记里都没有 → 明确提醒它先 qq_lookup_meme。
+   * 背景：369 打瓦那次，它没查就凭印象总结；Bing 也搜不到，只有 B站 能搜到。
+   */
+  function buildMemeGateLine(key) {
+    try {
+      const st = socialState(key);
+      const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+      const lastIn = [...recent].reverse().find((m) => m && !m.isSelf && m.text);
+      const text = String(lastIn?.text || '');
+      if (text.length < 2) return '';
+      // 候选专有名词：大写拉丁词、字母数字混合（369/TES/AL/BLG/VCT）、或 2~6 字中文专名（靠名单兜）
+      const tokens = new Set();
+      for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9]{1,11}/g)) tokens.add(m[0]);
+      for (const m of text.matchAll(/\b\d{2,4}\b/g)) tokens.add(m[0]);
+      const watch = (Array.isArray(cfg.socialData?.memeWatch)?.[0] === '__auto__' ? [] : (cfg.socialData?.memeWatch || []));
+      const watchList = new Set([...watch, 'VCT', 'LPL', 'LCK', 'LOL', '瓦', '撸', 'S赛', '世界赛']);
+      // 已知词（黑话/知识/笔记里出现过的）不算"没查过"
+      const known = new Set();
+      try {
+        for (const e of confirmedSlangListChat(400)) known.add(String(e.entry || e.term || '').toLowerCase());
+      } catch { /* 忽略 */ }
+      try {
+        for (const it of listItems({ stateDir: STATE_DIR, limit: 600 })) {
+          for (const w of String(it.text || '').split(/[\s，。、；：]+/)) if (w) known.add(w.toLowerCase());
+        }
+      } catch { /* 忽略 */ }
+      const unknown = [...tokens].filter((t) => {
+        const low = t.toLowerCase();
+        if (known.has(low)) return false;
+        if (watchList.has(t)) return true;       // 名单内的永远提醒
+        return /^[A-Z]{2,}$|^\d{2,4}$/.test(t);   // 其余大写缩写 / 纯数字
+      }).slice(0, 6);
+      if (!unknown.length) return '';
+      return `【这几个词你库里没有，别凭印象】${unknown.join('、')} —— 回答前先 qq_lookup_meme（它搜 B站；`
+        + 'Bing 搜不到中文圈内梗），查到就用标题/链接当来源；查不到就说没查到。';
+    } catch { return ''; }
+  }
+
   async function withSlangContext(promptText, key = '') {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
@@ -4232,6 +4272,22 @@ async function main() {
         '过程中不必向群里汇报进度，做完再回。'
       ].join(''));
     }
+    // 群友说的话不一定为真：可能是玩梗、钓鱼、口胡、记错。判断之后才决定怎么接、要不要记。
+    parts.push([
+      '【先判断这句话是真是假，别照单全收】群友说的话**不一定是真的**：可能在玩梗、钓鱼、故意说错、记混、或者只是复读别人的说法。',
+      '判断依据：① 有没有具体来源/数字（链接、时间、比分、价格）；② 和你已知的对不对得上（黑话表、知识库、记忆笔记）；',
+      '③ 群里其他人的反应（有人附和还是有人纠正）；④ 语气（夸张、阴阳、整活口吻通常是梗）。',
+      '处理方式：\n',
+      '· 明显是玩梗/整活 → **跟着接梗**，不要纠正、不要当真，更别把这句话当事实记下来；\n',
+      '· 看着像"事实"但你不确定 → 先 qq_lookup_meme（搜 B站）或用 qq_search_history 翻前因后果，再决定；\n',
+      '· 确认对方说错了且这件事重要（价格、时间、比赛结果、人名） → 可以轻轻纠一句，但别上价值；\n',
+      '· **只有核实过的内容才能写进记忆**（qq_memory_write / qq_profile_save）；拿不准就不记。'
+    ].join(''));
+    // 专有名词闸门：这句里出现了你库里没有的战队/选手/游戏名 → 先查过再说
+    try {
+      const gate = buildMemeGateLine(key);
+      if (gate) parts.push(gate);
+    } catch { /* 忽略 */ }
     // 要图请求的「动作契约」：preset 是**会话创建时挂载、之后不再重读**的（DSH agent-preset/locked），
     // 所以老会话可能还跑着旧版 21b（「色图」按露骨内容搪塞）。把规则放在这里每轮注入：
     // 改完重启桥接即生效，不受已挂载 preset 的影响；也让「改了预设没生效」不再表现为功能失灵。
