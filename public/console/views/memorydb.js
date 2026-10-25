@@ -46,6 +46,41 @@ export async function mount(root) {
     if (r && r.ok) { docMeta && (docMeta.textContent = `已保存 · ${(docBox.value || '').length} 字`); toast?.('记忆笔记已保存'); }
     else { docMeta && (docMeta.textContent = '保存失败：' + (r?.error || '未知原因')); }
   };
+  // ── 它现在会想到什么：三路并列（笔记 / 原文召回 / 条目召回）──────────
+  const simRun = async () => {
+    const key = $('#simKey', view)?.value.trim() || '';
+    const q = $('#simQuery', view)?.value.trim() || '';
+    const meta = $('#simMeta', view);
+    if (!q) { meta && (meta.textContent = '先写一句话'); return; }
+    meta && (meta.textContent = '模拟中…');
+    const [chunkRes, itemRes, docRes] = await Promise.all([
+      api('/api/chunk/recall', 'POST', { key, text: q, limit: 3 }).catch(() => null),
+      api('/api/memory/recall', 'POST', { key, text: q, limit: 5 }).catch(() => null),
+      api('/api/memory/doc').catch(() => null)
+    ]);
+    // ① 笔记：只显示与查询相关的行（关键词命中），否则显示前几行
+    const docText = docRes?.content || '';
+    const lines = docText.split('\n').filter((l) => l.trim().startsWith('- '));
+    const hit = lines.filter((l) => q.split(/\s+/).some((w) => w.length >= 2 && l.includes(w)));
+    const noteLines = (hit.length ? hit : lines).slice(0, 8);
+    $('#simNotes', view).innerHTML = noteLines.length
+      ? noteLines.map((l) => `<div class="sim-line">${esc(l)}</div>`).join('')
+      : '<div class="meta">（笔记里还没有条目）</div>';
+    // ② 原文块
+    const chunks = chunkRes?.chunks || [];
+    $('#simChunks', view).innerHTML = chunks.length
+      ? chunks.map((c) => `<div class="sim-line"><b>${(c.score || 0).toFixed(2)}</b> ${esc(String(c.text).slice(0, 220))}</div>`).join('')
+      : '<div class="meta">（没有达到阈值的原文块）</div>';
+    // ③ 条目
+    const items = itemRes?.items || [];
+    $('#simItems', view).innerHTML = items.length
+      ? items.map((it) => `<div class="sim-line"><b>${(it.score || 0).toFixed(2)}</b> <span class="tag">${esc(it.kind)}</span> ${esc(String(it.text).slice(0, 160))}</div>`).join('')
+      : '<div class="meta">（没有达到阈值的条目）</div>';
+    meta && (meta.textContent = `笔记命中 ${noteLines.length} · 原文 ${chunks.length} 块 · 条目 ${items.length} 条`);
+  };
+  $('#simRun', view)?.addEventListener('click', simRun);
+  $('#simQuery', view)?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') simRun(); });
+
   await loadDoc();
   $('#mdDocReload', view)?.addEventListener('click', loadDoc);
   $('#mdDocSave', view)?.addEventListener('click', saveDoc);

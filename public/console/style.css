@@ -1525,3 +1525,12 @@ body.view-fullbleed #dsStatusFrame {
 .usage-legend i.in { background: #3b82f6; }
 .usage-legend i.out { background: #22c55e; margin-left: 10px; }
 .usage-totals { margin-top: 10px; font-size: 13px; }
+
+/* ── 「它现在会想到什么」三栏对比 ─────────────────────────────── */
+.sim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.sim-col { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--panel-2, transparent); }
+.sim-col h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.sim-body { max-height: 320px; overflow: auto; font-size: 12.5px; line-height: 1.6; }
+.sim-line { padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.sim-line:last-child { border-bottom: 0; }
+.sim-line b { color: var(--accent); margin-right: 4px; }

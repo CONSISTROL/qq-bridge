@@ -1,4 +1,18 @@
 <section class="card span-all">
+  <h2>它现在会想到什么 <span class="meta" id="simMeta">按一句话，看 bot 这轮实际会拿到什么</span></h2>
+  <div class="toolbar" style="margin-bottom:8px">
+    <input id="simKey" class="w-lg" placeholder="会话 key（如 group:1050666134）" value="group:1050666134">
+    <input id="simQuery" class="grow" placeholder="模拟一句话，例如：一加手机二手能卖多少钱">
+    <button id="simRun" class="primary" type="button">模拟</button>
+  </div>
+  <div class="sim-grid">
+    <div class="sim-col"><h3>① 常驻笔记</h3><div id="simNotes" class="sim-body meta">—</div></div>
+    <div class="sim-col"><h3>② 原文召回（归档）</h3><div id="simChunks" class="sim-body meta">—</div></div>
+    <div class="sim-col"><h3>③ 条目召回（memory.db）</h3><div id="simItems" class="sim-body meta">—</div></div>
+  </div>
+</section>
+
+<section class="card span-all">
   <h2>记忆笔记（MEMORY.md）<span class="meta" id="mdDocMeta">加载中…</span>
     <span class="card-actions">
       <button id="mdDocReload" class="small" type="button">重新读取</button>

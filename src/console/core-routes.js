@@ -1,4 +1,5 @@
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
+import { recallForPrompt } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
 import { openDrawBrowser, drawShot, drawClick, closeDrawBrowser } from '../draw-web.js';
 import { listSites, startLogin, submitCode, loginStatus, loginShot, loginClick, closeSession } from '../login-assist.js';
@@ -601,6 +602,18 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 记忆条目召回（和 bot 用的是同一个 recallForPrompt）──────────────────
+    if (url.pathname === '/api/memory/recall') {
+      try {
+        const body = req.method === 'POST' ? await readBody().catch(() => ({})) : {};
+        const key = String(body.key || url.searchParams.get('key') || '');
+        const query = String(body.text || url.searchParams.get('text') || '');
+        if (!query) { sendJson({ ok: false, error: '缺少 text' }, 400); return; }
+        const items = recallForPrompt({ stateDir: STATE_DIR, key, query, limit: Math.max(1, Math.min(20, Number(body.limit) || 10)) });
+        sendJson({ ok: true, count: items.length, items });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 唤醒提示词预览（调试用：看它这轮到底收到什么）─────────────────────
     if (url.pathname === '/api/socialData/wake-prompt') {
       try {
