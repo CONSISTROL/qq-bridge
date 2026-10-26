@@ -1,5 +1,6 @@
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { recallForPrompt } from '../memdb.js';
+import { fetchTiebaHot } from '../tieba.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -604,6 +605,15 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 贴吧热榜（梗的来源之一 + 语感参考）────────────────────────────
+    if (url.pathname === '/api/socialData/tieba-hot') {
+      try {
+        const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 12));
+        const items = await fetchTiebaHot({ limit });
+        sendJson({ ok: true, count: items.length, items });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
+      return;
+    }
     // ── 记忆候选（待核实）：列 / 加 / 处理 ────────────────────────────────
     if (url.pathname.startsWith('/api/memory/pending')) {
       try {

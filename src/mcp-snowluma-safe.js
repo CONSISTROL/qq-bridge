@@ -1489,6 +1489,24 @@ defineTool(
 );
 
 defineTool(
+  'qq_tieba_hot',
+  '看百度贴吧现在在聊什么（热榜标题）。梗的来源之一，也是"老哥怎么说话"的语感参考：'
+    + '查梗时可以先用 qq_lookup_meme（B站），再用这个看贴吧有没有对应话题；'
+    + '学的是措辞的野（短句、逗、标题党），别把贴吧的事当成本群的梗。',
+  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), limit: z.number().optional().describe('取几条（默认 12，最多 20）') },
+  async ({ key, token, limit }) => {
+    try {
+      const d = await agentApi(`/api/socialData/tieba-hot?limit=${Number(limit) || 12}`, {
+        method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 20000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `读贴吧热榜失败：${d.error || '未知原因'}` }], isError: true };
+      const items = d.items || [];
+      if (!items.length) return { content: [{ type: 'text', text: '贴吧热榜暂时取不到' }] };
+      return { content: [{ type: 'text', text: items.map((x) => `- ${x.title}`).join('\n') }] };
+    } catch (error) { return { content: [{ type: 'text', text: `读贴吧热榜失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+defineTool(
   'qq_memory_read',
   '看你自己的记忆笔记（MEMORY.md）：谁是谁、群里的梗、跟主人的约定。开新话题/聊到某个人之前先看一眼，避免重复问同一件事。',
   { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌') },

@@ -40,6 +40,7 @@ import { summarizeRecords, mergeSummary } from './chat-summary.js';
 import { readMemoryDoc } from './memory-doc.js';
 import { listPending } from './memory-pending.js';
 import { recordStance, findRelatedStances } from './stance-ledger.js';
+import { fetchTiebaHot } from './tieba.js';
 import { updateChunkIndex, searchChunks } from './chunk-index.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
@@ -815,6 +816,8 @@ async function main() {
 
   // 归档分块索引：启动后补一次，之后每 10 分钟增量更新（无新消息时几乎零开销）
   setTimeout(() => { void refreshChunkIndex(true); }, 8000).unref?.();
+  setTimeout(() => { void refreshTiebaHot(); }, 12000).unref?.();
+  setInterval(() => { void refreshTiebaHot(); }, 10 * 60 * 1000).unref?.();
   setInterval(() => { void refreshChunkIndex(false); }, 10 * 60 * 1000).unref?.();
 
   const ragEnabled = () => cfg.rag?.enabled !== false && cfg.slang?.enabled !== false;
@@ -4204,6 +4207,15 @@ async function main() {
   const aiPeerNamesChat = () => (Array.isArray(cfg.socialData?.aiPeers) ? cfg.socialData.aiPeers : []).map((x) => String(x || '').trim()).filter(Boolean);
   const isAiPeerChat = (m) => !!m && aiPeerNamesChat().some((n) => String(m.from || m.sender || '').includes(n));
 
+  // 贴吧热榜缓存（10 分钟刷一次）：梗的来源之一，也当"老哥怎么说话"的语感参考
+  const tiebaState = { at: 0, items: [] };
+  async function refreshTiebaHot() {
+    try {
+      const items = await fetchTiebaHot({ limit: 12 });
+      if (items.length) { tiebaState.items = items; tiebaState.at = Date.now(); }
+    } catch { /* 忽略 */ }
+  }
+
   const STYLE_STOP = new Set(['这个','那个','什么','就是','然后','可以','一个','没有','不是','还是','他们','我们','自己',
     '现在','已经','感觉','真的','但是','所以','因为','如果','这样','那样','的话','东西','时候','问题','其实','比较',
     '应该','可能','觉得','知道','看到','开始','地方','事情','一样','有点','一下','这种','那种','哈哈','哈哈哈']);
@@ -4364,6 +4376,14 @@ async function main() {
       '· ✗「欧洲领主先把土豆税交了」→ ✓「欧洲领主先收了土豆税」。\n',
       '另外：一句话别塞两个逗号以上（一逗到底），说不动就拆成两条发。'
     ].join(''));
+    // 贴吧老哥的措辞：既是梗的来源，也是"随意语域"的参考（只学语感，不搬内容）
+    try {
+      if (Date.now() - tiebaState.at < 30 * 60 * 1000 && tiebaState.items.length) {
+        const sample = tiebaState.items.slice(0, 4).map((x) => `- ${x.title}`).join('\n');
+        parts.push('【贴吧老哥今天在聊什么】\n' + sample
+          + '\n（这两句只学**措辞的野**：怎么起标题、怎么用短句、怎么逗；别直接抄内容，也别把贴吧的事当成你群里的梗。）');
+      }
+    } catch { /* 忽略 */ }
     // 真人样本：给"随意语域"一个可模仿的标尺（比列规则有效）
     try {
       const stS = (typeof getSocialV2State === 'function' ? getSocialV2State(key) : socialState(key));
