@@ -4304,6 +4304,17 @@ async function main() {
           + '\n要改口必须有理由（"我改口，因为我查到…/我之前记错了"）；没有理由就保持上面这些立场。');
       }
     } catch { /* 忽略 */ }
+    // 语病：为了"口语化"把句子压短，结果省略了不该省的成分（线上观察）
+    parts.push([
+      '【口语 ≠ 省成分】你想说得像真人，但最近的句子出现语病：缺"了/的/是"、缺谓语、成分硬凑。',
+      '口语是**短句**，不是**残句**。短句也要主谓宾齐，该有的功能词不能省。对照：\n',
+      '· ✗「这个确实是我说错」→ ✓「这个确实是我说错了」；\n',
+      '· ✗「歌名Scar Song」（缺谓语）→ ✓「歌名就叫 Scar Song」；\n',
+      '· ✗「看着像软件名不像人名」（缺连接）→ ✓「看着像软件名，不像人名」；\n',
+      '· ✗「这是把我耳朵换了个物种」（搭配硬凑）→ ✓「这是给我换了个物种的耳朵」；\n',
+      '· ✗「欧洲领主先把土豆税交了」→ ✓「欧洲领主先收了土豆税」。\n',
+      '另外：一句话别塞两个逗号以上（一逗到底），说不动就拆成两条发。'
+    ].join(''));
     // 立场一致性：别跟着对方一句话就改口（线上观察：跟另一个 bot 聊时左右摇摆）
     parts.push([
       '【立场别左右摇摆】线上观察：你跟另一个 bot 聊的时候，会跟着对方的话改立场——'
@@ -5669,6 +5680,35 @@ const agentTokenOk = (key, token) => {
     }
     let rawMessage = String(message ?? '');
     try { recordStance({ stateDir: STATE_DIR, key: `${kind}:${id}`, text: rawMessage }); } catch { /* 忽略 */ }
+    // 一逗到底的句子观感差、也有语法风险：超长且多逗号的，直接在标点处拆成两条发
+    const splitLongBubbles = (text) => {
+      const t = String(text ?? '').trim();
+      if (t.length <= 34 || (t.match(/，/g) || []).length < 2) return [t];
+      const parts = [];
+      let rest = t;
+      while (rest.length > 34) {
+        const idx = rest.lastIndexOf('，', 34);
+        if (idx < 8) break;
+        parts.push(rest.slice(0, idx));
+        rest = rest.slice(idx + 1);
+      }
+      if (rest.trim()) parts.push(rest.trim());
+      return parts.filter(Boolean);
+    };
+    const bubbles = splitLongBubbles(rawMessage);
+    if (bubbles.length > 1 && !onebotSend.__noSplit) {
+      // 一条太长就拆成多条发（每条之间停 700ms，像真人打字）
+      let first = null;
+      for (let i = 0; i < bubbles.length; i++) {
+        if (i > 0) await new Promise((r) => { const t = setTimeout(r, 700); t.unref?.(); });
+        onebotSend.__noSplit = true;   // 递归时不再拆
+        try {
+          const r = await onebotSend(kind, id, bubbles[i], i === 0 ? replyToMessageId : undefined, i === 0 ? atUserId : null);
+          if (i === 0) first = r;
+        } finally { onebotSend.__noSplit = false; }
+      }
+      return first;
+    }
     // 出站软检查：比分/赛果这类实时数据，本轮没调过查证工具 → 标一句"未核实"（不拦发送）
     try {
       const key = `${kind}:${id}`;
