@@ -9533,6 +9533,31 @@ const agentTokenOk = (key, token) => {
 
   function evaluateWakeTriggerChat(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf) {
     if (kind === 'private') return 'private';
+    // 「跟另一个 bot 打乒乓」熔断：连续交替太多条，就只认 @/点名/引用，普通闲聊不再唤醒——
+    // 左右摇摆都发生在这种互相带节奏的对话里。
+    try {
+      const peers = Array.isArray(cfg.socialData?.aiPeers) ? cfg.socialData.aiPeers : [];
+      if (peers.length) {
+        const msgs = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+        const isPeer = (m) => !!m && !m.isSelf && peers.some((n) => String(m.from || m.sender || '').includes(n));
+        let alt = 0;
+        for (let i = msgs.length - 2; i >= 0; i--) {
+          const m = msgs[i];
+          if (!m || !m.text) continue;
+          if (m.isSelf || isPeer(m)) alt += 1; else break;
+        }
+        const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && quoteTargetIsSelf !== undefined && String(seg?.data?.qq) === String(cfg.snowluma?.selfId || '2840404638'));
+        const named = (() => {
+          const nick = String(st.wakeConfig?.selfNickname || '').trim();
+          return !!nick && String(textContent || '').toLowerCase().includes(nick.toLowerCase());
+        })();
+        const cap = Math.max(2, Number(cfg.socialData?.wake?.aiPingPongCap) || 6);
+        if (alt >= cap && !atSelf && !named && !quoteTargetIsSelf) {
+          log(`[chat] 与 AI 连续交替 ${alt} 条，熔断：不唤醒（${key}）`);
+          return null;
+        }
+      }
+    } catch { /* 忽略 */ }
     const tr = st.wakeConfig?.triggers ?? {};
     // 睡眠时段：只认 @我 / 叫我名字（问句、关键词、概率、anyMessage 全部忽略）
     if (inSleepWindow()) {
