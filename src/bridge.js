@@ -39,6 +39,7 @@ import { recordUsage } from './usage.js';
 import { summarizeRecords, mergeSummary } from './chat-summary.js';
 import { readMemoryDoc } from './memory-doc.js';
 import { listPending } from './memory-pending.js';
+import { recordStance, findRelatedStances } from './stance-ledger.js';
 import { updateChunkIndex, searchChunks } from './chunk-index.js';
 import { listApps, saveApp, readApp, removeApp } from './webapps.js';
 import { listProfile, addProfile, removeProfile, profileForPrompt } from './profile.js';
@@ -4287,6 +4288,22 @@ async function main() {
         '过程中不必向群里汇报进度，做完再回。'
       ].join(''));
     }
+    // 立场账本：这一轮的话题如果跟它以前说过的观点重合，把原话摆回去
+    try {
+      const stL = socialState(key);
+      const recentMsgs = Array.isArray(stL.recentMessages) ? stL.recentMessages : [];
+      const lastIn = [...recentMsgs].reverse().find((m) => m && !m.isSelf && m.text);
+      const related = lastIn ? findRelatedStances({ stateDir: STATE_DIR, key, query: String(lastIn.text), limit: 3 }) : [];
+      if (related.length) {
+        const fmtAgo = (t) => {
+          const m = Math.round((Date.now() - Number(t)) / 60000);
+          return m < 60 ? `${m} 分钟前` : `${Math.round(m / 60)} 小时前`;
+        };
+        parts.push('【你之前在这个话题上说过的立场 · 别自己打自己脸】\n'
+          + related.map((x) => `- [${fmtAgo(x.at)}] ${x.text}`).join('\n')
+          + '\n要改口必须有理由（"我改口，因为我查到…/我之前记错了"）；没有理由就保持上面这些立场。');
+      }
+    } catch { /* 忽略 */ }
     // 立场一致性：别跟着对方一句话就改口（线上观察：跟另一个 bot 聊时左右摇摆）
     parts.push([
       '【立场别左右摇摆】线上观察：你跟另一个 bot 聊的时候，会跟着对方的话改立场——'
@@ -5651,6 +5668,7 @@ const agentTokenOk = (key, token) => {
       segments.push({ type: 'at', data: { qq: at } });
     }
     let rawMessage = String(message ?? '');
+    try { recordStance({ stateDir: STATE_DIR, key: `${kind}:${id}`, text: rawMessage }); } catch { /* 忽略 */ }
     // 出站软检查：比分/赛果这类实时数据，本轮没调过查证工具 → 标一句"未核实"（不拦发送）
     try {
       const key = `${kind}:${id}`;
