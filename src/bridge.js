@@ -4244,6 +4244,12 @@ async function main() {
     } catch { return ''; }
   }
 
+  /** 调试用：返回"实际投递"的完整提示词（唤醒词 + withSlangContext 注入的所有提示）。 */
+  async function buildFullWakePromptChat(key, reason = 'anyMessage') {
+    const base = buildWakePromptChat(key, reason);
+    return withSlangContext(base, key);
+  }
+
   async function withSlangContext(promptText, key = '') {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
@@ -4281,6 +4287,15 @@ async function main() {
         '过程中不必向群里汇报进度，做完再回。'
       ].join(''));
     }
+    // 通用自检：把"具体的"事实和"我猜的"分开——清单式规则永远会漏项，这条兜底。
+    parts.push([
+      '【开口前先自问一句：这是我这轮查到的，还是我猜的？】',
+      '凡是**具体事实**——谁是谁、几比几、第几种子、哪天几点、多少钱、什么版本、哪个队什么名次、谁首发——',
+      '先分清楚来源：\n',
+      '· 这一轮**查到的**（qq_video / qq_lookup_meme / web / qq_search_history）→ 可以正常陈述，最好带上来源；\n',
+      '· **凭印象/推理/从别人一句话推出来的** → 不许当事实陈述。要么先去查，要么明说「我不确定」「这个我没查到」。\n',
+      '宁可说"不知道"也不要说错：群里没人会因为你不知道而看轻你，但说错了会当场被纠正（HLE 一号种子、HLE 1-1 都是这么翻的）。'
+    ].join(''));
     // 群友说的话不一定为真：可能是玩梗、钓鱼、口胡、记错。判断之后才决定怎么接、要不要记。
     parts.push([
       '【先判断这句话是真是假，别照单全收】群友说的话**不一定是真的**：可能在玩梗、钓鱼、故意说错、记混、或者只是复读别人的说法。',
@@ -11747,6 +11762,7 @@ const agentTokenOk = (key, token) => {
     recallChunksForText,
     refreshChunkIndex,
     stampVerified,
+    buildFullWakePromptChat,
     buildWakePromptChat,
     sendImageChat,
     allowed,

@@ -650,6 +650,16 @@ export function createConsoleCoreRoutes(deps) {
       } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
       return;
     }
+    // ── 完整投递提示词（唤醒词 + 所有注入提示）──────────────────────────
+    if (url.pathname === '/api/socialData/full-prompt') {
+      try {
+        const key = String(url.searchParams.get('key') || '');
+        if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+        const text = await deps.buildFullWakePromptChat?.(key, String(url.searchParams.get('reason') || 'anyMessage')) ?? '';
+        sendJson({ ok: true, length: text.length, text });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 唤醒提示词预览（调试用：看它这轮到底收到什么）─────────────────────
     if (url.pathname === '/api/socialData/wake-prompt') {
       try {
