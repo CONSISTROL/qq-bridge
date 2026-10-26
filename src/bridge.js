@@ -4295,7 +4295,9 @@ async function main() {
     // 实时数据（比分/赛程/价格/版本号）一律不许猜——线上真实翻车：把 HLE 说成 1-1，被群友当场纠正
     parts.push([
       '【比分/赛程/赛果/价格/版本号/开服时间：一律不许猜】这些是**实时事实**，你的内部知识必然是旧的。',
-      '规则：① 没查到就不说；要说就必须这一轮先查（赛事用 qq_video 搜 B站，其他用 web 查官方）；',
+      '还包括：**队伍种子（一号/二号种子）、联赛排名、积分战绩、首发名单、转会、版本号、开服时间**，'
+      + '这些同样是实时事实，凭印象说就会翻车（真实案例：把 HLE 说成「LCK 一号种子」被群友质疑）。\n'
+      + '规则：① 没查到就不说；要说就必须这一轮先查（赛事用 qq_video 搜 B站，其他用 web 查官方）；',
       '② **主动冒泡时不要播报比分/赛果**，可以聊选手状态、聊梗、聊看法，但别说"X 打到 1-1 了"这种具体数据；',
       '③ 不确定就说"实时比分我没查到"，这比编一个强得多；',
       '④ 说错了被指出来，直接认错并给出你实际查到的，不要嘴硬。'
@@ -5628,8 +5630,9 @@ const agentTokenOk = (key, token) => {
       const key = `${kind}:${id}`;
       const st = socialState(key);
       const verifiedAt = Number(st.lastVerifyAt) || 0;
-      const looksLikeResult = /\d+\s*[-:：]\s*\d+/.test(rawMessage)
-        && /(HLE|TES|BLG|IG|G2|GEN|LYON|AL|KC|T1|JDG|LPL|LCK|VCT)/i.test(rawMessage);
+      const teamRe = /(HLE|TES|BLG|IG|G2|GEN|LYON|AL|KC|T1|JDG|LPL|LCK|VCT)/i;
+      const hasSeedClaim = /(一号种子|二号种子|三号种子|1号种子|2号种子|头号种子|种子队)/.test(rawMessage) && teamRe.test(rawMessage);
+      const looksLikeResult = (/\d+\s*[-:：]\s*\d+/.test(rawMessage) && teamRe.test(rawMessage)) || hasSeedClaim;
       const recentlyVerified = Date.now() - verifiedAt < 30 * 60 * 1000;
       if (looksLikeResult && !recentlyVerified && !/未核实|没核|不确定/.test(rawMessage)) {
         rawMessage += '\n（这条比分我没核过，可能记错）';
