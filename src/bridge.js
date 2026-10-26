@@ -4287,6 +4287,17 @@ async function main() {
         '过程中不必向群里汇报进度，做完再回。'
       ].join(''));
     }
+    // 立场一致性：别跟着对方一句话就改口（线上观察：跟另一个 bot 聊时左右摇摆）
+    parts.push([
+      '【立场别左右摇摆】线上观察：你跟另一个 bot 聊的时候，会跟着对方的话改立场——'
+        + '刚说"嘴硬没用"，对方说"本鲸爱嘴硬"，你立刻改口"嘴硬也是种本事"。看着像没主见。规则：\n',
+      '· **同一话题别在一两句话内反转立场**。可以讨论、可以补充，但改口必须有理由（查到了新东西、发现自己记错），'
+        + '并说明"我刚才说错了/我查到…"；没有理由就别改。\n',
+      '· **不许无条件附和**：别用"你说得对/确实/也是/有道理"去接对方的观点句。有不同看法就直接说，'
+        + '一句"我不这么看"比顺着说强。\n',
+      '· **事实必须查证（这条不让步）**；观点可以坚持一两轮，坚持不住就用"我懒得争"结束，不要靠改口换和平。\n',
+      '· 对方（另一个 bot）也在演人设、也会顺着你说——别把它的话当"定论"，那是另一个模型在接梗。'
+    ].join(''));
     // 通用自检：把"具体的"事实和"我猜的"分开——清单式规则永远会漏项，这条兜底。
     parts.push([
       '【开口前先自问一句：这是我这轮查到的，还是我猜的？】',
@@ -9871,7 +9882,18 @@ const agentTokenOk = (key, token) => {
       if (!lastIn || !/[记不记得|之前说|上次|你说过|我说过|还记得]/.test(String(lastIn.text || ''))) return '';
       return '【往事】这句话像是在问过去的事。**别凭印象编**：先用 qq_recall 查归档（哪几天聊过），需要细节再用 qq_search_history 取原文；查不到就直说记不清。\n';
     })();
-    const base = aiPeerLine + memoryHint + voiceLine + roleLine + tokenLine + mustReplyLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
+    // 自己刚说过的话单独列一遍：模型在同段对话里最容易忘记自己上一句的立场
+    let selfStanceLine = '';
+    try {
+      const rm = Array.isArray(st.recentMessages) ? st.recentMessages : [];
+      const mine = rm.filter((m) => m && m.isSelf && m.text && Date.now() - Number(m.time || 0) < 30 * 60 * 1000).slice(-3);
+      if (mine.length) {
+        selfStanceLine = '【你自己刚才说过的话 · 别自相矛盾】\n'
+          + mine.map((m) => `- ${String(m.text).replace(/\s+/g, ' ').slice(0, 50)}`).join('\n')
+          + '\n保持立场一致；确实说错了就明确更正（"我改口，因为…"），不要默默换说法。\n\n';
+      }
+    } catch { /* 忽略 */ }
+    const base = aiPeerLine + selfStanceLine + memoryHint + voiceLine + roleLine + tokenLine + mustReplyLine + antiAiLine + identityLine + stickerIdentityLine + retortLine + prankLine + echoLine + ironyLine + replyLine + proactiveLine + stickerLine + preSleepLine + forcedActiveLine + statusLine + wakeLine + knowledgeLine + memoryLine + participationLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是聊天模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
