@@ -4201,6 +4201,55 @@ async function main() {
    * 但本地黑话表、知识库、记忆笔记里都没有 → 明确提醒它先 qq_lookup_meme。
    * 背景：369 打瓦那次，它没查就凭印象总结；Bing 也搜不到，只有 B站 能搜到。
    */
+  const aiPeerNamesChat = () => (Array.isArray(cfg.socialData?.aiPeers) ? cfg.socialData.aiPeers : []).map((x) => String(x || '').trim()).filter(Boolean);
+  const isAiPeerChat = (m) => !!m && aiPeerNamesChat().some((n) => String(m.from || m.sender || '').includes(n));
+
+  const STYLE_STOP = new Set(['这个','那个','什么','就是','然后','可以','一个','没有','不是','还是','他们','我们','自己',
+    '现在','已经','感觉','真的','但是','所以','因为','如果','这样','那样','的话','东西','时候','问题','其实','比较',
+    '应该','可能','觉得','知道','看到','开始','地方','事情','一样','有点','一下','这种','那种','哈哈','哈哈哈']);
+
+  /** 真人语料：从最近消息里挑几条真人短句，给模型当"随意语域"的模仿样本。 */
+  function realHumanSamples(st, n = 10) {
+    const msgs = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
+    const out = [];
+    const seen = new Set();
+    for (let i = msgs.length - 1; i >= 0 && out.length < n; i--) {
+      const m = msgs[i];
+      if (!m || m.isSelf || !m.text) continue;
+      if (isAiPeerChat(m)) continue;   // 另一个 bot 的话不算"真人语感"
+      const t = String(m.text).replace(/\s+/g, ' ').trim();
+      if (t.length < 3 || t.length > 26) continue;
+      if (/^\[(图片|动画表情|表情|视频|文件|语音|音频)/.test(t)) continue;
+      if (/^https?:/.test(t)) continue;
+      const key = t.slice(0, 8);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
+    return out.reverse();
+  }
+
+  /** 群里最近主要在聊什么：从最近消息里统计高频词（真人说的），给主动冒泡挑话题用。 */
+  function recentGroupTopics(st, n = 6) {
+    const msgs = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
+    const freq = new Map();
+    let counted = 0;
+    for (let i = msgs.length - 1; i >= 0 && counted < 200; i--) {
+      const m = msgs[i];
+      if (!m || m.isSelf || !m.text) continue;
+      if (isAiPeerChat(m)) continue;
+      counted += 1;
+      const t = String(m.text);
+      for (const mm of t.matchAll(/[\u4e00-\u9fff]{2,4}|[A-Za-z][A-Za-z0-9]{1,12}|\d{2,4}/g)) {
+        const w = mm[0];
+        if (STYLE_STOP.has(w.toLowerCase())) continue;
+        if (/^\d+$/.test(w) && w.length < 2) continue;
+        freq.set(w, (freq.get(w) || 0) + 1);
+      }
+    }
+    return [...freq.entries()].filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, n);
+  }
+
   /** 查证工具被调用了（lookup_meme / qq_video / web 搜索）→ 打点，供出站软检查用。 */
   function stampVerified(key) {
     try {
@@ -4212,7 +4261,7 @@ async function main() {
 
   function buildMemeGateLine(key) {
     try {
-      const st = socialState(key);
+      const st = (typeof getSocialV2State === 'function' ? getSocialV2State(key) : socialState(key));
       const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
       const lastIn = [...recent].reverse().find((m) => m && !m.isSelf && m.text);
       const text = String(lastIn?.text || '');
@@ -4290,7 +4339,7 @@ async function main() {
     }
     // 立场账本：这一轮的话题如果跟它以前说过的观点重合，把原话摆回去
     try {
-      const stL = socialState(key);
+      const stL = (typeof getSocialV2State === 'function' ? getSocialV2State(key) : socialState(key));
       const recentMsgs = Array.isArray(stL.recentMessages) ? stL.recentMessages : [];
       const lastIn = [...recentMsgs].reverse().find((m) => m && !m.isSelf && m.text);
       const related = lastIn ? findRelatedStances({ stateDir: STATE_DIR, key, query: String(lastIn.text), limit: 3 }) : [];
@@ -4315,6 +4364,17 @@ async function main() {
       '· ✗「欧洲领主先把土豆税交了」→ ✓「欧洲领主先收了土豆税」。\n',
       '另外：一句话别塞两个逗号以上（一逗到底），说不动就拆成两条发。'
     ].join(''));
+    // 真人样本：给"随意语域"一个可模仿的标尺（比列规则有效）
+    try {
+      const stS = (typeof getSocialV2State === 'function' ? getSocialV2State(key) : socialState(key));
+      const samples = realHumanSamples(stS, 10);
+      if (samples.length < 4) log(`[style] 真人样本不足：${samples.length} 条（recentMessages=${(stS.recentMessages||[]).length}）`);
+      if (samples.length >= 4) {
+        parts.push('【群里真人怎么打字 · 照着这个语感，不是照抄内容】\n'
+          + samples.map((x) => `- ${x}`).join('\n')
+          + '\n注意：他们的句子**短但成分齐**，也不硬凑书面语。你要学的是这种随意又通顺的语感。');
+      }
+    } catch (e) { log(`[style] 真人样本注入失败：${e?.message ?? e}`); }
     // 立场一致性：别跟着对方一句话就改口（线上观察：跟另一个 bot 聊时左右摇摆）
     parts.push([
       '【立场别左右摇摆】线上观察：你跟另一个 bot 聊的时候，会跟着对方的话改立场——'
@@ -9645,6 +9705,15 @@ const agentTokenOk = (key, token) => {
         + `${hoursSinceHot >= 4 ? '（你已经 ' + Math.round(hoursSinceHot) + ' 小时没看过了，这轮一定要看）' : '（刚看过就挑上次没聊的那几条）'}，`
         + '从里面挑一个你真有话说的；新闻/热榜/赛事/新游戏这类**优先**（但**只聊感受和梗，不许播报比分/赛程/赛果**——那些是实时数据，你没查就一定是错的），'
         + '实在没有合适的再走领域池（生活吐槽/吃喝/游戏等）。别自己空想题材。\n'
+        + (() => {
+          try {
+            const tp = recentGroupTopics(st, 6);
+            if (!tp.length) return '';
+            return '· **群里最近主要在聊**：' + tp.map(([w, c]) => `${w}(${c})`).join('、')
+              + '——优先接着这些话题往下聊（问一句、补一句、或者从热榜里找相关视频当引子），'
+              + '别另起一个新题材。\n';
+          } catch { return ''; }
+        })()
         + '· 可选的自主行动：① 发一条动态（qq_post_moment）② 去 B站 刷一会儿（qq_phone_bili）'
         + '③ 学一个东西（qq_explore_topic）④ 记/整理记忆 ⑤ **什么都不做**\n'
         + '规则：做之前先用 qq_autonomy_status 看预算，做完用 qq_autonomy_spend 记一次；预算没了就只能聊天。'
