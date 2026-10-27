@@ -9568,11 +9568,19 @@ const agentTokenOk = (key, token) => {
           if (m.isSelf || isPeer(m)) alt += 1; else break;
         }
         const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && quoteTargetIsSelf !== undefined && String(seg?.data?.qq) === String(cfg.snowluma?.selfId || '2840404638'));
+        const atSelfForProb = atSelf;
         const named = (() => {
           const nick = String(st.wakeConfig?.selfNickname || '').trim();
           return !!nick && String(textContent || '').toLowerCase().includes(nick.toLowerCase());
         })();
         const cap = Math.max(2, Number(cfg.socialData?.wake?.aiPingPongCap) || 6);
+        // 概率闸：对 AI 同伴不是每条都回（真人经常不回、隔很久才回）
+        const peerProb = Math.max(0, Math.min(1, Number(cfg.socialData?.wake?.aiPeerReplyProbability ?? 0.45)));
+        const isPeerMsg = isPeer(msgs[msgs.length - 1]);
+        if (isPeerMsg && !atSelf && !named && !quoteTargetIsSelf && Math.random() > peerProb) {
+          log(`[chat] 对 AI 概率闸：这条不回（p=${peerProb}）`);
+          return null;
+        }
         if (alt >= cap && !atSelf && !named && !quoteTargetIsSelf) {
           log(`[chat] 与 AI 连续交替 ${alt} 条，熔断：不唤醒（${key}）`);
           return null;
@@ -9912,6 +9920,9 @@ const agentTokenOk = (key, token) => {
           + '· **可以不接**：回一个「？」「嗯」「草」也行，或者干脆只对具体的事说一句，别每句都回敬；\n'
           + '· **别镜像它的句式**：它爱对称、爱短句挑衅，你别跟着用一样的节奏和结构，也别接它的韵；\n'
           + '· **观点不用让步**：它是另一个模型，不是在讲道理；你的看法说得清就停在那儿，别为了接话改口（只有事实错了才改）；\n'
+          + '· **一轮只发一条、十几字以内**，别连发；\n'
+          + '· **不许提问、不许接对方最后一句的话头**（真人常常无视对方上一句，自己说自己的）；\n'
+          + '· 可以不回复。真实的人机感来自"每条都回、句句接得上、从不停顿"——你不是客服，不用句句应；\n'
           + '· **要有信息**：最近几条里至少一条得带实质内容（时间/数字/具体的人或事/明确的评价），不能全是机灵话；\n'
           + '· **允许冷场**：' + (altRun >= 6 ? `你们已经来回 ${altRun} 条了，这轮**该停了**，最多回一句短的，或者干脆不说话。` : '接两三句就可以放手，把舞台留给真人。') + '\n\n';
         log(`[chat] 对 AI 模式（对面=${String(lastIn?.from || '')}，连续交替 ${altRun} 条）`);
