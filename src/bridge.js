@@ -4212,7 +4212,19 @@ async function main() {
   async function refreshTiebaHot() {
     try {
       const items = await fetchTiebaHot({ limit: 12 });
-      if (items.length) { tiebaState.items = items; tiebaState.at = Date.now(); }
+      if (items.length) {
+        tiebaState.items = items;
+        tiebaState.at = Date.now();
+        // 顺手取第一条（最热）话题下的吧友发言，作为"评论区语感"
+        const first = items[0];
+        if (first?.topicId) {
+          try {
+            const { fetchTiebaComments } = await import('./tieba.js');
+            const cs = await fetchTiebaComments({ topicId: first.topicId, limit: 3 });
+            if (cs.length) tiebaState.comments = cs;
+          } catch { /* 忽略 */ }
+        }
+      }
     } catch { /* 忽略 */ }
   }
 
@@ -4380,8 +4392,10 @@ async function main() {
     try {
       if (Date.now() - tiebaState.at < 30 * 60 * 1000 && tiebaState.items.length) {
         const sample = tiebaState.items.slice(0, 4).map((x) => `- ${x.title}`).join('\n');
+        const comments = Array.isArray(tiebaState.comments) ? tiebaState.comments.slice(0, 3) : [];
         parts.push('【贴吧老哥今天在聊什么】\n' + sample
-          + '\n（这两句只学**措辞的野**：怎么起标题、怎么用短句、怎么逗；别直接抄内容，也别把贴吧的事当成你群里的梗。）');
+          + (comments.length ? `\n帖子里吧友是这么说的：\n${comments.map((c) => `- ${c}`).join('\n')}` : '')
+          + '\n（只学**措辞的野**：怎么起标题、怎么用短句、怎么吐槽；别直接抄内容，也别把贴吧的事当成你群里的梗。）');
       }
     } catch { /* 忽略 */ }
     // 真人样本：给"随意语域"一个可模仿的标尺（比列规则有效）

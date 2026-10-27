@@ -1,6 +1,6 @@
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { recallForPrompt } from '../memdb.js';
-import { fetchTiebaHot } from '../tieba.js';
+import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -605,6 +605,17 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 贴吧话题评论（学语感、找梗的出处）──────────────────────────────
+    if (url.pathname === '/api/socialData/tieba-comments') {
+      try {
+        const topicId = String(url.searchParams.get('topicId') || '').trim();
+        const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 8));
+        if (!topicId) { sendJson({ ok: false, error: 'topicId 不能为空' }, 400); return; }
+        const items = await fetchTiebaComments({ topicId, limit });
+        sendJson({ ok: true, count: items.length, items });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 502); }
+      return;
+    }
     // ── 贴吧热榜（梗的来源之一 + 语感参考）────────────────────────────
     if (url.pathname === '/api/socialData/tieba-hot') {
       try {

@@ -1493,9 +1493,23 @@ defineTool(
   '看百度贴吧现在在聊什么（热榜标题）。梗的来源之一，也是"老哥怎么说话"的语感参考：'
     + '查梗时可以先用 qq_lookup_meme（B站），再用这个看贴吧有没有对应话题；'
     + '学的是措辞的野（短句、逗、标题党），别把贴吧的事当成本群的梗。',
-  { key: z.string().describe('会话 key'), token: z.string().describe('会话令牌'), limit: z.number().optional().describe('取几条（默认 12，最多 20）') },
-  async ({ key, token, limit }) => {
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    limit: z.number().optional().describe('取几条（默认 12，最多 20）'),
+    topicId: z.string().optional().describe('给了就取这条话题下的吧友评论（学语感/找梗的出处）')
+  },
+  async ({ key, token, limit, topicId }) => {
     try {
+      if (topicId) {
+        const c = await agentApi(`/api/socialData/tieba-comments?topicId=${encodeURIComponent(topicId)}&limit=${Number(limit) || 10}`, {
+          method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 40000
+        });
+        if (!c.ok) return { content: [{ type: 'text', text: `取贴吧评论失败：${c.error || '未知原因'}` }], isError: true };
+        const items = c.items || [];
+        if (!items.length) return { content: [{ type: 'text', text: '这条话题暂时抓不到评论（页面可能是 JS 渲染失败）' }] };
+        return { content: [{ type: 'text', text: items.map((x) => `- ${x}`).join('\n') }] };
+      }
       const d = await agentApi(`/api/socialData/tieba-hot?limit=${Number(limit) || 12}`, {
         method: 'GET', headers: { 'x-agent-token': token }, timeoutMs: 20000
       });

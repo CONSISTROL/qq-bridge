@@ -59,3 +59,60 @@ export async function fetchTiebaTopic({ topicId, limit = 8, timeoutMs = 15000 } 
   }
   return out;
 }
+
+// ── 评论区 ────────────────────────────────────────────────────────────────
+// 热榜标题只是"话题"，真正的语感在评论区；但话题页是 JS 渲染，普通抓取拿不到，
+// 所以用无头浏览器渲染后取吧友发言（复用 draw-html 的 Chrome，无外部依赖）。
+let aimlessBrowser = null;
+async function getBrowser() {
+  if (aimlessBrowser && aimlessBrowser.connected) return aimlessBrowser;
+  const puppeteer = (await import('puppeteer')).default;
+  aimlessBrowser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--lang=zh-CN', '--blink-settings=imagesEnabled=false']
+  });
+  return aimlessBrowser;
+}
+
+/** 取某个贴吧话题下的吧友发言（评论/帖子内容片段）。 */
+export async function fetchTiebaComments({ topicId, limit = 8, timeoutMs = 25000 } = {}) {
+  if (!topicId) return [];
+  let page;
+  try {
+    const browser = await getBrowser();
+    page = await browser.newPage();
+    await page.setJavaScriptEnabled(true);
+    await page.setUserAgent(UA);
+    await page.goto(`https://tieba.baidu.com/hottopic/browse/hottopic?topic_id=${encodeURIComponent(topicId)}`, {
+      waitUntil: 'domcontentloaded', timeout: timeoutMs
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+    const items = await page.evaluate(() => {
+      const out = [];
+      const seen = new Set();
+      const push = (t) => {
+        const s = String(t || '').replace(/\s+/g, ' ').trim();
+        if (s.length < 4 || s.length > 120) return;
+        if (seen.has(s)) return;
+        seen.add(s);
+        out.push(s);
+      };
+      // 帖子/回复正文：.content / .d_post_content / .reply-content
+      for (const el of document.querySelectorAll('.content, .d_post_content, .reply-content, .post-content')) push(el.textContent);
+      // 兜底：整页里的短段落
+      if (out.length < 3) {
+        for (const el of document.querySelectorAll('p, .item, li')) {
+          const t = el.textContent || '';
+          if (t.length >= 6 && t.length <= 80) push(t);
+          if (out.length >= 40) break;
+        }
+      }
+      return out.slice(0, 40);
+    });
+    return items.slice(0, limit);
+  } catch {
+    return [];
+  } finally {
+    await page?.close?.().catch(() => {});
+  }
+}
