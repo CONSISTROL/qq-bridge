@@ -630,7 +630,15 @@ export function createConsoleCoreRoutes(deps) {
             c.on('close', (code) => (code === 0 ? res() : rej(new Error('ffmpeg 转换失败'))));
           })); } catch { /* 忽略，直接用原文件 */ }
           const srcWav = fs.existsSync(prep) ? prep : r.segments[0];
-          const cov = await singCover({ wavPath: srcWav, stateDir: STATE_DIR });
+          const cov = await singCover({
+            wavPath: srcWav,
+            stateDir: STATE_DIR,
+            targetSec: seg,
+            indexRate: Number(body.indexRate) || 0.5,
+            protect: Number(body.protect) || 0.5,
+            pitch: Number(body.pitch) || 0,
+            withInstrumental: body.withInstrumental !== false
+          });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
           if (!cov.ok) { sendJson({ ok: false, error: `唱不出来：${cov.error}`, bvid }, 502); return; }
           const buf2 = fs.readFileSync(cov.path);
