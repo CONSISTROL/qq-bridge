@@ -119,7 +119,7 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
  * @param {number} targetSec   要唱的时长（默认 30）
  */
 export async function singCover({
-  wavPath, stateDir = './state', targetSec = 30, searchSec = 90,
+  wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
   chunkSec = 10, indexRate = 0.5, protect = 0.5, pitch = 0, withInstrumental = true
 } = {}) {
   try {
@@ -132,9 +132,11 @@ export async function singCover({
 
     const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash, searchSec });
 
-    // 找副歌窗口（唱得最响的持续段）
+    // 起点：给了 startSec 就按它（比如"从听见你说那句开始"），否则自动找最响的一段
     let start = 0;
-    try {
+    if (Number.isFinite(Number(startSec)) && Number(startSec) >= 0) {
+      start = Number(startSec);
+    } else try {
       const picked = await pickChorusWindow({ vocalsPath: vocals, targetSec, searchLimitSec: Math.max(targetSec, searchSec) });
       start = Math.max(0, Number(picked.start) || 0);
     } catch { /* 忽略，从头开始 */ }

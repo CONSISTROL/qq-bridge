@@ -634,6 +634,7 @@ export function createConsoleCoreRoutes(deps) {
             wavPath: srcWav,
             stateDir: STATE_DIR,
             targetSec: seg,
+            startSec: Number.isFinite(Number(body.startSec)) ? Number(body.startSec) : null,
             indexRate: Number(body.indexRate) || 0.5,
             protect: Number(body.protect) || 0.5,
             pitch: Number(body.pitch) || 0,
