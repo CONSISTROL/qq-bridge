@@ -1489,6 +1489,32 @@ defineTool(
 );
 
 defineTool(
+  'qq_sing',
+  '从 B站 找一段歌/音频，切成 30 秒左右一段，逐条发成语音条（"唱歌/放歌"就用这个）。'
+    + '优先给 bvid 或 B站链接（关键词搜索会被风控拦住，不稳）；标题会自动带上。'
+    + '群友说"来首歌/唱一个/放段 XX"时用，别连着刷屏。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    bvid: z.string().optional().describe('B站视频 bvid 或链接（推荐）'),
+    query: z.string().optional().describe('关键词（搜不到就用 bvid）'),
+    segmentSec: z.number().optional().describe('每段秒数，默认 30'),
+    maxSegments: z.number().optional().describe('最多发几段，默认 6')
+  },
+  async ({ key, token, bvid, query, segmentSec, maxSegments }) => {
+    try {
+      const d = await agentApi('/api/socialData/sing', {
+        method: 'POST',
+        body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6 }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 180000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `放歌失败：${d.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: `发了 ${d.segments} 段语音：《${d.title || d.bvid}》` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `放歌失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+defineTool(
   'qq_tieba_hot',
   '看百度贴吧现在在聊什么（热榜标题）。梗的来源之一，也是"老哥怎么说话"的语感参考：'
     + '查梗时可以先用 qq_lookup_meme（B站），再用这个看贴吧有没有对应话题；'

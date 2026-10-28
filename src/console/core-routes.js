@@ -1,6 +1,7 @@
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { recallForPrompt } from '../memdb.js';
 import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
+import { biliAudioSegments, searchBiliVideo, extractBvid, biliVideoTitle } from '../bili-audio.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -605,6 +606,36 @@ export function createConsoleCoreRoutes(deps) {
       return out;
     };
 
+    // ── 唱歌：从 B站视频取音频，切成 ≤30s 一段，逐条发语音 ─────────────────
+    if (url.pathname === '/api/socialData/sing' && req.method === 'POST') {
+      try {
+        const body = await readBody();
+        const key = String(body.key || '').trim();
+        if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+        let bvid = extractBvid(body.bvid || body.url || '');
+        if (!bvid && body.query) bvid = await searchBiliVideo(body.query);
+        if (!bvid) { sendJson({ ok: false, error: '没找到可用的 B站视频（给 bvid/链接，或换个关键词）' }, 400); return; }
+        const seg = Math.max(10, Math.min(60, Number(body.segmentSec) || 30));
+        const maxSegments = Math.max(1, Math.min(12, Number(body.maxSegments) || 6));
+        const r = await biliAudioSegments({ bvid, stateDir: STATE_DIR, segmentSec: seg, maxSegments });
+        if (!r.ok) { sendJson({ ok: false, error: r.error, bvid }, 502); return; }
+        const kind = key.startsWith('group:') ? 'group' : 'private';
+        const id = Number(key.slice(kind === 'group' ? 6 : 8));
+        let sent = 0;
+        const ids = [];
+        for (const file of r.segments) {
+          const buf = fs.readFileSync(file);
+          const resp = kind === 'group'
+            ? await deps.bot.raw('send_group_msg', { group_id: id, message: [{ type: 'record', data: { file: 'base64://' + buf.toString('base64') } }] })
+            : await deps.bot.raw('send_private_msg', { user_id: id, message: [{ type: 'record', data: { file: 'base64://' + buf.toString('base64') } }] });
+          ids.push(resp?.data?.message_id ?? resp?.message_id ?? null);
+          sent += 1;
+          await new Promise((rr) => setTimeout(rr, 1200));
+        }
+        sendJson({ ok: sent > 0, bvid, title: r.title, segments: sent, messageIds: ids });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
     // ── 贴吧话题评论（学语感、找梗的出处）──────────────────────────────
     if (url.pathname === '/api/socialData/tieba-comments') {
       try {

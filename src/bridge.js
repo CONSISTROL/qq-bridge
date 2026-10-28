@@ -10072,7 +10072,8 @@ const agentTokenOk = (key, token) => {
         const cap = Number(ttsCfgV.maxChars) || 0;
         const cd = Math.round((Number(ttsCfgV.cooldownMs) || 0) / 1000);
         const limits = [cap > 0 ? `一条最多 ${cap} 字` : '说短一点更自然', cd > 0 ? `两条之间至少隔 ${cd} 秒` : ''].filter(Boolean).join('，');
-        return `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字，分寸你自己把握。\n`;
+        return `【语音/唱歌】要放歌或"唱一个"：用 qq_sing(key, token, bvid|query)——从 B站取音频，切成 30 秒一段逐条发语音条（优先给 bvid，关键词搜索会被风控拦）。\n`
+          + `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字，分寸你自己把握。\n`;
       })()
       : '';
     const memoryHint = (() => {
