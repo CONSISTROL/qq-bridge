@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from '../memory-doc.js';
 import { recallForPrompt } from '../memdb.js';
 import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
@@ -638,18 +639,40 @@ export function createConsoleCoreRoutes(deps) {
             indexRate: Number(body.indexRate) || 0.5,
             protect: Number(body.protect) || 0.5,
             pitch: Number(body.pitch) || 0,
+            rmsMixRate: Number.isFinite(Number(body.rmsMixRate)) ? Number(body.rmsMixRate) : 0.25,
+            f0Method: String(body.f0Method || 'rmvpe'),
             withInstrumental: body.withInstrumental !== false
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
           if (!cov.ok) { sendJson({ ok: false, error: `唱不出来：${cov.error}`, bvid }, 502); return; }
-          const buf2 = fs.readFileSync(cov.path);
           const kind2 = key.startsWith('group:') ? 'group' : 'private';
           const id2 = Number(key.slice(kind2 === 'group' ? 6 : 8));
-          const resp2 = kind2 === 'group'
-            ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
-            : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
-          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds,
-            messageId: resp2?.data?.message_id ?? resp2?.message_id ?? null, elapsedMs: Date.now() - started });
+          // 超过 55 秒就拆段发（QQ 语音条上限约 60 秒）
+          const partDir = path.join(STATE_DIR, `cover-parts-${Date.now()}`);
+          fs.mkdirSync(partDir, { recursive: true });
+          const doSplit = (cov.seconds || 0) > 55;
+          if (doSplit) {
+            await new Promise((res, rej) => {
+              const cp = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', cov.path,
+                '-f', 'segment', '-segment_time', '30', '-ac', '1', '-ar', '16000', path.join(partDir, 'p%02d.wav')]);
+              cp.on('close', (code) => (code === 0 ? res() : rej(new Error('ffmpeg 拆段失败'))));
+            });
+          }
+          const parts = doSplit
+            ? fs.readdirSync(partDir).filter((f) => f.endsWith('.wav')).sort().map((f) => path.join(partDir, f))
+            : [cov.path];
+          const ids = [];
+          for (const pfile of parts) {
+            const buf2 = fs.readFileSync(pfile);
+            const resp2 = kind2 === 'group'
+              ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
+              : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
+            ids.push(resp2?.data?.message_id ?? resp2?.message_id ?? null);
+            await new Promise((rr) => setTimeout(rr, 1200));
+          }
+          fs.rmSync(partDir, { recursive: true, force: true });
+          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds, parts: parts.length,
+            messageIds: ids, elapsedMs: Date.now() - started });
           return;
         }
         const kind = key.startsWith('group:') ? 'group' : 'private';
