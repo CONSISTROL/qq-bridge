@@ -125,7 +125,7 @@ export async function singCover({
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
     const buf = fs.readFileSync(wavPath);
-    const tag = `${targetSec}|${indexRate}|${protect}|${pitch}|${withInstrumental ? 'mix' : 'dry'}`;
+    const tag = `${targetSec}|${startSec ?? 'auto'}|${indexRate}|${protect}|${pitch}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
