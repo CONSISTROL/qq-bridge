@@ -10072,7 +10072,9 @@ const agentTokenOk = (key, token) => {
         const cap = Number(ttsCfgV.maxChars) || 0;
         const cd = Math.round((Number(ttsCfgV.cooldownMs) || 0) / 1000);
         const limits = [cap > 0 ? `一条最多 ${cap} 字` : '说短一点更自然', cd > 0 ? `两条之间至少隔 ${cd} 秒` : ''].filter(Boolean).join('，');
-        return `【语音/唱歌】要放歌或"唱一个"：用 qq_sing(key, token, bvid|query)——从 B站取音频，切成 30 秒一段逐条发语音条（优先给 bvid，关键词搜索会被风控拦）。\n`
+        return `【语音/唱歌】要放歌或"唱一个"：用 qq_sing(key, token, bvid|query)——从 B站取音频，切成 30 秒一段逐条发语音条（优先给 bvid；关键词搜索现在带签名，能用）。\n`
+          + `注意：**你自己不能真唱**——TTS 只会说话，不会唱歌。所以"唱一个"的正确做法是：拿原曲放 1~2 段（qq_sing），`
+          + `并说一句"我唱不出来，给你放原曲"这类实话；**不许说"语音合成没开/没配"**，那是错的（语音条本身是好的）。\n`
           + `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字，分寸你自己把握。\n`;
       })()
       : '';
