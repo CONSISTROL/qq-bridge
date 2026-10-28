@@ -2,6 +2,7 @@ import { readMemoryDoc, writeMemoryDoc, addNote, replaceNote, removeNote } from 
 import { recallForPrompt } from '../memdb.js';
 import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
 import { biliAudioSegments, searchBiliVideo, extractBvid, biliVideoTitle } from '../bili-audio.js';
+import { singCover } from '../sing-cover.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -619,6 +620,29 @@ export function createConsoleCoreRoutes(deps) {
         const maxSegments = Math.max(1, Math.min(12, Number(body.maxSegments) || 6));
         const r = await biliAudioSegments({ bvid, stateDir: STATE_DIR, segmentSec: seg, maxSegments });
         if (!r.ok) { sendJson({ ok: false, error: r.error, bvid }, 502); return; }
+        // mode=cover：把第一段拿去"用 ai 的声音唱"（demucs 分人声 + RVC 换音色），再发出去
+        if (String(body.mode || '') === 'cover') {
+          const started = Date.now();
+          // RVC/demucs 都要 44.1k 立体声；biliAudioSegments 给的是 16k 单声道，先转一次
+          const prep = path.join(STATE_DIR, `cover-src-${Date.now()}.wav`);
+          try { await import('node:child_process').then(({ spawn }) => new Promise((res, rej) => {
+            const c = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', r.segments[0], '-ar', '44100', '-ac', '2', prep]);
+            c.on('close', (code) => (code === 0 ? res() : rej(new Error('ffmpeg 转换失败'))));
+          })); } catch { /* 忽略，直接用原文件 */ }
+          const srcWav = fs.existsSync(prep) ? prep : r.segments[0];
+          const cov = await singCover({ wavPath: srcWav, stateDir: STATE_DIR });
+          try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
+          if (!cov.ok) { sendJson({ ok: false, error: `唱不出来：${cov.error}`, bvid }, 502); return; }
+          const buf2 = fs.readFileSync(cov.path);
+          const kind2 = key.startsWith('group:') ? 'group' : 'private';
+          const id2 = Number(key.slice(kind2 === 'group' ? 6 : 8));
+          const resp2 = kind2 === 'group'
+            ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
+            : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
+          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds,
+            messageId: resp2?.data?.message_id ?? resp2?.message_id ?? null, elapsedMs: Date.now() - started });
+          return;
+        }
         const kind = key.startsWith('group:') ? 'group' : 'private';
         const id = Number(key.slice(kind === 'group' ? 6 : 8));
         let sent = 0;

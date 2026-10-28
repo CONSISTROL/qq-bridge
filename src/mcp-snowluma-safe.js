@@ -1492,20 +1492,22 @@ defineTool(
   'qq_sing',
   '从 B站 找一段歌/音频，切成 30 秒左右一段，逐条发成语音条（"唱歌/放歌"就用这个）。'
     + '优先给 bvid 或 B站链接（关键词搜索会被风控拦住，不稳）；标题会自动带上。'
-    + '群友说"来首歌/唱一个/放段 XX"时用，别连着刷屏。',
+    + '群友说"来首歌/唱一个/放段 XX"时用，别连着刷屏；mode="cover" 才是你自己唱（慢，约 80 秒/段）。',
   {
     key: z.string().describe('会话 key'),
     token: z.string().describe('会话令牌'),
     bvid: z.string().optional().describe('B站视频 bvid 或链接（推荐）'),
     query: z.string().optional().describe('关键词（搜不到就用 bvid）'),
     segmentSec: z.number().optional().describe('每段秒数，默认 30'),
-    maxSegments: z.number().optional().describe('最多发几段，默认 6')
+    maxSegments: z.number().optional().describe('最多发几段，默认 6'),
+    mode: z.enum(['original', 'cover']).optional()
+      .describe('original=放原曲（默认，快）；cover=用你自己的声音唱（分离人声+RVC，约 80 秒一段）')
   },
-  async ({ key, token, bvid, query, segmentSec, maxSegments }) => {
+  async ({ key, token, bvid, query, segmentSec, maxSegments, mode }) => {
     try {
       const d = await agentApi('/api/socialData/sing', {
         method: 'POST',
-        body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6 }),
+        body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6, mode: mode || 'original' }),
         headers: { 'x-agent-token': token },
         timeoutMs: 180000
       });
