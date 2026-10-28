@@ -636,9 +636,9 @@ export function createConsoleCoreRoutes(deps) {
             stateDir: STATE_DIR,
             targetSec: seg,
             startSec: Number.isFinite(Number(body.startSec)) ? Number(body.startSec) : null,
-            indexRate: Number(body.indexRate) || 0.5,
-            protect: Number(body.protect) || 0.5,
-            pitch: Number(body.pitch) || 0,
+            indexRate: Number(body.indexRate) || 0.75,
+            protect: Number(body.protect) || 0.33,
+            pitch: Number.isFinite(Number(body.pitch)) ? Number(body.pitch) : 12,
             rmsMixRate: Number.isFinite(Number(body.rmsMixRate)) ? Number(body.rmsMixRate) : 0.25,
             f0Method: String(body.f0Method || 'rmvpe'),
             withInstrumental: body.withInstrumental !== false

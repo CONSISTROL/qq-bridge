@@ -102,7 +102,7 @@ async function separate({ wavPath, cacheDir, hash, searchSec }) {
 }
 
 /** 切块 → RVC（10 秒/块，CPU）→ 拼接。 */
-async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.5, protect = 0.5, pitch = 0, rmsMixRate = 0.25, f0Method = 'rmvpe' }) {
+async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe' }) {
   const outFinal = path.join(cacheDir, `${hash}-aiyi.wav`);
   if (fs.existsSync(outFinal) && fs.statSync(outFinal).size > 1024) return outFinal;
   const chunkDir = path.join(cacheDir, `${hash}-chunks`);
@@ -148,7 +148,7 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
  */
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
-  chunkSec = 10, indexRate = 0.5, protect = 0.5, pitch = 0, rmsMixRate = 0.25, f0Method = 'rmvpe',
+  chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe',
   withInstrumental = true
 } = {}) {
   try {
