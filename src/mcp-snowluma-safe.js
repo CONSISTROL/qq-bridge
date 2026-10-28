@@ -1501,13 +1501,15 @@ defineTool(
     segmentSec: z.number().optional().describe('每段秒数，默认 30'),
     maxSegments: z.number().optional().describe('最多发几段，默认 6'),
     mode: z.enum(['original', 'cover']).optional()
-      .describe('original=放原曲（默认，快）；cover=用你自己的声音唱（分离人声+RVC，约 80 秒一段）')
+      .describe('original=放原曲（默认，快）；cover=用你自己的声音唱（分离人声+RVC，约 2~3 分钟）'),
+    startSec: z.number().optional()
+      .describe('从第几秒开始唱（你自己判断：先 qq_video 读歌词/试听描述，估计主歌或副歌的起点再传；不传就自动找最响的一段）')
   },
-  async ({ key, token, bvid, query, segmentSec, maxSegments, mode }) => {
+  async ({ key, token, bvid, query, segmentSec, maxSegments, mode, startSec }) => {
     try {
       const d = await agentApi('/api/socialData/sing', {
         method: 'POST',
-        body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6, mode: mode || 'original' }),
+        body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6, mode: mode || 'original', startSec }),
         headers: { 'x-agent-token': token },
         timeoutMs: 180000
       });

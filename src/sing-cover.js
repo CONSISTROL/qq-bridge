@@ -135,7 +135,8 @@ async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.5,
 async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
     '-i', vocalWav, '-i', instWav,
-    '-filter_complex', '[0:a]volume=1.0[v];[1:a]volume=0.45[m];[v][m]amix=inputs=2:duration=first:dropout_transition=0[out]',
+    // apad 把伴奏补齐到无限长：RVC 输出常比伴奏长一点，若用 duration=first 会让尾段只剩人声（伴奏消失）
+    '-filter_complex', '[0:a]volume=1.0[v];[1:a]volume=0.45,apad[m];[v][m]amix=inputs=2:duration=first:dropout_transition=0[out]',
     '-map', '[out]', '-ac', '1', '-ar', '16000', outWav]);
   return outWav;
 }
