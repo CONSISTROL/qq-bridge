@@ -671,7 +671,7 @@ export function createConsoleCoreRoutes(deps) {
             await new Promise((rr) => setTimeout(rr, 1200));
           }
           fs.rmSync(partDir, { recursive: true, force: true });
-          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds, parts: parts.length,
+          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds, parts: parts.length, startSec: cov.chorusStart,
             messageIds: ids, elapsedMs: Date.now() - started });
           return;
         }

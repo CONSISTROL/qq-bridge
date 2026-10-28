@@ -1514,6 +1514,10 @@ defineTool(
         timeoutMs: 180000
       });
       if (!d.ok) return { content: [{ type: 'text', text: `放歌失败：${d.error || '未知原因'}` }], isError: true };
+      if (d.mode === 'cover') {
+        const sec = Math.round(Number(d.seconds) || 0);
+        return { content: [{ type: 'text', text: `已经用你的声音唱了 ${sec} 秒（${d.parts || 1} 段语音，从第 ${d.startSec ?? '自动'} 秒开始）：《${d.title || d.bvid}》` }] };
+      }
       return { content: [{ type: 'text', text: `发了 ${d.segments} 段语音：《${d.title || d.bvid}》` }] };
     } catch (error) { return { content: [{ type: 'text', text: `放歌失败：${error?.message ?? error}` }], isError: true }; }
   }
