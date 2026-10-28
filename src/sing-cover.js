@@ -30,29 +30,52 @@ const run = (cmd, args, { timeoutMs = 600000, cwd, env } = {}) => new Promise((r
 
 const hashOf = (buf, extra = '') => crypto.createHash('sha1').update(buf).update(extra).digest('hex').slice(0, 16);
 
-/** 用 python 读 wav 的逐秒 RMS，找"持续唱得最响"的窗口（近似副歌）。 */
-async function pickChorusWindow({ vocalsPath, targetSec, searchLimitSec }) {
+/**
+ * 找「一段完整主歌」：从人声起点开始，到第一个明显停顿（≥1.2 秒静音）结束。
+ * 不再固定 30 秒——唱到这段自然结束为止（带 minSec/maxSec 保护）。
+ */
+async function pickVerseWindow({ vocalsPath, startSec = null, minSec = 15, maxSec = 75 }) {
+  const hint = (startSec === null || startSec === undefined) ? 'None' : String(Number(startSec));
   const py = `
-import soundfile as sf, numpy as np, json, sys
+import soundfile as sf, numpy as np, json
 d, sr = sf.read(${JSON.stringify(vocalsPath)})
 if d.ndim > 1: d = d.mean(axis=1)
-hop = 1600  # 0.1s @16k
-frames = np.abs(d).reshape(-1, hop).mean(axis=1) if len(d) >= hop else np.array([0.0])
-sr_eff = sr / hop  # frames per second
-win = int(round(${targetSec} * sr_eff)); lim = int(round(${searchLimitSec} * sr_eff))
-best, best_i = -1, 0
-csum = np.concatenate([[0.0], np.cumsum(frames)])
-for i in range(0, max(1, min(lim, len(frames)) - win + 1)):
-    s = csum[i + win] - csum[i]
-    if s > best: best, best_i = s, i
-print(json.dumps({"start": best_i / sr_eff, "rms": float(best / max(1, win))}))
+hop = int(sr * 0.1)
+n = len(d) // hop
+frames = np.abs(d[:n*hop]).reshape(n, hop).mean(axis=1)
+thr = max(0.008, float(np.percentile(frames, 55)) * 0.35)
+voiced = frames > thr
+start_hint = ${hint}
+if start_hint is None:
+    start = 0
+    run = 0
+    for i, v in enumerate(voiced):
+        run = run + 1 if v else 0
+        if run >= 5:
+            start = i - 4
+            break
+else:
+    start = max(0, int(start_hint * 10))
+min_frames = int(${Number(minSec)} * 10)
+max_frames = int(${Number(maxSec)} * 10)
+end = min(n, start + max_frames)
+gap = 0
+for i in range(start + min_frames, end):
+    gap = gap + 1 if not voiced[i] else 0
+    if gap >= 12:
+        end = i - gap + 1
+        break
+print(json.dumps({"start": round(start / 10.0, 2), "seconds": round((end - start) / 10.0, 2), "thr": round(float(thr), 4)}))
 `;
   const r = await run(RVC_PY, ['-c', py], { timeoutMs: 120000 });
   const line = String(r.out).trim().split('\n').pop();
-  try { return JSON.parse(line); } catch { return { start: 0, rms: 0 }; }
+  try {
+    const j = JSON.parse(line);
+    return { start: Math.max(0, Number(j.start) || 0), seconds: Math.min(maxSec, Math.max(8, Number(j.seconds) || 30)) };
+  } catch { return { start: Number(startSec) || 0, seconds: 30 }; }
 }
 
-/** demucs 分离（带缓存），返回 {vocals, instrumental}。 */
+/** demucs 分离（带缓存）/** demucs 分离（带缓存），返回 {vocals, instrumental}。 */
 async function separate({ wavPath, cacheDir, hash, searchSec }) {
   fs.mkdirSync(cacheDir, { recursive: true });
   const vocalsOut = path.join(cacheDir, `${hash}-vocals.wav`);
@@ -132,28 +155,25 @@ export async function singCover({
 
     const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash, searchSec });
 
-    // 起点：给了 startSec 就按它（比如"从听见你说那句开始"），否则自动找最响的一段
-    let start = 0;
-    if (Number.isFinite(Number(startSec)) && Number(startSec) >= 0) {
-      start = Number(startSec);
-    } else try {
-      const picked = await pickChorusWindow({ vocalsPath: vocals, targetSec, searchLimitSec: Math.max(targetSec, searchSec) });
-      start = Math.max(0, Number(picked.start) || 0);
-    } catch { /* 忽略，从头开始 */ }
-    const vocalWin = path.join(cacheDir, `${hash}-vwin.wav`);
-    await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(targetSec),
+    // 起点与长度：给了 startSec 就按它，然后唱到这一段自然结束（不固定 30 秒）
+    const win = await pickVerseWindow({ vocalsPath: vocals, startSec, minSec: 15, maxSec: 75 });
+    const start = win.start;
+    const singSec = Math.max(8, Math.min(75, win.seconds || targetSec || 30));
+    const h2 = `${hash}-${singSec}s`;
+    const vocalWin = path.join(cacheDir, `${h2}-vwin2.wav`);
+    await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(singSec),
       '-i', vocals, '-ar', '44100', '-ac', '2', vocalWin]);
 
-    const sung = await convert({ srcWav: vocalWin, cacheDir, hash, chunkSec, indexRate, protect, pitch });
+    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch });
     const size = fs.statSync(sung).size;
     if (size < 1024) return { ok: false, error: '转换结果是空音频' };
 
     let finalPath = sung;
     if (withInstrumental && instrumental) {
-      const instWin = path.join(cacheDir, `${hash}-iwin.wav`);
+      const instWin = path.join(cacheDir, `${h2}-iwin2.wav`);
       await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(targetSec),
         '-i', instrumental, '-ar', '16000', '-ac', '1', instWin]);
-      finalPath = path.join(cacheDir, `${hash}-mix.wav`);
+      finalPath = path.join(cacheDir, `${h2}-mix.wav`);
       await mixWithInstrumental({ vocalWav: sung, instWav: instWin, outWav: finalPath });
       fs.rmSync(instWin, { force: true });
     }
