@@ -5814,8 +5814,8 @@ const agentTokenOk = (key, token) => {
       const looksLikeResult = (/\d+\s*[-:：]\s*\d+/.test(rawMessage) && teamRe.test(rawMessage)) || hasSeedClaim;
       const recentlyVerified = Date.now() - verifiedAt < 30 * 60 * 1000;
       if (looksLikeResult && !recentlyVerified && !/未核实|没核|不确定/.test(rawMessage)) {
-        rawMessage += '\n（这条比分我没核过，可能记错）';
-        log(`[audit] 比分说法但本轮没查证 → 已加"未核实"标注（${key}）`);
+        // owner 明确不要这条标注了：只在日志里记一笔，正文不改
+        log(`[audit] 比分/种子说法但本轮没查证（${key}）——不再往正文加标注`);
       }
     } catch { /* 忽略 */ }
     const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && rawMessage.includes(t));
@@ -10082,6 +10082,8 @@ const agentTokenOk = (key, token) => {
           + `注意：你现在的音色是千早爱音（aiyi 模型）；唱得长短由段落自然停顿决定，超过 55 秒会自动拆成几条语音。\n`
           + `另外：**你自己不能真唱**（TTS 只会说话），"唱"就是上面这条 cover 流程；`
           + `并说一句"我唱不出来，给你放原曲"这类实话；**不许说"语音合成没开/没配"**，那是错的（语音条本身是好的）。\n`
+          + `【语音播报规则】要发语音就**把整段话一次念完**（qq_send_voice 能念到 120 字），不要"念一句、剩下的打字"；`
+          + `要么整段语音、要么全文字。播报比分/赛况这种短消息，一条语音说完即可。\n`
           + `【语音】你可以发语音条：qq_send_voice(key, token, text)（默认 ${ttsCfgV.model || 'aiyi'} 音色；${limits}）。什么时候自己决定发：① 对方明确要你说话/发语音；② 私聊里气氛合适（撒娇、抱怨、晚安、道谢）；③ 想表达情绪但一句话打字太干。**群里别连着刷屏**；也别用语音复述刚打过的字，分寸你自己把握。\n`;
       })()
       : '';
