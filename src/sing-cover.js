@@ -149,12 +149,14 @@ async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75
 
 /** 把"唱"和伴奏混在一起（唱 1.0 / 伴奏 0.45），输出 16k 单声道。 */
 async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
+  // 两路先各自响度归一（-16 LUFS），再按 1:1 混合——否则人声天然比伴奏响，伴奏会被吃掉
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
     '-i', vocalWav, '-i', instWav,
-    // apad 把伴奏补齐到无限长：RVC 输出常比伴奏长一点，若用 duration=first 会让尾段只剩人声（伴奏消失）
-    // normalize=0 很关键：amix 默认会把两路各除 2，结果人声也被压低、伴奏几乎听不见
-    '-filter_complex', '[0:a]volume=1.0[v];[1:a]volume=0.7,apad[m];[v][m]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]',
-    '-map', '[out]', '-ac', '1', '-ar', '16000', outWav]);
+    '-filter_complex',
+    '[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[v];'
+    + '[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad[m];'
+    + '[v][m]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]',
+    '-map', '[out]', '-ac', '1', '-ar', '16000', outWav], { timeoutMs: 180000 });
   return outWav;
 }
 
