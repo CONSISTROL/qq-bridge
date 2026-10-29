@@ -34,7 +34,7 @@ const hashOf = (buf, extra = '') => crypto.createHash('sha1').update(buf).update
  * 找「一段完整主歌」：从人声起点开始，到第一个明显停顿（≥1.2 秒静音）结束。
  * 不再固定 30 秒——唱到这段自然结束为止（带 minSec/maxSec 保护）。
  */
-async function pickVerseWindow({ vocalsPath, startSec = null, minSec = 15, maxSec = 75 }) {
+async function pickVerseWindow({ vocalsPath, startSec = null, minSec = 30, maxSec = 75 }) {
   const hint = (startSec === null || startSec === undefined) ? 'None' : String(Number(startSec));
   const py = `
 import soundfile as sf, numpy as np, json
@@ -65,7 +65,7 @@ end = min(n, start + max_frames)
 gap = 0
 for i in range(start + min_frames, end):
     gap = gap + 1 if not voiced[i] else 0
-    if gap >= 12:
+    if gap >= 25:            # 2.5 秒停顿才算这一段落结束（换气、间奏短停顿不算）
         end = i - gap + 1
         break
 print(json.dumps({"start": round(start / 10.0, 2), "seconds": round((end - start) / 10.0, 2), "thr": round(float(thr), 4)}))
@@ -148,13 +148,14 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
  */
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
+  minSec = 30, maxSec = 75,
   chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe',
   withInstrumental = true
 } = {}) {
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
     const buf = fs.readFileSync(wavPath);
-    const tag = `${targetSec}|${startSec ?? 'auto'}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
+    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -162,7 +163,7 @@ export async function singCover({
     const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash, searchSec });
 
     // 起点与长度：给了 startSec 就按它，然后唱到这一段自然结束（不固定 30 秒）
-    const win = await pickVerseWindow({ vocalsPath: vocals, startSec, minSec: 15, maxSec: 75 });
+    const win = await pickVerseWindow({ vocalsPath: vocals, startSec, minSec, maxSec });
     const start = win.start;
     const singSec = Math.max(8, Math.min(75, win.seconds || targetSec || 30));
     const h2 = `${hash}-${singSec}s`;
