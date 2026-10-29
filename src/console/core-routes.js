@@ -667,7 +667,9 @@ export function createConsoleCoreRoutes(deps) {
             const resp2 = kind2 === 'group'
               ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
               : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
-            ids.push(resp2?.data?.message_id ?? resp2?.message_id ?? null);
+            const mid = resp2?.data?.message_id ?? resp2?.message_id ?? null;
+            ids.push(mid);
+            try { deps.log?.(`[sing] 已发 cover 语音 ${key} 第 ${ids.length}/${parts.length} 段（${Math.round(buf2.length / 1024)}KB，mid=${mid}）`); } catch { /* 忽略 */ }
             await new Promise((rr) => setTimeout(rr, 1200));
           }
           fs.rmSync(partDir, { recursive: true, force: true });

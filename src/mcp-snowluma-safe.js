@@ -1518,7 +1518,8 @@ defineTool(
         const sec = Math.round(Number(d.seconds) || 0);
         return { content: [{ type: 'text', text: `已经用你的声音唱了 ${sec} 秒（${d.parts || 1} 段语音，从第 ${d.startSec ?? '自动'} 秒开始）：《${d.title || d.bvid}》` }] };
       }
-      return { content: [{ type: 'text', text: `发了 ${d.segments} 段语音：《${d.title || d.bvid}》` }] };
+      const n = Number(d.parts || d.segments || (Array.isArray(d.messageIds) ? d.messageIds.length : 0)) || 1;
+      return { content: [{ type: 'text', text: `已发出 ${n} 段语音：《${d.title || d.bvid}》（不是"没接上"，发了就是发了；要确认就让群友听一下）` }] };
     } catch (error) { return { content: [{ type: 'text', text: `放歌失败：${error?.message ?? error}` }], isError: true }; }
   }
 );
