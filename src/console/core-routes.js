@@ -641,6 +641,7 @@ export function createConsoleCoreRoutes(deps) {
             pitch: Number.isFinite(Number(body.pitch)) ? Number(body.pitch) : 12,
             rmsMixRate: Number.isFinite(Number(body.rmsMixRate)) ? Number(body.rmsMixRate) : 0.25,
             f0Method: String(body.f0Method || 'rmvpe'),
+            device: String(body.device || 'auto'),
             withInstrumental: body.withInstrumental !== false
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }

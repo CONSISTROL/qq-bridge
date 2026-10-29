@@ -102,7 +102,7 @@ async function separate({ wavPath, cacheDir, hash, searchSec }) {
 }
 
 /** 切块 → RVC（10 秒/块，CPU）→ 拼接。 */
-async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe' }) {
+async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', device = 'auto' }) {
   const outFinal = path.join(cacheDir, `${hash}-aiyi.wav`);
   if (fs.existsSync(outFinal) && fs.statSync(outFinal).size > 1024) return outFinal;
   const chunkDir = path.join(cacheDir, `${hash}-chunks`);
@@ -114,11 +114,27 @@ async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', srcWav,
     '-f', 'segment', '-segment_time', String(chunkSec), '-ac', '2', '-ar', '44100',
     path.join(chunkDir, 'c%03d.wav')]);
-  await run(RVC_PY, ['-m', 'infer.cli', '--model', RVC_MODEL, '--input', chunkDir, '--output', rvcOut,
+  const args = ['-m', 'infer.cli', '--model', RVC_MODEL, '--input', chunkDir, '--output', rvcOut,
     '--speaker-id', '0', '--f0-method', String(f0Method), '--index', RVC_INDEX,
     '--index-rate', String(indexRate), '--protect', String(protect), '--pitch', String(pitch),
-    '--rms-mix-rate', String(rmsMixRate)],
-    { cwd: RVC_DIR, timeoutMs: 900000, env: { CUDA_VISIBLE_DEVICES: '' } });
+    '--rms-mix-rate', String(rmsMixRate)];
+  const tryRun = async (useGpu) => run(RVC_PY, args, {
+    cwd: RVC_DIR, timeoutMs: 900000,
+    // 4GB 显卡 + rvc-webui 共用显存：关掉 CUDA Graph（要额外显存）才能跑起来，实测仍比 CPU 快
+    env: useGpu ? { RVC_CUDA_GRAPH: '0' } : { CUDA_VISIBLE_DEVICES: '' }
+  });
+  const wantGpu = device === 'auto' || device === 'cuda';
+  if (wantGpu) {
+    try { await tryRun(true); } catch (e) {
+      // 显存不够（和 rvc-webui 抢）就退回 CPU，不影响出结果
+      if (device === 'cuda') throw e;
+      fs.rmSync(rvcOut, { recursive: true, force: true });
+      fs.mkdirSync(rvcOut, { recursive: true });
+      await tryRun(false);
+    }
+  } else {
+    await tryRun(false);
+  }
   const files = fs.readdirSync(rvcOut).filter((f) => f.endsWith('.wav')).sort();
   if (!files.length) throw new Error('RVC 没有产出文件');
   const listFile = path.join(cacheDir, `${hash}-list.txt`);
@@ -148,14 +164,14 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
  */
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
-  minSec = 30, maxSec = 75,
+  minSec = 30, maxSec = 75, device = 'auto',
   chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe',
   withInstrumental = true
 } = {}) {
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
     const buf = fs.readFileSync(wavPath);
-    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
+    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -171,7 +187,7 @@ export async function singCover({
     await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(singSec),
       '-i', vocals, '-ar', '44100', '-ac', '2', vocalWin]);
 
-    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch, rmsMixRate, f0Method });
+    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch, rmsMixRate, f0Method, device });
     const size = fs.statSync(sung).size;
     if (size < 1024) return { ok: false, error: '转换结果是空音频' };
 
