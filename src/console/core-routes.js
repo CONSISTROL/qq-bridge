@@ -624,6 +624,13 @@ export function createConsoleCoreRoutes(deps) {
         // mode=cover：把第一段拿去"用 ai 的声音唱"（demucs 分人声 + RVC 换音色），再发出去
         if (String(body.mode || '') === 'cover') {
           const started = Date.now();
+          // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
+          // 这里按需重新取一段更长的（从 0 开始，覆盖 startSec + 两分钟）。
+          const needSec = Math.min(600, Math.max(180, (Number(body.startSec) || 0) + 150));
+          if ((r.seconds || seg) < needSec - 30) {
+            const r2 = await biliAudioSegments({ bvid, stateDir: STATE_DIR, segmentSec: needSec, maxSegments: 1 });
+            if (r2.ok) r.segments = r2.segments;
+          }
           // RVC/demucs 都要 44.1k 立体声；biliAudioSegments 给的是 16k 单声道，先转一次
           const prep = path.join(STATE_DIR, `cover-src-${Date.now()}.wav`);
           try { await import('node:child_process').then(({ spawn }) => new Promise((res, rej) => {
