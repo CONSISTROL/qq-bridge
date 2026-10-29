@@ -152,7 +152,8 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
     '-i', vocalWav, '-i', instWav,
     // apad 把伴奏补齐到无限长：RVC 输出常比伴奏长一点，若用 duration=first 会让尾段只剩人声（伴奏消失）
-    '-filter_complex', '[0:a]volume=1.0[v];[1:a]volume=0.45,apad[m];[v][m]amix=inputs=2:duration=first:dropout_transition=0[out]',
+    // normalize=0 很关键：amix 默认会把两路各除 2，结果人声也被压低、伴奏几乎听不见
+    '-filter_complex', '[0:a]volume=1.0[v];[1:a]volume=0.7,apad[m];[v][m]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]',
     '-map', '[out]', '-ac', '1', '-ar', '16000', outWav]);
   return outWav;
 }
