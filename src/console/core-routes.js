@@ -638,18 +638,23 @@ export function createConsoleCoreRoutes(deps) {
             c.on('close', (code) => (code === 0 ? res() : rej(new Error('ffmpeg 转换失败'))));
           })); } catch { /* 忽略，直接用原文件 */ }
           const srcWav = fs.existsSync(prep) ? prep : r.segments[0];
+          // 默认参数放 config.socialData.sing，改参数不用改代码（owner 选定的组合：p12 / rmvpe）
+          const sc = cfg?.socialData?.sing ?? {};
+          const pick = (k, dflt) => (body[k] !== undefined && body[k] !== null && body[k] !== '' ? body[k] : (sc[k] !== undefined ? sc[k] : dflt));
           const cov = await singCover({
             wavPath: srcWav,
             stateDir: STATE_DIR,
             targetSec: seg,
             startSec: Number.isFinite(Number(body.startSec)) ? Number(body.startSec) : null,
-            indexRate: Number(body.indexRate) || 0.75,
-            protect: Number(body.protect) || 0.33,
-            pitch: Number.isFinite(Number(body.pitch)) ? Number(body.pitch) : 12,
-            rmsMixRate: Number.isFinite(Number(body.rmsMixRate)) ? Number(body.rmsMixRate) : 0.25,
-            f0Method: String(body.f0Method || 'rmvpe'),
-            device: String(body.device || 'auto'),
-            withInstrumental: body.withInstrumental !== false
+            indexRate: Number(pick('indexRate', 0.75)),
+            protect: Number(pick('protect', 0.33)),
+            pitch: Number(pick('pitch', 12)),
+            rmsMixRate: Number(pick('rmsMixRate', 0.25)),
+            f0Method: String(pick('f0Method', 'rmvpe')),
+            minSec: Number(pick('minSec', 30)),
+            maxSec: Number(pick('maxSec', 75)),
+            device: String(pick('device', 'auto')),
+            withInstrumental: body.withInstrumental !== false && pick('withInstrumental', true) !== false
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
           if (!cov.ok) { sendJson({ ok: false, error: `唱不出来：${cov.error}`, bvid }, 502); return; }
