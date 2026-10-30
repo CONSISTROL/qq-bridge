@@ -190,7 +190,10 @@ export async function singCover({
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
 
-    const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash, searchSec });
+    // 人声分离只跟"源音频"有关，跟起点/音色参数无关 → 用源文件哈希做缓存键，
+    // 换起点重唱时不用再跑一遍 demucs（省 2 分钟）。
+    const srcHash = hashOf(buf, 'sep');
+    const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash: srcHash, searchSec });
 
     // 起点与长度：给了 startSec 就按它，然后唱到这一段自然结束（不固定 30 秒）
     const win = await pickVerseWindow({ vocalsPath: vocals, startSec, minSec, maxSec });
