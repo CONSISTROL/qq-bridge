@@ -214,7 +214,10 @@ export async function singCover({
     let finalPath = sung;
     if (withInstrumental && instrumental) {
       const instWin = path.join(cacheDir, `${h2}-iwin2.wav`);
-      await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(targetSec),
+      // 注意用 singSec（实际唱了多久），不是 targetSec：之前用错了，导致后半段只有人声、没有伴奏；
+      // -stream_loop -1 兜底：素材不够长时循环补足，而不是 apad 补静音。
+      await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
+        '-stream_loop', '-1', '-ss', String(start), '-t', String(singSec),
         '-i', instrumental, '-ar', '16000', '-ac', '1', instWin]);
       finalPath = path.join(cacheDir, `${h2}-mix.wav`);
       await mixWithInstrumental({ vocalWav: sung, instWav: instWin, outWav: finalPath, instShift: Number(keyShift || 0) });

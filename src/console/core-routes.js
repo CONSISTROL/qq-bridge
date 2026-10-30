@@ -627,7 +627,7 @@ export function createConsoleCoreRoutes(deps) {
           const started = Date.now();
           // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
           // 这里按需重新取一段更长的（从 0 开始，覆盖 startSec + 两分钟）。
-          const needSec = Math.min(600, Math.max(180, (Number(body.startSec) || 0) + 150));
+          const needSec = Math.min(600, Math.max(240, (Number(body.startSec) || 0) + 180));
           if ((r.seconds || seg) < needSec - 30) {
             const r2 = await biliAudioSegments({ bvid, stateDir: STATE_DIR, segmentSec: needSec, maxSegments: 1 });
             if (r2.ok) r.segments = r2.segments;
