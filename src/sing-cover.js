@@ -159,13 +159,14 @@ async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75
 }
 
 /** 把"唱"和伴奏混在一起（唱 1.0 / 伴奏 0.45），输出 16k 单声道。 */
-async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
+async function mixWithInstrumental({ vocalWav, instWav, outWav, instShift = 0 }) {
   // 两路先各自响度归一（-16 LUFS），再按 1:1 混合——否则人声天然比伴奏响，伴奏会被吃掉
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
     '-i', vocalWav, '-i', instWav,
     '-filter_complex',
     '[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[v];'
-    + '[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad[m];'
+    + (instShift ? `[1:a]rubberband=pitch=${Math.pow(2, instShift / 12).toFixed(6)},` : '[1:a]')
+    + 'loudnorm=I=-16:TP=-1.5:LRA=11,apad[m];'
     + '[v][m]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]',
     '-map', '[out]', '-ac', '1', '-ar', '16000', outWav], { timeoutMs: 180000 });
   return outWav;
@@ -178,14 +179,14 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
  */
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
-  minSec = 30, maxSec = 75, device = 'auto',
+  minSec = 30, maxSec = 75, device = 'auto', keyShift = 0,
   chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', prePitch = false,
   withInstrumental = true
 } = {}) {
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
     const buf = fs.readFileSync(wavPath);
-    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${prePitch ? 'pre' : 'rvc'}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
+    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${keyShift}|${prePitch ? 'pre' : 'rvc'}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -204,7 +205,9 @@ export async function singCover({
     await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(singSec),
       '-i', vocals, '-ar', '44100', '-ac', '2', vocalWin]);
 
-    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch, rmsMixRate, f0Method, device, prePitch });
+    // keyShift<0：整首降调（伴奏跟着降），人声改唱 pitch+keyShift，避开模型高音区
+    const vocalShift = Number(pitch) + Number(keyShift || 0);
+    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch: vocalShift, rmsMixRate, f0Method, device, prePitch });
     const size = fs.statSync(sung).size;
     if (size < 1024) return { ok: false, error: '转换结果是空音频' };
 
@@ -214,7 +217,7 @@ export async function singCover({
       await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(targetSec),
         '-i', instrumental, '-ar', '16000', '-ac', '1', instWin]);
       finalPath = path.join(cacheDir, `${h2}-mix.wav`);
-      await mixWithInstrumental({ vocalWav: sung, instWav: instWin, outWav: finalPath });
+      await mixWithInstrumental({ vocalWav: sung, instWav: instWin, outWav: finalPath, instShift: Number(keyShift || 0) });
       fs.rmSync(instWin, { force: true });
     }
 
