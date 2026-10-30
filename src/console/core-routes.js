@@ -4,6 +4,7 @@ import { recallForPrompt } from '../memdb.js';
 import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
 import { biliAudioSegments, searchBiliVideo, extractBvid, biliVideoTitle } from '../bili-audio.js';
 import { singCover } from '../sing-cover.js';
+import { scoreSinging, summarizeScore } from '../song-score.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -706,6 +707,23 @@ export function createConsoleCoreRoutes(deps) {
           await new Promise((rr) => setTimeout(rr, 1200));
         }
         sendJson({ ok: sent > 0, bvid, title: r.title, segments: sent, messageIds: ids });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    // ── 唱歌评测（客观指标：音准/气声/抖动，不是"好不好听"的主观判断）──────────
+    if (url.pathname === '/api/socialData/score-sing' && req.method === 'POST') {
+      try {
+        const body = await readBody();
+        const pickLatest = (suffix) => {
+          const dir = path.join(STATE_DIR, 'sing-cache');
+          const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(suffix))
+            .map((f) => path.join(dir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs) : [];
+          return files[0] || '';
+        };
+        const candidate = String(body.candidate || pickLatest('-aiyi.wav'));
+        const reference = String(body.reference || pickLatest('-vwin2.wav'));
+        const r = await scoreSinging({ candidate, reference, expectedShift: Number(body.expectedShift) || 0 });
+        sendJson({ ...r, summary: summarizeScore(r) });
       } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
       return;
     }
