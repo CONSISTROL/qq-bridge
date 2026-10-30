@@ -654,6 +654,7 @@ export function createConsoleCoreRoutes(deps) {
             minSec: Number(pick('minSec', 30)),
             maxSec: Number(pick('maxSec', 75)),
             device: String(pick('device', 'auto')),
+            prePitch: body.prePitch !== undefined ? body.prePitch === true || body.prePitch === 'true' : pick('prePitch', false) === true,
             withInstrumental: body.withInstrumental !== false && pick('withInstrumental', true) !== false
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }

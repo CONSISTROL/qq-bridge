@@ -102,7 +102,7 @@ async function separate({ wavPath, cacheDir, hash, searchSec }) {
 }
 
 /** 切块 → RVC（10 秒/块，CPU）→ 拼接。 */
-async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', device = 'auto' }) {
+async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', device = 'auto', prePitch = false }) {
   const outFinal = path.join(cacheDir, `${hash}-aiyi.wav`);
   if (fs.existsSync(outFinal) && fs.statSync(outFinal).size > 1024) return outFinal;
   const chunkDir = path.join(cacheDir, `${hash}-chunks`);
@@ -111,12 +111,23 @@ async function convert({ srcWav, cacheDir, hash, chunkSec = 10, indexRate = 0.75
   fs.rmSync(rvcOut, { recursive: true, force: true });
   fs.mkdirSync(chunkDir, { recursive: true });
   fs.mkdirSync(rvcOut, { recursive: true });
-  await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', srcWav,
+  // prePitch：先用 rubberband 做高质量变调（保留共振峰），RVC 只做音色替换（pitch=0），
+  // 这样高音区不必由 RVC 强行抬 F0，哑掉的情况会轻很多。
+  let chunkSrc = srcWav;
+  let rvcPitch = pitch;
+  if (prePitch && Number(pitch) !== 0) {
+    const ratio = Math.pow(2, Number(pitch) / 12);
+    chunkSrc = path.join(cacheDir, `${hash}-pre${pitch}.wav`);
+    await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', srcWav,
+      '-af', `rubberband=pitch=${ratio.toFixed(4)}`, '-ar', '44100', '-ac', '2', chunkSrc], { timeoutMs: 300000 });
+    rvcPitch = 0;
+  }
+  await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', chunkSrc,
     '-f', 'segment', '-segment_time', String(chunkSec), '-ac', '2', '-ar', '44100',
     path.join(chunkDir, 'c%03d.wav')]);
   const args = ['-m', 'infer.cli', '--model', RVC_MODEL, '--input', chunkDir, '--output', rvcOut,
     '--speaker-id', '0', '--f0-method', String(f0Method), '--index', RVC_INDEX,
-    '--index-rate', String(indexRate), '--protect', String(protect), '--pitch', String(pitch),
+    '--index-rate', String(indexRate), '--protect', String(protect), '--pitch', String(rvcPitch),
     '--rms-mix-rate', String(rmsMixRate)];
   const tryRun = async (useGpu) => run(RVC_PY, args, {
     cwd: RVC_DIR, timeoutMs: 900000,
@@ -168,13 +179,13 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav }) {
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
   minSec = 30, maxSec = 75, device = 'auto',
-  chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe',
+  chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', prePitch = false,
   withInstrumental = true
 } = {}) {
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
     const buf = fs.readFileSync(wavPath);
-    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
+    const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${prePitch ? 'pre' : 'rvc'}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
     const cacheDir = path.join(stateDir, 'sing-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -190,7 +201,7 @@ export async function singCover({
     await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(singSec),
       '-i', vocals, '-ar', '44100', '-ac', '2', vocalWin]);
 
-    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch, rmsMixRate, f0Method, device });
+    const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch, rmsMixRate, f0Method, device, prePitch });
     const size = fs.statSync(sung).size;
     if (size < 1024) return { ok: false, error: '转换结果是空音频' };
 
