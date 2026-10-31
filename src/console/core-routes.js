@@ -5,6 +5,7 @@ import { fetchTiebaHot, fetchTiebaComments } from '../tieba.js';
 import { biliAudioSegments, searchBiliVideo, extractBvid, biliVideoTitle } from '../bili-audio.js';
 import { singCover } from '../sing-cover.js';
 import { scoreSinging, summarizeScore } from '../song-score.js';
+import { imitateVoice } from '../voice-imitate.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -707,6 +708,38 @@ export function createConsoleCoreRoutes(deps) {
           await new Promise((rr) => setTimeout(rr, 1200));
         }
         sendJson({ ok: sent > 0, bvid, title: r.title, segments: sent, messageIds: ids });
+      } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    // ── 语气模仿：取视频里那句话的人声 → 换成自己的音色（保留原语调/节奏）───────
+    if (url.pathname === '/api/socialData/imitate-voice' && req.method === 'POST') {
+      try {
+        const body = await readBody();
+        const key = String(body.key || '').trim();
+        if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+        let bvid = extractBvid(body.bvid || body.url || '');
+        if (!bvid && body.query) bvid = await searchBiliVideo(body.query);
+        if (!bvid) { sendJson({ ok: false, error: '没找到视频（给 bvid/链接更稳）' }, 400); return; }
+        const startSec = Math.max(0, Number(body.startSec) || 0);
+        const lenSec = Math.max(2, Math.min(60, Number(body.lengthSec) || 8));
+        const got = await biliAudioSegments({ bvid, stateDir: STATE_DIR, segmentSec: Math.ceil(startSec + lenSec) + 5, maxSegments: 1 });
+        if (!got.ok) { sendJson({ ok: false, error: got.error, bvid }, 502); return; }
+        const cut = path.join(STATE_DIR, `imitate-src-${Date.now()}.wav`);
+        await new Promise((res, rej) => {
+          const cp = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(startSec), '-t', String(lenSec),
+            '-i', got.segments[0], '-ar', '44100', '-ac', '2', cut]);
+          cp.on('close', (code) => (code === 0 ? res() : rej(new Error('裁剪失败'))));
+        });
+        const im = await imitateVoice({ wavPath: cut, stateDir: STATE_DIR, pitch: Number.isFinite(Number(body.pitch)) ? Number(body.pitch) : 12 });
+        try { fs.unlinkSync(cut); } catch { /* 忽略 */ }
+        if (!im.ok) { sendJson({ ok: false, error: im.error, bvid }, 502); return; }
+        const kind2 = key.startsWith('group:') ? 'group' : 'private';
+        const id2 = Number(key.slice(kind2 === 'group' ? 6 : 8));
+        const buf2 = fs.readFileSync(im.path);
+        const resp2 = kind2 === 'group'
+          ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
+          : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
+        sendJson({ ok: true, bvid, title: got.title, seconds: im.seconds, messageId: resp2?.data?.message_id ?? resp2?.message_id ?? null });
       } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
       return;
     }

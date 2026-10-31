@@ -1489,6 +1489,32 @@ defineTool(
 );
 
 defineTool(
+  'qq_imitate_voice',
+  '模仿视频里某个人说话的**语气**：取原视频那段人声、只把你的音色换上去（语调/节奏/重音都保留原说话人的）。'
+    + '群友让你"学他说这句/模仿这个语气"时用它；不要用 qq_send_voice 自己念（那是你的 TTS 语气，不是他的）。',
+  {
+    key: z.string().describe('会话 key'),
+    token: z.string().describe('会话令牌'),
+    bvid: z.string().optional().describe('B站视频 bvid 或链接（推荐）'),
+    query: z.string().optional().describe('关键词搜索（不稳，优先 bvid）'),
+    startSec: z.number().describe('那句话在视频里的开始秒数'),
+    lengthSec: z.number().optional().describe('取多长（默认 8 秒，最多 60）'),
+    pitch: z.number().optional().describe('移调半音（男声转爱音 +12；同性别 0）')
+  },
+  async ({ key, token, bvid, query, startSec, lengthSec, pitch }) => {
+    try {
+      const d = await agentApi('/api/socialData/imitate-voice', {
+        method: 'POST',
+        body: JSON.stringify({ key, bvid, query, startSec, lengthSec: lengthSec || 8, pitch: pitch ?? 12 }),
+        headers: { 'x-agent-token': token },
+        timeoutMs: 300000
+      });
+      if (!d.ok) return { content: [{ type: 'text', text: `模仿失败：${d.error || '未知原因'}` }], isError: true };
+      return { content: [{ type: 'text', text: `已用你的音色复刻那段语气（${d.seconds} 秒）：《${d.title || d.bvid}》` }] };
+    } catch (error) { return { content: [{ type: 'text', text: `模仿失败：${error?.message ?? error}` }], isError: true }; }
+  }
+);
+defineTool(
   'qq_sing',
   '从 B站 找一段歌/音频，切成 30 秒左右一段，逐条发成语音条（"唱歌/放歌"就用这个）。'
     + '优先给 bvid 或 B站链接（关键词搜索会被风控拦住，不稳）；标题会自动带上。'
