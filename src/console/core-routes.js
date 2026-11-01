@@ -625,6 +625,9 @@ export function createConsoleCoreRoutes(deps) {
         if (!r.ok) { sendJson({ ok: false, error: r.error, bvid }, 502); return; }
         // mode=cover：把第一段拿去"用 ai 的声音唱"（demucs 分人声 + RVC 换音色），再发出去
         if (String(body.mode || '') === 'cover') {
+          // cover 要 2~5 分钟，同步等会撞 MCP 工具超时（线上：歌已经发出来了，工具却报失败）。
+          // 所以先立刻回"已开始"，重活丢到后台，唱完直接发语音。
+          const coverJob = (async () => {
           const started = Date.now();
           // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
           // 这里按需重新取一段更长的（从 0 开始，覆盖 startSec + 两分钟）。
@@ -690,8 +693,12 @@ export function createConsoleCoreRoutes(deps) {
             await new Promise((rr) => setTimeout(rr, 1200));
           }
           fs.rmSync(partDir, { recursive: true, force: true });
-          sendJson({ ok: true, bvid, title: r.title, mode: 'cover', seconds: cov.seconds, parts: parts.length, startSec: cov.chorusStart,
-            messageIds: ids, elapsedMs: Date.now() - started });
+          deps.log?.(`[sing] cover 完成 ${key}：${cov.seconds}s / ${parts.length} 段 / 用时 ${Math.round((Date.now() - started) / 1000)}s（${bvid}）`);
+          })().catch((e) => {
+            try { deps.log?.(`[sing] cover 失败 ${key}（${bvid}）：${e?.message ?? e}`); } catch { /* 忽略 */ }
+          });
+          sendJson({ ok: true, async: true, bvid, title: r.title, mode: 'cover',
+            note: '已开始用你的声音唱，2~5 分钟后直接把语音发出来；这条只表示"已开始"，不代表失败。' });
           return;
         }
         const kind = key.startsWith('group:') ? 'group' : 'private';

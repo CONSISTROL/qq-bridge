@@ -1130,7 +1130,7 @@ if (cfg.socialData?.tools?.getImages !== false) {
         if (imageLimit != null) q.set('imageLimit', String(imageLimit));
         const data = await agentApi(`/api/images/message?${q.toString()}`, {
           headers: token ? { 'x-agent-token': token } : {},
-          timeoutMs: 180000
+          timeoutMs: 600000
         });
         const images = Array.isArray(data?.images) ? data.images : [];
         if (!images.length) {
@@ -1254,7 +1254,7 @@ defineTool(
         method: 'POST',
         body: JSON.stringify({ key, kind: 'video', url: mediaUrl, title: title || '' }),
         headers: { 'x-agent-token': token },
-        timeoutMs: 180000
+        timeoutMs: 600000
       });
       return { content: [{ type: 'text', text: data.fallback ? `已发链接（${data.note}）` : `已分享视频（${Math.round((data.bytes || 0) / 1024)}KB）` }] };
     } catch (error) {
@@ -1537,10 +1537,13 @@ defineTool(
         method: 'POST',
         body: JSON.stringify({ key, bvid, query, segmentSec: segmentSec || 30, maxSegments: maxSegments || 6, mode: mode || 'original', startSec }),
         headers: { 'x-agent-token': token },
-        timeoutMs: 180000
+        timeoutMs: 600000
       });
       if (!d.ok) return { content: [{ type: 'text', text: `放歌失败：${d.error || '未知原因'}` }], isError: true };
       if (d.mode === 'cover') {
+        if (d.async) {
+          return { content: [{ type: 'text', text: `已经开始用你的声音唱《${d.title || d.bvid}》了，2~5 分钟后会直接把语音发到群里（这是"已开始"，不是失败）。` }] };
+        }
         const sec = Math.round(Number(d.seconds) || 0);
         return { content: [{ type: 'text', text: `已经用你的声音唱了 ${sec} 秒（${d.parts || 1} 段语音，从第 ${d.startSec ?? '自动'} 秒开始）：《${d.title || d.bvid}》` }] };
       }
@@ -2039,7 +2042,7 @@ if (cfg.socialData?.tools?.getFile !== false) {
         if (Number.isFinite(chunk) && chunk > 0) q.set('maxChars', String(chunk));
         const data = await agentApi(`/api/files/message?${q.toString()}`, {
           headers: token ? { 'x-agent-token': token } : {},
-          timeoutMs: 180000
+          timeoutMs: 600000
         });
         // 注意：展示用 trim，但**下一段的 offset 必须按未 trim 的长度算**——
         // 否则首尾空白会被"跳过"，长文档续读时可能漏掉正文（线上实测被模型发现：
@@ -2263,7 +2266,7 @@ if (cfg.socialData?.sticker?.enabled !== false && cfg.socialData?.image?.enabled
           method: 'POST',
           body: JSON.stringify({ key, image: String(image), source: source || 'auto', remark: remark || '' }),
           headers: { 'x-agent-token': token },
-          timeoutMs: 180000
+          timeoutMs: 600000
         });
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
@@ -2308,7 +2311,7 @@ if (cfg.socialData?.sticker?.enabled !== false && cfg.socialData?.tools?.pickSti
             send: send && (send.id || send.url) ? send : null
           }),
           headers: { 'x-agent-token': token },
-          timeoutMs: 180000
+          timeoutMs: 600000
         });
         const content = [{ type: 'text', text: JSON.stringify(data, null, 2) }];
         // 预览图跟着结果一起进视觉上下文，让 AI 真的「看图选表情」
@@ -2343,7 +2346,7 @@ if (cfg.socialData?.image?.enabled !== false && cfg.socialData?.tools?.sendImage
           method: 'POST',
           body: JSON.stringify({ key, image: String(image), source: source || 'auto', replyToMessageId, atUserId: atUserId ?? null }),
           headers: { 'x-agent-token': token },
-          timeoutMs: 180000
+          timeoutMs: 600000
         });
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (error) {
@@ -2946,7 +2949,7 @@ if (cfg.socialData?.tools?.getForwardMsg !== false) {
               method: 'POST',
               body: JSON.stringify({ key, media: images, offset, limit }),
               headers: { 'x-agent-token': token },
-              timeoutMs: 180000
+              timeoutMs: 600000
             });
             const mediaImages = Array.isArray(mediaRes?.images) ? mediaRes.images : [];
             for (const img of mediaImages) {
