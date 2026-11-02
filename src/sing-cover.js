@@ -193,12 +193,32 @@ export async function singCover({
 
     // 人声分离只跟"源音频"有关，跟起点/音色参数无关 → 用源文件哈希做缓存键，
     // 换起点重唱时不用再跑一遍 demucs（省 2 分钟）。
-    const srcHash = hashOf(buf, 'sep');
-    const { vocals, instrumental } = await separate({ wavPath, cacheDir, hash: srcHash, searchSec });
+    // demucs 在 CPU 上很慢（约 5 倍时长）：源音频若很长，只分离"起点前后"这一小段，
+    // 不再把整首歌送进去（之前唱 30 秒要等 8 分钟，就是这么来的）。
+    let sepSrc = wavPath;
+    let offset = 0;
+    const startNum = Number(startSec);
+    if (Number.isFinite(startNum) && startNum > 0) {
+      try {
+        const probe = await run(RVC_PY, ['-c', `import soundfile as sf;print(round(len(sf.read('${wavPath}')[0])/sf.read('${wavPath}')[1],1))`], { timeoutMs: 60000 });
+        const dur = Number(String(probe).trim?.() ?? '') || 0;
+        const cutStart = Math.max(0, startNum - 12);
+        const cutLen = Math.min(110, Math.max(60, (dur || startNum + 120) - cutStart));
+        if (dur > cutLen + 20) {
+          sepSrc = path.join(cacheDir, `sepwin-${Date.now()}.wav`);
+          await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(cutStart), '-t', String(cutLen),
+            '-i', wavPath, '-ar', '44100', '-ac', '2', sepSrc], { timeoutMs: 180000 });
+          offset = cutStart;
+        }
+      } catch { /* 忽略，退回整段分离 */ }
+    }
+    const srcHash = hashOf(buf, `sep|${offset}`);
+    const { vocals, instrumental } = await separate({ wavPath: sepSrc, cacheDir, hash: srcHash, searchSec });
 
     // 起点与长度：给了 startSec 就按它，然后唱到这一段自然结束（不固定 30 秒）
-    const win = await pickVerseWindow({ vocalsPath: vocals, startSec, minSec, maxSec });
-    const start = win.start;
+    const win = await pickVerseWindow({ vocalsPath: vocals, startSec: Number.isFinite(startNum) ? Math.max(0, startNum - offset) : null, minSec, maxSec });
+    const start = win.start;   // 相对 sepSrc 的窗口起点
+    const absStart = start + offset;   // 相对原始源音频（伴奏裁剪用同一段 sepSrc，所以仍用 start）
     const singSec = Math.max(8, Math.min(75, win.seconds || targetSec || 30));
     const h2 = `${hash}-${singSec}s`;
     const vocalWin = path.join(cacheDir, `${h2}-vwin2.wav`);

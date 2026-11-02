@@ -635,6 +635,11 @@ export function createConsoleCoreRoutes(deps) {
             return;
           }
           globalThis.__coverJobs.set(jobId, Date.now());
+          // 全局串行：demucs / RVC 都会吃满 CPU，多个任务并行会让每个都慢到"看起来卡死"
+          globalThis.__coverQueue = globalThis.__coverQueue || Promise.resolve();
+          let release = () => {};
+          const gate = new Promise((r) => { release = r; });
+          globalThis.__coverQueue = globalThis.__coverQueue.then(() => gate);
           const coverJob = (async () => {
           const started = Date.now();
           // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
@@ -672,7 +677,19 @@ export function createConsoleCoreRoutes(deps) {
             withInstrumental: body.withInstrumental !== false && pick('withInstrumental', true) !== false
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
-          if (!cov.ok) { sendJson({ ok: false, error: `唱不出来：${cov.error}`, bvid }, 502); return; }
+          if (!cov.ok) {
+            // 这里已经在异步任务里（响应早就发完了），绝不能再 sendJson；
+            // 出错就在群里说一句，并记日志。
+            deps.log?.(`[sing] cover 唱不出来 ${key}（${bvid}）：${cov.error}`);
+            try {
+              const kk = key.startsWith('group:') ? 'group' : 'private';
+              const ii = Number(key.slice(kk === 'group' ? 6 : 8));
+              const msg = [{ type: 'text', data: { text: `这首没唱成：${String(cov.error || '未知原因').slice(0, 60)}` } }];
+              if (kk === 'group') await deps.bot.raw('send_group_msg', { group_id: ii, message: msg });
+              else await deps.bot.raw('send_private_msg', { user_id: ii, message: msg });
+            } catch { /* 忽略 */ }
+            return;
+          }
           const kind2 = key.startsWith('group:') ? 'group' : 'private';
           const id2 = Number(key.slice(kind2 === 'group' ? 6 : 8));
           // 超过 55 秒就拆段发（QQ 语音条上限约 60 秒）
@@ -706,6 +723,7 @@ export function createConsoleCoreRoutes(deps) {
             try { deps.log?.(`[sing] cover 失败 ${key}（${bvid}）：${e?.message ?? e}`); } catch { /* 忽略 */ }
           }).finally(() => {
             try { globalThis.__coverJobs.delete(jobId); } catch { /* 忽略 */ }
+            release();
           });
           sendJson({ ok: true, async: true, bvid, title: r.title, mode: 'cover',
             note: '已开始用你的声音唱，2~5 分钟后直接把语音发出来；这条只表示"已开始"，不代表失败。' });
