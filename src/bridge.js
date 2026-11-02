@@ -607,6 +607,17 @@ function extractMediaFromSegments(segments) {
         kind: 'face',
         faceId: String(d.id ?? '')
       });
+    } else if (seg.type === 'record') {
+      // 群友语音：必须收进 mediaList，后续才能调 fetch_ptt_text 拿到 QQ 的语音转文字；
+      // 少了这一支，AI 永远只看到「[语音]」占位。
+      media.push({
+        kind: 'record',
+        file: String(d.file ?? ''),
+        url: String(d.url ?? ''),
+        seconds: Number(d.seconds) || 0
+      });
+    } else if (seg.type === 'audio') {
+      media.push({ kind: 'audio', file: String(d.file ?? ''), url: String(d.url ?? '') });
     } else if (seg.type === 'file') {
       // QQ 文件段（PDF/文本/压缩包…）：url 是下载直链，file/file_id 是网关侧句柄。
       // 线上需求：群里发 PDF 问「这里面讲了什么」，不记下来 AI 就完全不知道有这个文件。
@@ -10819,6 +10830,23 @@ const agentTokenOk = (key, token) => {
       if (t === 'face') { media.push({ kind: 'face', faceId: d.id }); parts.push(`[表情${d.id ?? ''}]`); continue; }
       if (t === 'video') { media.push({ kind: 'video', file: d.file, url: d.url }); parts.push('[视频]'); continue; }
       if (t === 'forward') { parts.push('[转发消息]'); continue; }
+      // 群友发的语音（record）：必须进 media，否则 ptt 转写那一步永远不会触发，
+      // AI 只看到「[语音]」占位、什么也读不到（线上就是这样）。
+      if (t === 'record') {
+        media.push({ kind: 'record', file: d.file, url: d.url, seconds: Number(d.seconds) || 0 });
+        parts.push('[语音]');
+        continue;
+      }
+      if (t === 'audio') {
+        media.push({ kind: 'audio', file: d.file, url: d.url });
+        parts.push('[音频]');
+        continue;
+      }
+      if (t === 'file') {
+        media.push({ kind: 'file', file: d.file, url: d.url, name: d.name || d.file, size: Number(d.size) || 0, fileId: d.file_id || d.fileId });
+        parts.push(`[文件 ${d.name || d.file || ''}]`);
+        continue;
+      }
       parts.push(`[${t}]`);
     }
     return { text: parts.join('').trim(), media };
