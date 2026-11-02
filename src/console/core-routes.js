@@ -627,6 +627,14 @@ export function createConsoleCoreRoutes(deps) {
         if (String(body.mode || '') === 'cover') {
           // cover 要 2~5 分钟，同步等会撞 MCP 工具超时（线上：歌已经发出来了，工具却报失败）。
           // 所以先立刻回"已开始"，重活丢到后台，唱完直接发语音。
+          const jobId = `${key}|${bvid}`;
+          globalThis.__coverJobs = globalThis.__coverJobs || new Map();
+          if (globalThis.__coverJobs.has(jobId)) {
+            sendJson({ ok: true, async: true, bvid, title: r.title, mode: 'cover', duplicate: true,
+              note: '这首已经在唱了，别重复点；唱好会直接发语音。' });
+            return;
+          }
+          globalThis.__coverJobs.set(jobId, Date.now());
           const coverJob = (async () => {
           const started = Date.now();
           // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
@@ -696,6 +704,8 @@ export function createConsoleCoreRoutes(deps) {
           deps.log?.(`[sing] cover 完成 ${key}：${cov.seconds}s / ${parts.length} 段 / 用时 ${Math.round((Date.now() - started) / 1000)}s（${bvid}）`);
           })().catch((e) => {
             try { deps.log?.(`[sing] cover 失败 ${key}（${bvid}）：${e?.message ?? e}`); } catch { /* 忽略 */ }
+          }).finally(() => {
+            try { globalThis.__coverJobs.delete(jobId); } catch { /* 忽略 */ }
           });
           sendJson({ ok: true, async: true, bvid, title: r.title, mode: 'cover',
             note: '已开始用你的声音唱，2~5 分钟后直接把语音发出来；这条只表示"已开始"，不代表失败。' });
