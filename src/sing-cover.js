@@ -88,9 +88,17 @@ async function separate({ wavPath, cacheDir, hash, searchSec }) {
     return { vocals: vocalsOut, instrumental: instOut };
   }
   const outDir = path.join(cacheDir, `${hash}-demucs`);
-  await run(RVC_PY, ['-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', 'cpu', '-j', '2',
-    '--segment', '7', '-o', outDir, wavPath],
-    { timeoutMs: 900000, env: { HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1', HF_ENDPOINT: 'https://hf-mirror.com' } });
+  // GPU 分离实测快 20 倍（60 秒素材：CPU 3 分钟 → GPU 10 秒）。
+  // 关键：必须 HF_HUB_OFFLINE=1 + TORCH_HOME，否则每次都会卡在联网检查（多等 2 分钟）。
+  const demucsArgs = (dev) => ['-m', 'demucs', '--two-stems=vocals', '-n', 'htdemucs', '-d', dev, '-j', '1',
+    '--segment', '7', '-o', outDir, wavPath];
+  const demucsEnv = { HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1', TORCH_HOME: '/root/.cache/torch' };
+  try {
+    await run(RVC_PY, demucsArgs('cuda'), { timeoutMs: 600000, env: demucsEnv });
+  } catch (e) {
+    fs.rmSync(outDir, { recursive: true, force: true });
+    await run(RVC_PY, demucsArgs('cpu'), { timeoutMs: 900000, env: { ...demucsEnv, CUDA_VISIBLE_DEVICES: '' } });
+  }
   const base = path.join(outDir, 'htdemucs', path.basename(wavPath, '.wav'));
   const v = path.join(base, 'vocals.wav');
   const i = path.join(base, 'no_vocals.wav');
