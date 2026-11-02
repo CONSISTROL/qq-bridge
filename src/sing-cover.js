@@ -187,12 +187,14 @@ async function mixWithInstrumental({ vocalWav, instWav, outWav, instShift = 0 })
  */
 export async function singCover({
   wavPath, stateDir = './state', targetSec = 30, searchSec = 90, startSec = null,
-  minSec = 30, maxSec = 75, device = 'auto', keyShift = 0,
+  minSec = 30, maxSec = 75, device = 'auto', keyShift = 0, onStage = null,
   chunkSec = 10, indexRate = 0.75, protect = 0.33, pitch = 12, rmsMixRate = 0.25, f0Method = 'rmvpe', prePitch = false,
   withInstrumental = true
 } = {}) {
   try {
     if (!fs.existsSync(wavPath)) return { ok: false, error: '源音频不存在' };
+    const stage = (m) => { try { onStage?.(m); } catch { /* 忽略 */ } };
+    stage('读取源音频');
     const buf = fs.readFileSync(wavPath);
     const tag = `${targetSec}|${startSec ?? 'auto'}|${minSec}|${maxSec}|${device}|${keyShift}|${prePitch ? 'pre' : 'rvc'}|${indexRate}|${protect}|${pitch}|${rmsMixRate}|${f0Method}|${withInstrumental ? 'mix' : 'dry'}`;
     const hash = hashOf(buf, tag);
@@ -221,6 +223,7 @@ export async function singCover({
       } catch { /* 忽略，退回整段分离 */ }
     }
     const srcHash = hashOf(buf, `sep|${offset}`);
+    stage(`分离人声（${offset ? '窗口 ' + Math.round(offset) + 's 起' : '整段'}）`);
     const { vocals, instrumental } = await separate({ wavPath: sepSrc, cacheDir, hash: srcHash, searchSec });
 
     // 起点与长度：给了 startSec 就按它，然后唱到这一段自然结束（不固定 30 秒）
@@ -235,6 +238,7 @@ export async function singCover({
 
     // keyShift<0：整首降调（伴奏跟着降），人声改唱 pitch+keyShift，避开模型高音区
     const vocalShift = Number(pitch) + Number(keyShift || 0);
+    stage(`换音色（${Math.round(singSec)} 秒，pitch ${Number(pitch) + Number(keyShift || 0)}）`);
     const sung = await convert({ srcWav: vocalWin, cacheDir, hash: h2, chunkSec, indexRate, protect, pitch: vocalShift, rmsMixRate, f0Method, device, prePitch });
     const size = fs.statSync(sung).size;
     if (size < 1024) return { ok: false, error: '转换结果是空音频' };
@@ -247,6 +251,7 @@ export async function singCover({
       await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
         '-stream_loop', '-1', '-ss', String(start), '-t', String(singSec),
         '-i', instrumental, '-ar', '16000', '-ac', '1', instWin]);
+      stage('混伴奏');
       finalPath = path.join(cacheDir, `${h2}-mix.wav`);
       await mixWithInstrumental({ vocalWav: sung, instWav: instWin, outWav: finalPath, instShift: Number(keyShift || 0) });
       fs.rmSync(instWin, { force: true });

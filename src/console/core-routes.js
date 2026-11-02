@@ -639,9 +639,12 @@ export function createConsoleCoreRoutes(deps) {
           globalThis.__coverQueue = globalThis.__coverQueue || Promise.resolve();
           let release = () => {};
           const gate = new Promise((r) => { release = r; });
-          globalThis.__coverQueue = globalThis.__coverQueue.then(() => gate);
+          const prev = globalThis.__coverQueue;
+          globalThis.__coverQueue = prev.then(() => gate);
           const coverJob = (async () => {
           const started = Date.now();
+          await prev;   // 真正排队：等上一个 cover 跑完
+          deps.log?.(`[sing] cover 开始 ${key}（${bvid}）`);
           // cover 需要足够长的源：如果之前按 segmentSec 只取了 35 秒，从 startSec=32 开始就只剩 3 秒可唱。
           // 这里按需重新取一段更长的（从 0 开始，覆盖 startSec + 两分钟）。
           const needSec = Math.min(600, Math.max(240, (Number(body.startSec) || 0) + 180));
@@ -674,7 +677,8 @@ export function createConsoleCoreRoutes(deps) {
             device: String(pick('device', 'auto')),
             keyShift: Number(pick('keyShift', 0)),
             prePitch: body.prePitch !== undefined ? body.prePitch === true || body.prePitch === 'true' : pick('prePitch', false) === true,
-            withInstrumental: body.withInstrumental !== false && pick('withInstrumental', true) !== false
+            withInstrumental: body.withInstrumental !== false && pick('withInstrumental', true) !== false,
+            onStage: (m) => deps.log?.(`[sing] ${key} 阶段：${m}（${bvid}）`)
           });
           try { fs.unlinkSync(prep); } catch { /* 忽略 */ }
           if (!cov.ok) {
