@@ -712,7 +712,19 @@ export function createConsoleCoreRoutes(deps) {
             : [cov.path];
           const ids = [];
           for (const pfile of parts) {
-            const buf2 = fs.readFileSync(pfile);
+            // 统一转 mp3 再发：QQ 对 16k wav 语音条兼容性差，群里可能只显示占位；
+            // mp3 体积也小一半（846KB → 约 430KB）。
+            let sendFile = pfile;
+            try {
+              const mp3 = pfile.replace(/\.wav$/, '.mp3');
+              await new Promise((res, rej) => {
+                const cp = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', pfile,
+                  '-ac', '1', '-ar', '24000', '-b:a', '48k', mp3]);
+                cp.on('close', (code) => (code === 0 ? res() : rej(new Error('转 mp3 失败'))));
+              });
+              if (fs.existsSync(mp3) && fs.statSync(mp3).size > 1024) sendFile = mp3;
+            } catch { /* 转失败就用原 wav */ }
+            const buf2 = fs.readFileSync(sendFile);
             const resp2 = kind2 === 'group'
               ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
               : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
@@ -774,7 +786,19 @@ export function createConsoleCoreRoutes(deps) {
         if (!im.ok) { sendJson({ ok: false, error: im.error, bvid }, 502); return; }
         const kind2 = key.startsWith('group:') ? 'group' : 'private';
         const id2 = Number(key.slice(kind2 === 'group' ? 6 : 8));
-        const buf2 = fs.readFileSync(im.path);
+        let sendPath = im.path;
+        try {
+          const mp3 = im.path.replace(/\.wav$/, '.mp3');
+          if (!fs.existsSync(mp3)) {
+            await new Promise((res, rej) => {
+              const cp = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', im.path,
+                '-ac', '1', '-ar', '24000', '-b:a', '48k', mp3]);
+              cp.on('close', (code) => (code === 0 ? res() : rej(new Error('转 mp3 失败'))));
+            });
+          }
+          if (fs.existsSync(mp3) && fs.statSync(mp3).size > 1024) sendPath = mp3;
+        } catch { /* 忽略 */ }
+        const buf2 = fs.readFileSync(sendPath);
         const resp2 = kind2 === 'group'
           ? await deps.bot.raw('send_group_msg', { group_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] })
           : await deps.bot.raw('send_private_msg', { user_id: id2, message: [{ type: 'record', data: { file: 'base64://' + buf2.toString('base64') } }] });
