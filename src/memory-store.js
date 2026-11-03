@@ -79,6 +79,53 @@ export async function rerank({ query, documents, config, topN = 3 }) {
   return { ok: true, results: rows.map((r) => ({ index: r.index, score: r.relevance_score })) };
 }
 
+
+// ── 关键词检索（BM25）──────────────────────────────────────────────
+// 中文没有空格：用「字 bigram + 英文/数字词」切，够朴素、对人名/专名也够用。
+export function tokenize(text) {
+  const t = String(text || '').toLowerCase();
+  const out = [];
+  const latin = t.match(/[a-z0-9_]{2,}/g) || [];
+  out.push(...latin);
+  const cjk = t.replace(/[^\u4e00-\u9fff]/g, ' ');
+  for (const seg of cjk.split(/\s+/)) {
+    if (!seg) continue;
+    if (seg.length === 1) { out.push(seg); continue; }
+    for (let i = 0; i < seg.length - 1; i += 1) out.push(seg.slice(i, i + 2));
+  }
+  return out;
+}
+
+/** 对 items 现算 BM25（几千条以内足够快，不额外维护倒排文件）。 */
+export function bm25Rank({ query, items, topN = 30, k1 = 1.5, b = 0.75 }) {
+  const qTokens = tokenize(query);
+  if (!qTokens.length) return [];
+  const docs = items.map((it) => (it.tokens ? it.tokens : tokenize(it.text)));
+  const N = docs.length;
+  const avgLen = docs.reduce((s, d) => s + d.length, 0) / Math.max(1, N);
+  const df = new Map();
+  for (const d of docs) {
+    const seen = new Set(d);
+    for (const tk of seen) df.set(tk, (df.get(tk) || 0) + 1);
+  }
+  const scored = [];
+  for (let i = 0; i < N; i += 1) {
+    const tf = new Map();
+    for (const tk of docs[i]) tf.set(tk, (tf.get(tk) || 0) + 1);
+    let score = 0;
+    for (const tk of qTokens) {
+      const f = tf.get(tk);
+      if (!f) continue;
+      const n = df.get(tk) || 0;
+      const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
+      score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * (docs[i].length / avgLen)));
+    }
+    if (score > 0) scored.push({ index: i, score });
+  }
+  scored.sort((a, b2) => b2.score - a.score);
+  return scored.slice(0, topN);
+}
+
 const indexPath = (stateDir) => path.join(stateDir, 'memory-index.json');
 
 export function loadIndex(stateDir = './state') {
@@ -91,7 +138,7 @@ export function saveIndex(stateDir, data) {
 }
 
 /** 从归档切块（和旧 chunk-index 同样口径：同一个会话、40 条一组）。 */
-export function chunkArchive({ stateDir = './state', chunkMessages = DEF.chunkMessages, maxChunks = 2000 } = {}) {
+export function chunkArchive({ stateDir = './state', chunkMessages = DEF.chunkMessages, maxChunks = 20000, perMessage = true } = {}) {
   const dir = path.join(stateDir, 'messages');
   const chunks = [];
   if (!fs.existsSync(dir)) return chunks;
@@ -106,12 +153,28 @@ export function chunkArchive({ stateDir = './state', chunkMessages = DEF.chunkMe
         try { msgs.push(JSON.parse(line)); } catch { /* 跳过坏行 */ }
       }
     }
+    // 单条消息级索引（精确回原文更强）；太短的消息（"在""嗯"）跳过，省 token
+    if (perMessage) {
+      msgs.forEach((m, idx) => {
+        const t = String(m.text || '').trim();
+        if (t.length < 6) return;
+        chunks.push({
+          id: `${key}#m${idx}`,
+          key,
+          from: Number(m.t) || 0,
+          to: Number(m.t) || 0,
+          text: `${m.me ? '我' : m.from}: ${t.slice(0, 300)}`,
+          level: 'message'
+        });
+      });
+    }
     for (let i = 0; i < msgs.length; i += chunkMessages) {
       const slice = msgs.slice(i, i + chunkMessages);
       const text = slice.map((m) => `${m.me ? '我' : m.from}: ${String(m.text || '').slice(0, 200)}`).join('\n');
       if (text.trim().length < 40) continue;
       chunks.push({
         id: `${key}#${i}`,
+        level: 'chunk',
         key,
         from: Number(slice[0]?.t) || 0,
         to: Number(slice[slice.length - 1]?.t) || 0,
@@ -145,47 +208,99 @@ export async function loadMemoryEntries({ stateDir = './state' } = {}) {
 /** 重建索引（全量）。 */
 export async function rebuildIndex({ stateDir = './state', cfg = null, onProgress = null } = {}) {
   const c = memoryConfig(cfg);
-  const chunks = chunkArchive({ stateDir, chunkMessages: c.chunkMessages });
+  const chunks = chunkArchive({ stateDir, chunkMessages: c.chunkMessages, perMessage: c.perMessage !== false });
   const facts = await loadMemoryEntries({ stateDir });
   chunks.push(...facts);
   if (!chunks.length) return { ok: false, error: '归档里没有可索引的内容' };
   const texts = chunks.map((x) => x.text);
   const emb = await embedTexts({ texts, config: c, batch: 10 });
   if (!emb.ok) return emb;
-  const items = chunks.map((x, i) => ({ ...x, vec: emb.vectors[i] }));
+  const items = chunks.map((x, i) => ({ ...x, vec: emb.vectors[i], tokens: tokenize(x.text) }));
   saveIndex(stateDir, { version: 1, model: emb.model, dim: emb.dim, builtAt: Date.now(), items });
   onProgress?.(items.length);
   return { ok: true, items: items.length, dim: emb.dim, model: emb.model };
 }
 
-/** 召回：向量 topN → 重排 topK。 */
+
+/** 查询改写：把口语问题拆成检索关键词 + 一句规范化表述（用 config.deepseek.apiKey 调 deepseek-chat）。 */
+export async function rewriteQuery({ query, cfg }) {
+  const key = cfg?.deepseek?.apiKey;
+  const q = String(query || '').trim();
+  if (!key || q.length < 3) return { ok: false, keywords: '' };
+  try {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        temperature: 0,
+        max_tokens: 120,
+        messages: [
+          { role: 'system', content: '你是检索查询改写器。只输出一行 JSON：{"keywords":"用空格分隔的 3-6 个检索关键词或人名","normalized":"一句规范化的检索句子"}。不要解释。' },
+          { role: 'user', content: q.slice(0, 300) }
+        ]
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return { ok: false, keywords: '' };
+    const j = await res.json();
+    const text = String(j?.choices?.[0]?.message?.content || '');
+    const m = text.match(/\{[\s\S]*\}/);
+    const parsed = m ? JSON.parse(m[0]) : {};
+    return { ok: true, keywords: String(parsed.keywords || '').slice(0, 200), normalized: String(parsed.normalized || '') };
+  } catch { return { ok: false, keywords: '' }; }
+}
+
+/** 召回：混合召回（向量 + BM25）→ RRF 融合 → 重排 topK。 */
 export async function recall({ stateDir = './state', cfg = null, query, limit = 3, conversationKey = '' } = {}) {
   const c = memoryConfig(cfg);
   const q = String(query || '').trim();
   if (q.length < 2) return { ok: true, hits: [] };
   const idx = loadIndex(stateDir);
   if (!idx.items?.length) return { ok: false, error: '索引为空，请先重建' };
-  const qemb = await embedTexts({ texts: [q.slice(0, 500)], config: c, batch: 1 });
+
+  // ① 查询改写（可选）：口语问题 → 关键词，提高召回
+  let rq = { ok: false, keywords: '' };
+  if (c.rewrite !== false) rq = await rewriteQuery({ query: q, cfg });
+  const embedQuery = rq.ok ? [q, rq.keywords].filter(Boolean).join(' ') : q;
+  const bmQuery = rq.ok && rq.keywords ? rq.keywords : q;
+
+  const qemb = await embedTexts({ texts: [embedQuery.slice(0, 500)], config: c, batch: 1 });
   if (!qemb.ok) return qemb;
   const qv = qemb.vectors[0];
-  const scored = idx.items.map((it) => ({ item: it, score: cos(qv, it.vec) }));
-  // 同会话的块略加权：召回"这个群里说过的话"通常更有用
-  for (const s of scored) if (conversationKey && s.item.key === conversationKey) s.score += 0.05;
-  scored.sort((a, b) => b.score - a.score);
-  const cand = scored.slice(0, c.recallN);
-  let hits = cand.slice(0, limit).map((s) => ({ ...s.item, vec: undefined, score: s.score }));
+
+  // ② 向量召回
+  const vec = idx.items.map((it, i) => ({
+    i,
+    score: cos(qv, it.vec) + (conversationKey && it.key === conversationKey ? 0.05 : 0)
+  })).sort((a, b) => b.score - a.score).slice(0, c.recallN);
+
+  // ③ BM25 召回 → RRF 融合（k=60）
+  const bm = c.hybrid === false ? [] : bm25Rank({ query: bmQuery, items: idx.items, topN: c.recallN });
+  const fused = new Map();
+  vec.forEach((v, rank) => fused.set(v.i, { i: v.i, rrf: 1 / (60 + rank + 1), vec: v.score, bm: 0 }));
+  bm.forEach((b, rank) => {
+    const cur = fused.get(b.index) || { i: b.index, rrf: 0, vec: 0, bm: 0 };
+    cur.rrf += 1 / (60 + rank + 1);
+    cur.bm = b.score;
+    fused.set(b.index, cur);
+  });
+  const cand = [...fused.values()].sort((a, b) => b.rrf - a.rrf).slice(0, c.recallN);
+  if (!cand.length) return { ok: true, hits: [] };
+
+  let hits = cand.slice(0, limit).map((x) => ({ ...idx.items[x.i], vec: undefined, tokens: undefined, score: x.vec, bm25: x.bm }));
   let reranked = false;
   try {
-    const rr = await rerank({ query: q.slice(0, 500), documents: cand.map((s) => s.item.text), config: c, topN: limit });
+    const rr = await rerank({ query: embedQuery.slice(0, 500), documents: cand.map((x) => idx.items[x.i].text), config: c, topN: limit });
     if (rr.ok && rr.results.length) {
       hits = rr.results.map((r) => {
-        const s = cand[r.index];
-        return { ...s.item, vec: undefined, score: r.score, vecScore: s.score };
+        const x = cand[r.index];
+        return { ...idx.items[x.i], vec: undefined, tokens: undefined, score: r.score, vecScore: x.vec, bm25: x.bm };
       });
       reranked = true;
     }
-  } catch { /* 重排失败就用向量排序 */ }
-  return { ok: true, hits, reranked, candidates: cand.length };
+  } catch { /* 重排失败就用融合排序 */ }
+  return { ok: true, hits, reranked, candidates: cand.length, rewritten: rq.ok ? rq.keywords : '' };
 }
 
 export function summarizeHits(hits) {
