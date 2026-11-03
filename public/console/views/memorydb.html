@@ -20,10 +20,9 @@
     <input id="simQuery" class="grow" placeholder="模拟一句话，例如：一加手机二手能卖多少钱">
     <button id="simRun" class="primary" type="button">模拟</button>
   </div>
-  <div class="sim-grid">
-    <div class="sim-col"><h3>① 常驻笔记</h3><div id="simNotes" class="sim-body meta">—</div></div>
-    <div class="sim-col"><h3>② 原文召回（归档）</h3><div id="simChunks" class="sim-body meta">—</div></div>
-    <div class="sim-col"><h3>③ 条目召回（memory.db）</h3><div id="simItems" class="sim-body meta">—</div></div>
+  <div class="sim-grid" style="grid-template-columns:1fr 1.6fr">
+    <div class="sim-col"><h3>① 常驻笔记（MEMORY.md，每轮都注入）</h3><div id="simNotes" class="sim-body meta">—</div></div>
+    <div class="sim-col"><h3>② 检索命中（Qwen 向量 + 重排 · 原文与条目同一个索引）</h3><div id="simHits" class="sim-body meta">—</div></div>
   </div>
 </section>
 

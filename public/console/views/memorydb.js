@@ -82,40 +82,41 @@ export async function mount(root) {
   });
   void loadVectorStatus();
 
-  // ── 它现在会想到什么：三路并列（笔记 / 原文召回 / 条目召回）──────────
+  // ── 它现在会想到什么：两路（常驻笔记 / 检索命中）────────────────
   const simRun = async () => {
     const key = $('#simKey', view)?.value.trim() || '';
     const q = $('#simQuery', view)?.value.trim() || '';
     const meta = $('#simMeta', view);
     if (!q) { meta && (meta.textContent = '先写一句话'); return; }
     meta && (meta.textContent = '模拟中…');
-    const [chunkRes, itemRes, docRes] = await Promise.all([
-      api('/api/chunk/recall', 'POST', { key, text: q, limit: 3 }).catch(() => null),
-      api('/api/memory/recall', 'POST', { key, text: q, limit: 5 }).catch(() => null),
+    const [hitRes, docRes] = await Promise.all([
+      api('/api/memory/vector/query', 'POST', { q, limit: 5, key }).catch(() => null),
       api('/api/memory/doc').catch(() => null)
     ]);
-    // ① 笔记：只显示与查询相关的行（关键词命中），否则显示前几行
+    // ① 常驻笔记（全文注入，这里只挑相关行给人看）
     const docText = docRes?.content || '';
     const lines = docText.split('\n').filter((l) => l.trim().startsWith('- '));
-    const hit = lines.filter((l) => q.split(/\s+/).some((w) => w.length >= 2 && l.includes(w)));
-    const noteLines = (hit.length ? hit : lines).slice(0, 8);
+    const hitLines = lines.filter((l) => q.split(/\s+/).some((w) => w.length >= 2 && l.includes(w)));
+    const noteLines = (hitLines.length ? hitLines : lines).slice(0, 10);
     $('#simNotes', view).innerHTML = noteLines.length
       ? noteLines.map((l) => `<div class="sim-line">${esc(l)}</div>`).join('')
       : '<div class="meta">（笔记里还没有条目）</div>';
-    // ② 原文块
-    const chunks = chunkRes?.chunks || [];
-    $('#simChunks', view).innerHTML = chunks.length
-      ? chunks.map((c) => `<div class="sim-line"><b>${(c.score || 0).toFixed(2)}</b> ${esc(String(c.text).slice(0, 220))}</div>`).join('')
-      : '<div class="meta">（没有达到阈值的原文块）</div>';
-    // ③ 条目
-    const items = itemRes?.items || [];
-    $('#simItems', view).innerHTML = items.length
-      ? items.map((it) => `<div class="sim-line"><b>${(it.score || 0).toFixed(2)}</b> <span class="tag">${esc(it.kind)}</span> ${esc(String(it.text).slice(0, 160))}</div>`).join('')
-      : '<div class="meta">（没有达到阈值的条目）</div>';
-    meta && (meta.textContent = `笔记命中 ${noteLines.length} · 原文 ${chunks.length} 块 · 条目 ${items.length} 条`);
+    // ② 检索命中（原文块 + 条目，同一个索引）
+    const hits = hitRes?.hits || [];
+    $('#simHits', view).innerHTML = hits.length
+      ? hits.map((h) => `<div class="sim-line"><b>${Number(h.score || 0).toFixed(3)}</b> `
+        + `<span class="tag">${esc(h.kind || (h.level === 'message' ? '原话' : '原文'))}</span> `
+        + `<span class="meta">${esc(h.key)}</span>`
+        + `<div class="meta" style="white-space:pre-wrap">${esc(String(h.text || '').slice(0, 260))}</div></div>`).join('')
+      : '<div class="meta">（没有命中）</div>';
+    meta && (meta.textContent = `常驻笔记 ${noteLines.length} 行 · 检索命中 ${hits.length} 条`
+      + (hitRes ? `（候选 ${hitRes.candidates || 0} · ${hitRes.reranked ? '已重排' : '仅向量'}）` : '（检索失败）'));
   };
   $('#simRun', view)?.addEventListener('click', simRun);
   $('#simQuery', view)?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') simRun(); });
+
+
+
 
   await loadDoc();
   $('#mdDocReload', view)?.addEventListener('click', loadDoc);

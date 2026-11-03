@@ -790,7 +790,7 @@ async function main() {
         const r = await memoryRecall({ stateDir: STATE_DIR, cfg, query: q, limit, conversationKey: key });
         if (r.ok && r.hits?.length) {
           if (r.reranked) log(`[memory] ${key} Qwen 召回+重排：${r.hits.length} 条（候选 ${r.candidates}）`);
-          return r.hits.map((h) => ({ from: h.from, to: h.to, key: h.key, text: h.text, score: h.score }));
+          return r.hits.map((h) => ({ from: h.from, to: h.to, key: h.key, text: h.text, score: h.score, kind: h.kind, level: h.level }));
         }
         if (!r.ok) log(`[memory] Qwen 检索失败：${r.error}`);
       } catch (e) { log(`[memory] Qwen 检索异常：${e?.message ?? e}`); }
@@ -833,7 +833,10 @@ async function main() {
   function formatChunkRecall(chunks) {
     if (!Array.isArray(chunks) || !chunks.length) return '';
     const fmt = (t) => new Date(Number(t) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const body = chunks.map((c) => `【${fmt(c.from)}~${fmt(c.to)} · ${c.key}】${String(c.text).slice(0, 700)}`).join('\n');
+    const body = chunks.map((c) => {
+      const tag = c.kind ? `[记忆·${c.kind}]` : (c.level === 'message' ? '[原话]' : '[原文]');
+      return `【${tag} ${fmt(c.from)}~${fmt(c.to)} · ${c.key}】${String(c.text).slice(0, 700)}`;
+    }).join('\n');
     return `【相关历史原文（从归档里按语义找出来的原话）】\n${body}\n这些是当时的真实对话，可以直接引用；要更多细节再用 qq_search_history。\n\n`;
   }
 
@@ -9850,7 +9853,10 @@ const agentTokenOk = (key, token) => {
     try {
       const st0 = getSocialV2State(key);
       const query = lastIncomingTextChat(st0) || '';
-      const hits = recallForPrompt({ stateDir: STATE_DIR, key, query, limit: 10 });
+      // 统一检索（Qwen）：归档原文 + memory.db 条目在同一个索引里，
+      // 命中结果已经通过 st.chunkRecallText 注入，这里不再重复召回条目，避免同一段内容出现两次。
+      const unified = cfg.memory?.engine === 'qwen' && cfg.memory?.qwen?.apiKey;
+      const hits = unified ? [] : recallForPrompt({ stateDir: STATE_DIR, key, query, limit: 10 });
       if (hits.length) {
         profileLine = '【记忆·这次想起来的】按你这条消息的相关度挑出来的（不是全部记忆）：\n'
           + hits.map((h) => `- [${h.kind}] ${h.text}${h.answer ? '：' + String(h.answer).slice(0, 120) : ''}`).join('\n')
