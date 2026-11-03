@@ -159,6 +159,8 @@ export function loadConfig(root = ROOT) {
       ...(file.imageAdmin ?? {})
     },
     // 本地向量检索（RAG）。缺依赖/模型时自动降级为按出现次数选词，不影响主流程。
+    // 记忆检索引擎（Qwen 向量 + 重排）：engine/qwen.* 直接透传，缺省走旧的本地 bge
+    memory: { engine: 'qwen', qwen: {}, ...(file.memory ?? {}) },
     rag: {
       enabled: true,
       topK: 8,

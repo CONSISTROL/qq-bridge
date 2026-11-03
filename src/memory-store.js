@@ -123,10 +123,31 @@ export function chunkArchive({ stateDir = './state', chunkMessages = DEF.chunkMe
   return chunks.slice(0, maxChunks);
 }
 
+
+/** 把 memory.db 的事实/知识/备注也做成可检索条目（这些才是"结论"，比原文块更值钱）。 */
+export async function loadMemoryEntries({ stateDir = './state' } = {}) {
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(stateDir, 'memory.db'));
+    const rows = db.prepare("SELECT id, kind, scope, text, answer, tags FROM items WHERE kind IN ('fact','knowledge','remark','slang')").all();
+    db.close();
+    return rows.map((r) => ({
+      id: `mem#${r.id}`,
+      key: r.scope || '__memory__',
+      from: 0,
+      to: 0,
+      text: `[${r.kind}] ${r.text}${r.answer ? ' → ' + r.answer : ''}${r.tags ? '（' + r.tags + '）' : ''}`,
+      kind: r.kind
+    }));
+  } catch { return []; }
+}
+
 /** 重建索引（全量）。 */
 export async function rebuildIndex({ stateDir = './state', cfg = null, onProgress = null } = {}) {
   const c = memoryConfig(cfg);
   const chunks = chunkArchive({ stateDir, chunkMessages: c.chunkMessages });
+  const facts = await loadMemoryEntries({ stateDir });
+  chunks.push(...facts);
   if (!chunks.length) return { ok: false, error: '归档里没有可索引的内容' };
   const texts = chunks.map((x) => x.text);
   const emb = await embedTexts({ texts, config: c, batch: 10 });
