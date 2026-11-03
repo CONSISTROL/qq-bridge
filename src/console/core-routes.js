@@ -6,6 +6,7 @@ import { biliAudioSegments, searchBiliVideo, extractBvid, biliVideoTitle } from 
 import { singCover } from '../sing-cover.js';
 import { scoreSinging, summarizeScore } from '../song-score.js';
 import { imitateVoice } from '../voice-imitate.js';
+import { rebuildIndex, recall as memoryRecall, loadIndex } from '../memory-store.js';
 import { addCandidate, listPending, allPending, resolveCandidate } from '../memory-pending.js';
 import { upsertItem } from '../memdb.js';
 import { renderHtmlToImage } from '../draw-html.js';
@@ -760,6 +761,24 @@ export function createConsoleCoreRoutes(deps) {
         }
         sendJson({ ok: sent > 0, bvid, title: r.title, segments: sent, messageIds: ids });
       } catch (error) { sendJson({ ok: false, error: String(error?.message ?? error) }, 500); }
+      return;
+    }
+    // ── 记忆检索（Qwen 向量 + 重排）──────────────────────────────────────
+    if (url.pathname === '/api/memory/vector/status' && req.method === 'GET') {
+      const idx = loadIndex(STATE_DIR);
+      sendJson({ ok: true, items: idx.items?.length || 0, dim: idx.dim || 0, model: idx.model || '',
+        builtAt: idx.builtAt || null, keyConfigured: Boolean(cfg?.memory?.qwen?.apiKey) });
+      return;
+    }
+    if (url.pathname === '/api/memory/vector/rebuild' && req.method === 'POST') {
+      const r = await rebuildIndex({ stateDir: STATE_DIR, cfg });
+      sendJson(r, r.ok ? 200 : 502);
+      return;
+    }
+    if (url.pathname === '/api/memory/vector/query' && req.method === 'POST') {
+      const body = await readBody();
+      const r = await memoryRecall({ stateDir: STATE_DIR, cfg, query: String(body.q || ''), limit: Number(body.limit) || 3, conversationKey: String(body.key || '') });
+      sendJson(r, r.ok ? 200 : 502);
       return;
     }
     // ── 语气模仿：取视频里那句话的人声 → 换成自己的音色（保留原语调/节奏）───────

@@ -86,6 +86,7 @@ import {
   MEMBER_REMARKS_PER_KEY_MAX
 } from './member-remarks.js';
 import { EmbeddingClient } from './embedding-client.js';
+import { recall as memoryRecall, summarizeHits } from './memory-store.js';
 import {
   loadVectorStore,
   saveVectorStore,
@@ -783,6 +784,17 @@ async function main() {
   async function recallChunksForText(key, text, limit = 3) {
     const q = String(text ?? '').trim();
     if (!q || q.length < 4) return [];
+    // 新引擎：Qwen 向量召回 + Qwen 重排（config.memory.engine='qwen' 且配了 key）
+    if (cfg.memory?.engine === 'qwen' && cfg.memory?.qwen?.apiKey) {
+      try {
+        const r = await memoryRecall({ stateDir: STATE_DIR, cfg, query: q, limit, conversationKey: key });
+        if (r.ok && r.hits?.length) {
+          if (r.reranked) log(`[memory] ${key} Qwen 召回+重排：${r.hits.length} 条（候选 ${r.candidates}）`);
+          return r.hits.map((h) => ({ from: h.from, to: h.to, key: h.key, text: h.text, score: h.score }));
+        }
+        if (!r.ok) log(`[memory] Qwen 检索失败：${r.error}`);
+      } catch (e) { log(`[memory] Qwen 检索异常：${e?.message ?? e}`); }
+    }
     try {
       let qvec = chunkQueryCache.get(q);
       if (!qvec) {
