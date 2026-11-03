@@ -46,6 +46,42 @@ export async function mount(root) {
     if (r && r.ok) { docMeta && (docMeta.textContent = `已保存 · ${(docBox.value || '').length} 字`); toast?.('记忆笔记已保存'); }
     else { docMeta && (docMeta.textContent = '保存失败：' + (r?.error || '未知原因')); }
   };
+  // ── 向量记忆（Qwen）：状态 / 重建 / 试检索 ──────────────────
+  const mvMeta = $('#mvMeta', view);
+  const mvHits = $('#mvHits', view);
+  const loadVectorStatus = async () => {
+    const r = await api('/api/memory/vector/status').catch(() => null);
+    if (!r) { mvMeta && (mvMeta.textContent = '读取失败'); return; }
+    const when = r.builtAt ? new Date(Number(r.builtAt)).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未构建';
+    mvMeta && (mvMeta.textContent = `${r.items || 0} 条 · ${r.dim || 0} 维 · ${r.model || '—'} · ${when}`
+      + (r.keyConfigured ? '' : ' · ⚠ 未配置 DashScope key'));
+  };
+  const mvRun = async () => {
+    const q = $('#mvQuery', view)?.value.trim() || '';
+    if (!q) { toast?.('先写一句'); return; }
+    mvHits && (mvHits.innerHTML = '<div class="meta">检索中…</div>');
+    const r = await api('/api/memory/vector/query', 'POST', { q, limit: 5 }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { mvHits && (mvHits.innerHTML = `<div class="meta">失败：${esc((r && r.error) || '未知')}</div>`); return; }
+    const hits = r.hits || [];
+    mvHits.innerHTML = hits.length
+      ? hits.map((h) => `<div class="sim-line"><b>${Number(h.score || 0).toFixed(3)}</b>`
+        + (h.bm25 ? ` <span class="tag">bm25 ${Number(h.bm25).toFixed(1)}</span>` : '')
+        + ` <span class="meta">${esc(new Date(Number(h.from) || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }))} · ${esc(h.key)}</span>`
+        + `<div class="meta" style="white-space:pre-wrap">${esc(String(h.text || '').slice(0, 300))}</div></div>`).join('')
+      : '<div class="meta">没有命中</div>';
+    mvMeta && (mvMeta.textContent = `候选 ${r.candidates || 0} · ${r.reranked ? '已重排' : '仅向量排序'}${r.rewritten ? ' · 改写：' + r.rewritten : ''}`);
+  };
+  $('#mvReload', view)?.addEventListener('click', loadVectorStatus);
+  $('#mvRun', view)?.addEventListener('click', mvRun);
+  $('#mvQuery', view)?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') mvRun(); });
+  $('#mvRebuild', view)?.addEventListener('click', async () => {
+    mvMeta && (mvMeta.textContent = '重建中（约 15 秒）…');
+    const r = await api('/api/memory/vector/rebuild', 'POST', {}).catch((e) => ({ ok: false, error: e.message }));
+    if (r && r.ok) { toast?.(`重建完成：${r.items} 条`); await loadVectorStatus(); }
+    else { mvMeta && (mvMeta.textContent = '重建失败：' + ((r && r.error) || '未知')); }
+  });
+  void loadVectorStatus();
+
   // ── 它现在会想到什么：三路并列（笔记 / 原文召回 / 条目召回）──────────
   const simRun = async () => {
     const key = $('#simKey', view)?.value.trim() || '';

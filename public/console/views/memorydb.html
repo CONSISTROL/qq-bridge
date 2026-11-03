@@ -1,4 +1,19 @@
 <section class="card span-all">
+  <h2>向量记忆（Qwen 检索）<span class="meta" id="mvMeta">读取中…</span>
+    <span class="card-actions">
+      <button id="mvRebuild" class="small" type="button">重建索引</button>
+      <button id="mvReload" class="small" type="button">刷新状态</button>
+    </span>
+  </h2>
+  <div class="meta">朴素两步：text-embedding-v4 召回前 30 → gte-rerank-v2 重排取前 3。索引 = 归档原文块 + memory.db 条目。</div>
+  <div class="toolbar" style="margin:8px 0">
+    <input id="mvQuery" class="grow" placeholder="试一句，例如：群友让 bot 唱歌那次">
+    <button id="mvRun" class="primary" type="button">检索</button>
+  </div>
+  <div id="mvHits" class="md-list"><div class="meta">还没有检索结果</div></div>
+</section>
+
+<section class="card span-all">
   <h2>它现在会想到什么 <span class="meta" id="simMeta">按一句话，看 bot 这轮实际会拿到什么</span></h2>
   <div class="toolbar" style="margin-bottom:8px">
     <input id="simKey" class="w-lg" placeholder="会话 key（如 group:1050666134）" value="group:1050666134">
