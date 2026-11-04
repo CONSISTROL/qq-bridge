@@ -89,18 +89,16 @@ export async function mount(root) {
     const meta = $('#simMeta', view);
     if (!q) { meta && (meta.textContent = '先写一句话'); return; }
     meta && (meta.textContent = '模拟中…');
-    const [hitRes, docRes] = await Promise.all([
+    const [hitRes, memRes] = await Promise.all([
       api('/api/memory/vector/query', 'POST', { q, limit: 5, key }).catch(() => null),
-      api('/api/memory/doc').catch(() => null)
+      api('api/memdb?limit=400', 'GET').catch(() => null)
     ]);
-    // ① 常驻笔记（全文注入，这里只挑相关行给人看）
-    const docText = docRes?.content || '';
-    const lines = docText.split('\n').filter((l) => l.trim().startsWith('- '));
-    const hitLines = lines.filter((l) => q.split(/\s+/).some((w) => w.length >= 2 && l.includes(w)));
-    const noteLines = (hitLines.length ? hitLines : lines).slice(0, 10);
+    // ① 常驻：memory.db 里 tags 含 pinned 的条目（每轮都注入）
+    const pinned = (memRes?.items || []).filter((x) => /pinned/i.test(String(x.tags || '')));
+    const noteLines = pinned.slice(0, 12).map((x) => '- ' + String(x.text || '').trim());
     $('#simNotes', view).innerHTML = noteLines.length
       ? noteLines.map((l) => `<div class="sim-line">${esc(l)}</div>`).join('')
-      : '<div class="meta">（笔记里还没有条目）</div>';
+      : '<div class="meta">（还没有 pinned 条目；在下面列表里点「常驻」即可）</div>';
     // ② 检索命中（原文块 + 条目，同一个索引）
     const hits = hitRes?.hits || [];
     $('#simHits', view).innerHTML = hits.length
@@ -109,7 +107,7 @@ export async function mount(root) {
         + `<span class="meta">${esc(h.key)}</span>`
         + `<div class="meta" style="white-space:pre-wrap">${esc(String(h.text || '').slice(0, 260))}</div></div>`).join('')
       : '<div class="meta">（没有命中）</div>';
-    meta && (meta.textContent = `常驻笔记 ${noteLines.length} 行 · 检索命中 ${hits.length} 条`
+    meta && (meta.textContent = `常驻(pinned) ${noteLines.length} 条 · 检索命中 ${hits.length} 条`
       + (hitRes ? `（候选 ${hitRes.candidates || 0} · ${hitRes.reranked ? '已重排' : '仅向量'}）` : '（检索失败）'));
   };
   $('#simRun', view)?.addEventListener('click', simRun);
@@ -148,7 +146,9 @@ export async function mount(root) {
       const time = it.updated || it.at ? fmtClock(new Date(Number(it.updated || it.at))) : '';
       row.innerHTML = `<div class="md-head"><span class="pill ${KIND_CLASS[it.kind] || ''}">${esc(it.kind)}</span> <b>${esc(String(it.text).slice(0, 80))}</b> <span class="meta">${esc(it.scope || '')} ${esc(time)}</span></div>`
         + (it.answer ? `<div class="md-answer">${esc(String(it.answer).slice(0, 300))}</div>` : '')
-        + `<div class="row tight mt-6"><button class="small" type="button" data-md-edit="${esc(it.id)}">改</button><button class="small danger-ghost" type="button" data-md-del="${esc(it.id)}">删</button></div>`;
+        + `<div class="row tight mt-6">`
+        + `<button class="small" type="button" data-md-pin="${esc(it.id)}">${/pinned/i.test(String(it.tags || '')) ? '取消常驻' : '常驻'}</button>`
+        + `<button class="small" type="button" data-md-edit="${esc(it.id)}">改</button><button class="small danger-ghost" type="button" data-md-del="${esc(it.id)}">删</button></div>`;
       box.append(row);
     }
   };
@@ -167,6 +167,17 @@ export async function mount(root) {
 
   delegate(view, 'click', '[data-kind]', (ev, btn) => { state.kind = btn.dataset.kind; load(); });
   delegate(view, 'input', '#mdSearch', debounce((ev) => { state.q = ev.target.value.trim(); load(); }, 350));
+  delegate(view, 'click', '[data-md-pin]', async (ev, btn) => {
+    const id = btn.dataset.mdPin;
+    const row = state.items.find((x) => String(x.id) === String(id));
+    if (!row) return;
+    const tags = String(row.tags || '').split(',').filter(Boolean);
+    const on = tags.some((x) => /pinned/i.test(x));
+    const next = on ? tags.filter((x) => !/pinned/i.test(x)) : [...tags, 'pinned'];
+    const r = await api('api/memdb/update', 'POST', { id, kind: row.kind, scope: row.scope, text: row.text, answer: row.answer || '', tags: next.join(',') }).catch((e) => ({ ok: false, error: e.message }));
+    if (r && r.ok) { toast?.(on ? '已取消常驻' : '已设为常驻（每轮注入）'); load(); }
+    else { setMsg($('#mdMsg', view), '❌ ' + ((r && r.error) || '失败')); }
+  });
   delegate(view, 'click', '[data-md-del]', async (ev, btn) => {
     if (!confirmDanger('删掉这条记忆？')) return;
     const r = await api('api/memdb/delete', 'POST', { id: btn.dataset.mdDel }).catch((e) => ({ ok: false, error: e.message }));

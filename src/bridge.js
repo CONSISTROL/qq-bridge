@@ -9919,13 +9919,22 @@ const agentTokenOk = (key, token) => {
           + '**没核实出来就别记**，标 skip 即可。\n\n';
       }
     } catch { /* 忽略 */ }
-    // 你自己维护的笔记（MEMORY.md）：常驻注入，几百字
+    // 常驻记忆：memory.db 里 tags 含 pinned 的条目，每轮都注入（不再单独依赖 MEMORY.md 文件）。
+    // 这样"常驻"和"检索"共用一份存储：pinned 的永远在，其余靠向量召回。
     let memoryDocLine = '';
     try {
-      const docText = readMemoryDoc({ stateDir: STATE_DIR });
-      const bodyDoc = docText.replace(/^#.*$/m, '').replace(/^>.*$/gm, '').trim();
-      if (bodyDoc && bodyDoc.replace(/##\s*\S+/g, '').trim().length > 10) {
-        memoryDocLine = `【你的记忆笔记（自己维护的，用 qq_memory_write 增改）】\n${bodyDoc.slice(0, 1500)}\n\n`;
+      const pinned = listItems({ stateDir: STATE_DIR, limit: 400 })
+        .filter((x) => /pinned/i.test(String(x.tags || '')));
+      if (pinned.length) {
+        const body = pinned.map((x) => `- ${String(x.text).trim()}${x.answer ? '：' + String(x.answer).slice(0, 100) : ''}`).join('\n');
+        memoryDocLine = `【你的常驻记忆（每轮都在，用 qq_memory_write 增改，重要的事才标 pinned）】\n${body.slice(0, 1600)}\n\n`;
+      } else {
+        // 兼容：还没迁移时照旧读 MEMORY.md
+        const docText = readMemoryDoc({ stateDir: STATE_DIR });
+        const bodyDoc = docText.replace(/^#.*$/m, '').replace(/^>.*$/gm, '').trim();
+        if (bodyDoc && bodyDoc.replace(/##\s*\S+/g, '').trim().length > 10) {
+          memoryDocLine = `【你的记忆笔记（自己维护的，用 qq_memory_write 增改）】\n${bodyDoc.slice(0, 1500)}\n\n`;
+        }
       }
     } catch { /* 忽略 */ }
     const chunkRecallLine = String(st.chunkRecallText || '');
