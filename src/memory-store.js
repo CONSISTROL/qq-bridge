@@ -8,6 +8,7 @@
 // 凭据：config.memory.qwen.apiKey（DashScope 兼容模式），没有就返回明确错误、由调用方回退。
 import fs from 'node:fs';
 import path from 'node:path';
+import { localMemory } from './memory-local.js';
 
 const DEF = {
   baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -19,6 +20,8 @@ const DEF = {
   recallN: 30,
   topK: 3
 };
+
+const __rerankCache = new Map();
 
 const cos = (a, b) => {
   let s = 0, na = 0, nb = 0;
@@ -40,6 +43,20 @@ export function memoryConfig(cfg) {
 /** 批量向量化（DashScope 兼容模式 /embeddings）。 */
 export async function embedTexts({ texts, config, batch = 10 }) {
   const c = config || memoryConfig();
+  // 本地优先：engine='local' 用本机 Qwen3-Embedding（GPU fp16）
+  if (c.engine === 'local') {
+    try {
+      const vectors = [];
+      const step = 8;
+      for (let i = 0; i < texts.length; i += step) {
+        const v = await localMemory.embed(texts.slice(i, i + step), { timeoutMs: 300000 });
+        vectors.push(...v);
+      }
+      return { ok: true, vectors, model: 'Qwen3-Embedding-0.6B(local)', dim: vectors[0]?.length || 0 };
+    } catch (e) {
+      return { ok: false, error: `本地 embedding 失败：${e?.message ?? e}` };
+    }
+  }
   if (!c.apiKey) return { ok: false, error: '缺少 DashScope API Key（config.memory.qwen.apiKey）' };
   const out = [];
   for (let i = 0; i < texts.length; i += batch) {
@@ -62,6 +79,19 @@ export async function embedTexts({ texts, config, batch = 10 }) {
 /** Qwen 重排：把候选按与 query 的相关性重新排序。 */
 export async function rerank({ query, documents, config, topN = 3 }) {
   const c = config || memoryConfig();
+  if (c.engine === 'local') {
+    const ck = `${query}\u0000${documents.map((d) => String(d).slice(0, 40)).join('\u0001')}`;
+    const hitc = __rerankCache.get(ck);
+    if (hitc) return { ok: true, results: hitc, cached: true };
+    try {
+      const results = await localMemory.rerank(query, documents, topN, { timeoutMs: 120000 });
+      if (__rerankCache.size > 200) __rerankCache.clear();
+      __rerankCache.set(ck, results);
+      return { ok: true, results };
+    } catch (e) {
+      return { ok: false, error: `本地重排失败：${e?.message ?? e}` };
+    }
+  }
   if (!c.apiKey) return { ok: false, error: '缺少 DashScope API Key' };
   const res = await fetch(c.rerankUrl, {
     method: 'POST',

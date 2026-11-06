@@ -87,6 +87,7 @@ import {
 } from './member-remarks.js';
 import { EmbeddingClient } from './embedding-client.js';
 import { recall as memoryRecall, summarizeHits } from './memory-store.js';
+import { localMemory } from './memory-local.js';
 import {
   loadVectorStore,
   saveVectorStore,
@@ -824,7 +825,7 @@ async function main() {
           st.chunkRecallText = formatChunkRecall(chunks);
         } catch { /* 忽略 */ }
       })();
-    }, 1500);
+    }, 400);
     timer.unref?.();
     chunkRecallTimer.set(key, timer);
   }
@@ -840,6 +841,10 @@ async function main() {
     return `【相关历史原文（从归档里按语义找出来的原话）】\n${body}\n这些是当时的真实对话，可以直接引用；要更多细节再用 qq_search_history。\n\n`;
   }
 
+  // 本地 Qwen 记忆服务：启动后预热一次（模型加载几十秒，放在后台，别挡桥接起来）
+  if (cfg.memory?.engine === 'local') {
+    setTimeout(() => { void localMemory.start().catch(() => {}); }, 6000).unref?.();
+  }
   // 归档分块索引：启动后补一次，之后每 10 分钟增量更新（无新消息时几乎零开销）
   setTimeout(() => { void refreshChunkIndex(true); }, 8000).unref?.();
   setTimeout(() => { void refreshTiebaHot(); }, 12000).unref?.();
