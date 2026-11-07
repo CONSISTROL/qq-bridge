@@ -7135,7 +7135,20 @@ const agentTokenOk = (key, token) => {
   async function auditAndSend(key, text) {
     const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && String(text ?? '').includes(t));
     if (shouldAuditKey(key) && (SENSITIVE_RE.test(text) || hasKnownToken)) {
-      log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
+      // 记"脱敏后的原文"，既能看出被拦的是什么，又不会把路径/令牌二次落盘。
+      const masked = redactSensitiveText(text);
+      const raw0 = String(text ?? '');
+      let hit = '';
+      try {
+        const re = new RegExp(SENSITIVE_RE.source, SENSITIVE_RE.flags.includes('g') ? SENSITIVE_RE.flags : SENSITIVE_RE.flags + 'g');
+        hit = (raw0.match(re) || []).slice(0, 3).map((x) => redactSensitiveText(x)).join(' / ');
+      } catch { /* 忽略 */ }
+      log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`
+        + `${hit ? `｜命中：${hit}` : ''}｜原文(脱敏)：${masked.slice(0, 300).replace(/\s+/g, ' ')}`);
+      try {
+        const f = path.join(STATE_DIR, 'blocked-replies.jsonl');
+        fs.appendFileSync(f, JSON.stringify({ t: Date.now(), key, hit, masked: masked.slice(0, 2000), len: raw0.length }) + '\n', { mode: 0o600 });
+      } catch { /* 忽略 */ }
       appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
       if (cfg.security?.interceptNotify !== false) {
         await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
