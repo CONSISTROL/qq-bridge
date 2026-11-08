@@ -51,6 +51,25 @@ export function appendArchive({ stateDir, key, record, maxFileBytes = 64 * 1024 
   const file = path.join(dir, `${monthOf(record?.t)}.jsonl`);
   try {
     fs.mkdirSync(dir, { recursive: true });
+    // 去重：同一条 messageId 不重复落盘（实时事件 + 掉线补拉会各来一次）。
+    // 只查文件末尾 ~20 行，成本可控。
+    const mid = record?.id ?? record?.messageId;
+    if (mid != null && fs.existsSync(file)) {
+      try {
+        const size = fs.statSync(file).size;
+        const start = Math.max(0, size - 8192);
+        const fd = fs.openSync(file, 'r');
+        const buf = Buffer.alloc(size - start);
+        fs.readSync(fd, buf, 0, buf.length, start);
+        fs.closeSync(fd);
+        const tail = buf.toString('utf8').split('\n').slice(-20);
+        const dup = tail.some((l) => {
+          if (!l.trim()) return false;
+          try { const r = JSON.parse(l); return String(r?.id ?? r?.messageId ?? '') === String(mid); } catch { return false; }
+        });
+        if (dup) return null;
+      } catch { /* 读失败就照常写 */ }
+    }
     const line = JSON.stringify(record) + '\n';
     fs.appendFileSync(file, line, 'utf8');
     const bytes = fs.statSync(file).size;
