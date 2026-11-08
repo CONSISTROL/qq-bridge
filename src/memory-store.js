@@ -246,9 +246,19 @@ export async function rebuildIndex({ stateDir = './state', cfg = null, onProgres
   const emb = await embedTexts({ texts, config: c, batch: 10 });
   if (!emb.ok) return emb;
   const items = chunks.map((x, i) => ({ ...x, vec: emb.vectors[i], tokens: tokenize(x.text) }));
-  saveIndex(stateDir, { version: 1, model: emb.model, dim: emb.dim, builtAt: Date.now(), items });
-  onProgress?.(items.length);
-  return { ok: true, items: items.length, dim: emb.dim, model: emb.model };
+  // 同一段内容只入索引一次（按规范化文本去重，保留先出现的那条）
+  const seenText = new Set();
+  const deduped = [];
+  for (const it of items) {
+    const k = String(it.text || '').replace(/\s+/g, ' ').trim();
+    if (!k) continue;
+    if (seenText.has(k)) continue;
+    seenText.add(k);
+    deduped.push(it);
+  }
+  saveIndex(stateDir, { version: 1, model: emb.model, dim: emb.dim, builtAt: Date.now(), items: deduped });
+  onProgress?.(deduped.length);
+  return { ok: true, items: deduped.length, dedupedFrom: items.length, dim: emb.dim, model: emb.model };
 }
 
 
