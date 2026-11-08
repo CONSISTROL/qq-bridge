@@ -7789,7 +7789,21 @@ const agentTokenOk = (key, token) => {
    * 现在：允许涨到 hardLimit，超过时一次性裁回 recentLimit，两次裁剪之间前缀只追加不改写，
    * 缓存能持续命中。
    */
+  function dedupeByMessageId(list) {
+    if (!Array.isArray(list) || list.length < 2) return list;
+    const seen = new Set();
+    const out = [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const id = String(list[i]?.messageId ?? list[i]?.id ?? '');
+      if (id) { if (seen.has(id)) continue; seen.add(id); }
+      out.push(list[i]);
+    }
+    return out.reverse();
+  }
+
   function trimRecentMessagesChat(st) {
+    try { st.recentMessages = dedupeByMessageId(st.recentMessages); } catch { /* 忽略 */ }
+    try { st.unread = dedupeByMessageId(st.unread); } catch { /* 忽略 */ }
     const recentLimit = Number(cfg.socialData?.context?.recentLimit) || 100;
     const hardLimit = Math.max(recentLimit, Number(cfg.socialData?.context?.recentHardLimit) || recentLimit * 3);
     // 上下文预算：V4.1 支持 1M，但每轮都按 token 计费，所以设一个"接近满才压缩"的闸门。
@@ -11029,6 +11043,22 @@ const agentTokenOk = (key, token) => {
   // QQ 消息 → DSH prompt
   async function handleIncoming(kind, id, event, cfg) {
     const key = convKey(kind, id);
+    // 同一条消息可能被投递两次（实时事件 + 掉线补拉/未读回放），
+    // 以前会各记一遍，AI 就以为对方说了两遍。这里按 messageId 去重。
+    {
+      const mid0 = String(event?.message_id ?? event?.msg_id ?? '');
+      if (mid0) {
+        try {
+          const st0 = getSocialV2State(key);
+          const seen = [...(st0.recentMessages || []), ...(st0.unread || [])]
+            .some((m) => String(m?.messageId ?? m?.id ?? '') === mid0);
+          if (seen) {
+            log(`[dedupe] 重复投递，已忽略 ${key} messageId=${mid0}`);
+            return;
+          }
+        } catch { /* 忽略 */ }
+      }
+    }
     if (!modeAllowed(key, kind, id, cfg, currentMode)) {
       log(`忽略未授权会话 ${key}（当前模式 ${currentMode}，来自 ${event.user_id}）`);
       return;
