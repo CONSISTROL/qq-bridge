@@ -846,6 +846,9 @@ async function main() {
     setTimeout(() => { void localMemory.start().catch(() => {}); }, 6000).unref?.();
   }
   // 归档分块索引：启动后补一次，之后每 10 分钟增量更新（无新消息时几乎零开销）
+  // 每 12 分钟主动补拉一次最近消息：网关个别事件丢了也能自动同步进记忆
+  // （补拉本身有 dedupe + 时间窗；旧消息走"只入库不唤醒"）
+  setInterval(() => { void backfillMissedMessages('timer').catch(() => {}); }, 12 * 60 * 1000).unref?.();
   setTimeout(() => { void refreshChunkIndex(true); }, 8000).unref?.();
   setTimeout(() => { void refreshTiebaHot(); }, 12000).unref?.();
   setInterval(() => { void refreshTiebaHot(); }, 10 * 60 * 1000).unref?.();
@@ -11267,6 +11270,17 @@ const agentTokenOk = (key, token) => {
       if (socialData.paused) {
         appendActivity(`${key} [chat] AI 已暂停，消息仅入库不唤醒：${textContent.slice(0, 80)}`);
         return;
+      }
+      // 登录历史同步 / 掉线补拉送来的旧消息：只归档、不唤醒（否则 AI 会去回复几小时前的话）。
+      {
+        const evTime = Number(event?.time) ? Number(event.time) * 1000 : 0;
+        const ageMs = evTime ? Date.now() - evTime : 0;
+        const silentAfter = Number(cfg.socialData?.historySync?.silentAfterMs) || 5 * 60 * 1000;
+        if (ageMs > silentAfter) {
+          appendActivity(`${key} [chat] 历史消息仅入记忆（${Math.round(ageMs / 60000)} 分钟前）：${textContent.slice(0, 60)}`);
+          log(`[history] 旧消息不入唤醒 ${key}（${Math.round(ageMs / 60000)} 分钟前）`);
+          return;
+        }
       }
       const st = getSocialV2State(key);
       if (takeBootstrapChat(st)) {
