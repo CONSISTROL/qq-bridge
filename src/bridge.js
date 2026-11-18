@@ -11006,6 +11006,21 @@ const agentTokenOk = (key, token) => {
           });
         }
         if (!built.length) continue;
+        // 补回来的消息也要进归档（长期记忆）——之前只写进 recentMessages，
+        // 于是"补拉成功"但记忆里查不到，等于白补。
+        for (const m of built) {
+          try {
+            appendArchive({
+              stateDir: STATE_DIR,
+              key,
+              record: toArchiveRecord({
+                time: m.time, messageId: m.messageId, sender: m.sender,
+                isSelf: false, text: m.plain || m.text, media: m.media
+              }),
+              keepDays: Number(cfg.socialData?.memory?.archive?.keepDays) || 90
+            });
+          } catch { /* 归档失败不影响补拉 */ }
+        }
         // 按时间归位插入：补回来的消息比「重连后已收到的那批」更早，不能直接 append。
         st.recentMessages = [...(st.recentMessages ?? []), ...built]
           .sort((a, b) => (a.time || 0) - (b.time || 0)).slice(-recentLimit);
